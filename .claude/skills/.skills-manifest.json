@@ -1,0 +1,10 @@
+{
+  "skills": {
+    "sofapybase-developer": {
+      "version": "1.1.0",
+      "package": "@antskill/sofapybase-developer",
+      "path": "./sofapybase-developer",
+      "target": "claude-code"
+    }
+  }
+}
