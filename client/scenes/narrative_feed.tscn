@@ -1,0 +1,18 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/narrative_feed.gd" id="narrative_feed"]
+
+[node name="NarrativeFeed" type="PanelContainer"]
+script = ExtResource("narrative_feed")
+custom_minimum_size = Vector2(0, 200)
+
+[node name="ScrollContainer" type="ScrollContainer" parent="."]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="RichTextLabel" type="RichTextLabel" parent="ScrollContainer"]
+layout_mode = 2
+bbcode_enabled = true
+text = "[i]等待模拟开始...[/i]"
+fit_content = true
+scroll_active = false

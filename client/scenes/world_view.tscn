@@ -1,0 +1,15 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/world_renderer.gd" id="world_renderer"]
+
+[node name="WorldView" type="Node2D"]
+script = ExtResource("world_renderer")
+
+[node name="TileMapLayer" type="TileMapLayer" parent="."]
+format = 1
+
+[node name="Structures" type="Node2D" parent="."]
+
+[node name="Resources" type="Node2D" parent="."]
+
+[node name="Legacies" type="Node2D" parent="."]

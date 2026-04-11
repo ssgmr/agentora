@@ -1,0 +1,49 @@
+# Agentora LLM配置
+# 本地LLM配置
+
+# 主Provider - OpenAI兼容端点
+[primary]
+provider = "openai"
+api_base = "http://localhost:1234"
+api_key = ""  # 本地LLM通常不需要真实key
+model = "gemma-4-26b-a4b-it-ud"
+timeout_seconds = 300
+
+# Anthropic兼容端点 (备用)
+[anthropic_compat]
+provider = "anthropic"
+api_base = "http://localhost:1234"
+api_key = ""
+model = "gemma-4-26b-a4b-it-ud"
+timeout_seconds = 300
+
+# 决策配置
+[decision]
+max_tokens = 500
+temperature = 0.7
+# 决策prompt严格控制在2.5K tokens内
+prompt_max_tokens = 2500
+
+# 记忆系统配置
+[memory]
+# --- 预算层 ---
+total_budget = 1800          # 记忆总预算（字符数）
+chronicle_budget = 800       # 编年史快照预算（字符数）
+db_budget = 600              # 数据库检索预算（字符数）
+strategy_budget = 400        # 策略参考预算（字符数）
+
+# --- 存储层 ---
+chronicle_limit = 1800       # 单编年史文件内容上限（字符数）
+world_seed_limit = 500       # 世界认知文件上限（字符数）
+
+# --- 检索层 ---
+importance_threshold = 0.5   # 重要性过滤阈值
+search_limit = 5             # 检索返回最大条数
+snippet_max_chars = 200      # 单个记忆片段最大字符数
+
+# --- 容量层 ---
+short_term_capacity = 5      # 短期记忆最多条数
+
+# --- Prompt约束 ---
+prompt_max_tokens = 2500     # 决策Prompt总上限（字符数）
+# 约束：total_budget 必须 <= prompt_max_tokens

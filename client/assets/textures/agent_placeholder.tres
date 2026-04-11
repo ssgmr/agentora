@@ -1,0 +1,8 @@
+[gd_resource type="PlaceholderTexture2D" load_steps=2 format=3 uid="uid://agent_placeholder"]
+
+[sub_resource type="PlaceholderTexture2D" id="PlaceholderTexture2D_agent"]
+size = Vector2i(16, 16)
+color = Color(0.2, 0.6, 0.9, 1)
+
+[resource]
+resource = SubResource("PlaceholderTexture2D_agent")

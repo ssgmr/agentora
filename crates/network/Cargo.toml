@@ -1,0 +1,46 @@
+[package]
+name = "agentora-network"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tokio = { workspace = true, features = ["sync", "macros", "rt-multi-thread"] }
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+async-trait.workspace = true
+libp2p = { workspace = true, features = ["tokio"] }
+
+# 直接依赖 libp2p 子 crate
+libp2p-gossipsub.workspace = true
+libp2p-kad.workspace = true
+libp2p-relay.workspace = true
+libp2p-ping.workspace = true
+libp2p-identify.workspace = true
+libp2p-tcp = { workspace = true, features = ["tokio"] }
+libp2p-noise.workspace = true
+libp2p-yamux.workspace = true
+libp2p-dns = { workspace = true, features = ["tokio"] }
+libp2p-swarm-derive.workspace = true
+
+# DCUtR Hole Punching
+libp2p-dcutr.workspace = true
+
+# AutoNAT NAT 类型探测
+libp2p-autonat.workspace = true
+
+ed25519-dalek.workspace = true
+rand.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+
+agentora-sync = { workspace = true }
+sha2 = "0.10"
+hex = "0.4"
+
+[dev-dependencies]
+tokio-test = "0.4"
+tempfile = "3.10"

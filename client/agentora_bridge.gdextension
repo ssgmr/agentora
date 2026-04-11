@@ -1,0 +1,13 @@
+[configuration]
+
+entry_symbol = "agentora_bridge_init"
+compatibility_minimum = "4.6"
+
+[libraries]
+
+windows.debug.x86_64 = "res://bin/agentora_bridge.dll"
+windows.release.x86_64 = "res://bin/agentora_bridge.dll"
+linux.debug.x86_64 = "res://bin/libagentora_bridge.so"
+linux.release.x86_64 = "res://bin/libagentora_bridge.so"
+macos.debug = "res://bin/libagentora_bridge.dylib"
+macos.release = "res://bin/libagentora_bridge.dylib"

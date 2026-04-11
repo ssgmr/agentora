@@ -1,0 +1,19 @@
+[package]
+name = "agentora-bridge"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+godot.workspace = true
+
+agentora-core = { workspace = true }
+
+[lib]
+crate-type = ["cdylib"]  # GDExtension需要动态库

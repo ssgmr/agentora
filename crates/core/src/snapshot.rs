@@ -1,0 +1,89 @@
+//! WorldSnapshot序列化与反序列化
+//!
+//! 用于Godot渲染的世界状态快照
+
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+
+/// 世界快照
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorldSnapshot {
+    pub tick: u64,
+    pub agents: Vec<AgentSnapshot>,
+    pub map_changes: Vec<CellChange>,
+    pub events: Vec<NarrativeEvent>,
+    pub legacies: Vec<LegacyEvent>,
+    pub pressures: Vec<PressureSnapshot>,
+}
+
+/// Agent快照
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentSnapshot {
+    pub id: String,
+    pub name: String,
+    pub position: (u32, u32),
+    pub motivation: [f32; 6],
+    pub health: u32,
+    pub max_health: u32,
+    pub inventory_summary: HashMap<String, u32>,
+    pub current_action: String,
+    pub age: u32,
+    pub is_alive: bool,
+}
+
+/// 地图单元格变化
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CellChange {
+    pub x: u32,
+    pub y: u32,
+    pub terrain: String,
+    pub structure: Option<String>,
+    pub resource_type: Option<String>,
+    pub resource_amount: Option<u32>,
+}
+
+/// 叙事事件
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NarrativeEvent {
+    pub tick: u64,
+    pub agent_id: String,
+    pub agent_name: String,
+    pub event_type: String,
+    pub description: String,
+    pub color_code: String,  // 用于Godot颜色渲染
+}
+
+/// 遗产事件
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LegacyEvent {
+    pub id: String,
+    pub position: (u32, u32),
+    pub legacy_type: String,
+    pub original_agent_name: String,
+}
+
+/// 压力快照
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PressureSnapshot {
+    pub id: String,
+    pub pressure_type: String,
+    pub description: String,
+    pub remaining_ticks: u32,
+}
+
+impl WorldSnapshot {
+    /// 序列化为JSON字符串
+    pub fn to_json(&self) -> String {
+        serde_json::to_string(self).unwrap()
+    }
+
+    /// 从JSON解析
+    pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(json)
+    }
+
+    /// 序列化为字节
+    pub fn to_bytes(&self) -> Vec<u8> {
+        serde_json::to_vec(self).unwrap()
+    }
+}

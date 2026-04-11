@@ -1,0 +1,29 @@
+[package]
+name = "agentora-ai"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+async-trait.workspace = true
+reqwest.workspace = true
+toml = "0.8"
+chrono = "0.4"
+
+# 本地 GGUF 推理（可选 feature）
+# mistralrs = { version = "0.1", optional = true }  # 版本不匹配，暂时禁用
+# sysinfo = { version = "0.30", optional = true }
+
+[features]
+default = []
+# local-infer = ["mistralrs", "sysinfo"]  # 暂时禁用
+
+[dev-dependencies]
+tokio-test = "0.4"
+tokio = { workspace = true, features = ["test-util", "macros"] }

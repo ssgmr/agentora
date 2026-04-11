@@ -1,0 +1,53 @@
+# Agentora 默认世界种子配置
+# 用于MVP测试和演示
+
+# 地图大小 [width, height]
+map_size = [256, 256]
+
+# 地形分布比例
+[terrain_ratio]
+plains = 0.5
+forest = 0.25
+mountain = 0.1
+water = 0.1
+desert = 0.05
+
+# 资源密度 (0.0-1.0)
+resource_density = 0.15
+
+# 区域大小 (每个区域的格子数)
+region_size = 16
+
+# 初始Agent数量
+initial_agents = 5
+
+# 生成位置策略: random/clustered/scattered
+spawn_strategy = "scattered"
+
+# P2P种子节点地址（留空表示单机模式）
+seed_peers = []
+
+# 动机模板
+[motivation_templates.gatherer]
+# 生存 社交 认知 表达 权力 传承
+values = [0.8, 0.4, 0.3, 0.2, 0.3, 0.2]
+
+[motivation_templates.trader]
+values = [0.5, 0.8, 0.4, 0.3, 0.7, 0.3]
+
+[motivation_templates.explorer]
+values = [0.4, 0.3, 0.9, 0.6, 0.3, 0.4]
+
+[motivation_templates.builder]
+values = [0.6, 0.5, 0.4, 0.8, 0.4, 0.3]
+
+# 压力池配置
+[pressure_config]
+# 压力事件触发间隔范围 (tick)
+trigger_interval_range = [20, 50]
+# 资源波动幅度 (0.0-1.0)
+resource_fluctuation = 0.3
+# 气候事件概率
+climate_event_probability = 0.1
+# 区域封锁持续时间范围 (tick)
+blockade_duration_range = [10, 30]

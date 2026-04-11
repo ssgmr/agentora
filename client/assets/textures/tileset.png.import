@@ -1,0 +1,9 @@
+[gd_resource type="Image" load_steps=2 format=3 uid="uid://tileset_texture"]
+
+[resource]
+format = 8
+width = 80
+height = 16
+data = {
+"rfe2AAAA/7D///+wAAD/sAAA/7AAAADAAACwAAAAgAAAAMAAAADAAAABAAAAAQAAAAAQAAABAAAAAAAAAAAAAAAAD//wAA"
+}

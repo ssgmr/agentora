@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128">
+  <!-- Agentora Icon - Hexagon with AI symbol -->
+  <polygon points="64,8 112,32 112,96 64,120 16,96 16,32"
+           fill="#2E7D32" stroke="#1B5E20" stroke-width="2"/>
+  <!-- AI brain symbol -->
+  <circle cx="64" cy="64" r="30" fill="none" stroke="#FFFFFF" stroke-width="3"/>
+  <path d="M50,64 Q64,44 78,64 Q64,84 50,64" fill="none" stroke="#FFFFFF" stroke-width="2"/>
+  <!-- Connection dots -->
+  <circle cx="64" cy="54" r="4" fill="#FFFFFF"/>
+  <circle cx="64" cy="74" r="4" fill="#FFFFFF"/>
+  <circle cx="54" cy="64" r="4" fill="#FFFFFF"/>
+  <circle cx="74" cy="64" r="4" fill="#FFFFFF"/>
+</svg>

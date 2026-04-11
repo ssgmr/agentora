@@ -1,0 +1,98 @@
+[package]
+name = "agentora"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+agentora-core.workspace = true
+agentora-ai.workspace = true
+agentora-network.workspace = true
+agentora-sync.workspace = true
+tokio = { workspace = true, features = ["macros", "test-util"] }
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile = "3.10"
+
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/ai",
+    "crates/network",
+    "crates/sync",
+    "crates/bridge",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/agentora/agentora"
+
+[workspace.dependencies]
+# 异步运行时
+tokio = { version = "1.42", features = ["rt-multi-thread", "sync", "time", "fs", "io-util", "macros"] }
+
+# 序列化
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+# 数据库
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# 日志
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# 错误处理
+thiserror = "2.0"
+anyhow = "1.0"
+
+# 异步 trait
+async-trait = "0.1"
+
+# 时间
+chrono = { version = "0.4", features = ["serde"] }
+
+# UUID 生成
+uuid = { version = "1.11", features = ["v4", "serde"] }
+
+# HTTP 客户端 (AI crate)
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+
+# P2P 网络 (network crate)
+libp2p = { version = "0.56", features = ["tokio"] }
+
+# libp2p 子 crate（显式依赖用于 network crate）
+libp2p-gossipsub = "0.49"
+libp2p-kad = "0.48"
+libp2p-relay = "0.21"
+libp2p-ping = "0.47"
+libp2p-identify = "0.47"
+libp2p-tcp = "0.44"
+libp2p-noise = "0.46"
+libp2p-yamux = "0.47"
+libp2p-dns = "0.44"
+libp2p-swarm-derive = "0.35"
+
+# DCUtR Hole Punching
+libp2p-dcutr = "0.14"
+
+# AutoNAT NAT 类型探测
+libp2p-autonat = "0.15"
+
+# 签名
+ed25519-dalek = { version = "2.1", features = ["rand_core"] }
+rand = "0.8"
+
+# Godot GDExtension (bridge crate)
+godot = { version = "0.5", features = ["api-4-6"] }
+
+# 内部 crate 依赖
+agentora-core = { path = "crates/core" }
+agentora-ai = { path = "crates/ai" }
+agentora-network = { path = "crates/network" }
+agentora-sync = { path = "crates/sync" }
