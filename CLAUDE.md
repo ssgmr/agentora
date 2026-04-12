@@ -141,6 +141,7 @@ AutoScreenshot="*res://scripts/auto_screenshot.gd"
 - 验证时不要用 headless 模式，Vulkan 渲染需要窗口
 - 验证完成后注释 `[autoload]` 下的 AutoScreenshot 配置，避免每次运行都截图退出
 - 截图路径必须使用绝对路径 `D:/work/code/rust/agentora/screenshot_godot.png`，不能用 `user://`（无法从外部读取）
+- 首次运行，GDExtension 需要在 Godot 编辑器中打开一次，让它扫描并注册 .gdextension 文件。直接 --path . 运行时可能还没有正确注册类。
 
 #### Godot UI布局经验总结
 - **CanvasLayer + Control锚定**：Control节点在CanvasLayer下必须设置 `layout_mode = 2` 才能生效

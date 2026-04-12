@@ -25,6 +25,10 @@ func _on_world_updated(snapshot: Dictionary) -> void:
 			for agent_data in agents.values():
 				if agent_data.get("is_alive", false):
 					_selected_agent_id = agent_data.get("id", "")
+					# 通知 bridge 同步 selected_agent_id
+					var bridge = get_node_or_null("../../../../SimulationBridge")
+					if bridge:
+						bridge.select_agent(_selected_agent_id)
 					break
 
 	if not _selected_agent_id.is_empty():
@@ -34,10 +38,19 @@ func _on_world_updated(snapshot: Dictionary) -> void:
 			if not data.is_empty():
 				var motivation: Array = data.get("motivation", [])
 				if not motivation.is_empty():
+					# 临时断开信号，避免代码设置滑块时触发 adjust_motivation
 					for i in range(6):
-						_sliders[i].value = motivation[i]
+						_sliders[i].value_changed.disconnect(_on_slider_changed.bind(i))
+
+					for i in range(6):
+						var v = clamp(float(motivation[i]), 0.0, 1.0)
+						_sliders[i].value = v
 						if i < _value_labels.size():
-							_value_labels[i].text = "%.2f" % motivation[i]
+							_value_labels[i].text = "%.2f" % v
+
+					# 重新连接信号
+					for i in range(6):
+						_sliders[i].value_changed.connect(_on_slider_changed.bind(i))
 
 
 func _setup_sliders() -> void:
@@ -144,13 +157,13 @@ func _setup_buttons() -> void:
 func _on_slider_changed(dimension: int, value: float) -> void:
 	# 更新值显示
 	if dimension < _value_labels.size():
-		_value_labels[dimension].text = "%.2f" % value
+		_value_labels[dimension].text = "%.2f" % clamp(value, 0.0, 1.0)
 
 	# 发送到Rust
 	if not _selected_agent_id.is_empty():
 		var bridge = get_node_or_null("../../../../SimulationBridge")
 		if bridge:
-			bridge.adjust_motivation(_selected_agent_id, dimension, value)
+			bridge.adjust_motivation(_selected_agent_id, dimension, clamp(value, 0.0, 1.0))
 
 
 func _on_agent_selected(agent_id: String) -> void:
@@ -163,10 +176,19 @@ func _on_agent_selected(agent_id: String) -> void:
 		var motivation: Array = data.get("motivation", [0.5, 0.5, 0.5, 0.5, 0.5, 0.5])
 		printerr("[GuidePanel] motivation: %s" % str(motivation))
 
+		# 临时断开信号，避免代码设置滑块时触发 adjust_motivation
 		for i in range(6):
-			_sliders[i].value = motivation[i]
+			_sliders[i].value_changed.disconnect(_on_slider_changed.bind(i))
+
+		for i in range(6):
+			var v = clamp(float(motivation[i]), 0.0, 1.0)
+			_sliders[i].value = v
 			if i < _value_labels.size():
-				_value_labels[i].text = "%.2f" % motivation[i]
+				_value_labels[i].text = "%.2f" % v
+
+		# 重新连接信号
+		for i in range(6):
+			_sliders[i].value_changed.connect(_on_slider_changed.bind(i))
 
 
 func _inject_explore_preference() -> void:

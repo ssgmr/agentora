@@ -141,6 +141,10 @@ func _on_world_updated(snapshot: Dictionary) -> void:
 				if agent_data.get("is_alive", false):
 					_agent_id = agent_data.get("id", "")
 					_update_from_bridge()
+					# 通知 bridge 更新 selected_agent_id 并触发信号
+					var bridge = get_node_or_null("../../../../SimulationBridge")
+					if bridge:
+						bridge.select_agent(_agent_id)
 					return
 
 	if not _agent_id.is_empty():

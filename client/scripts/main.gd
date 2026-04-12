@@ -3,6 +3,7 @@
 extends Node
 
 var name_label: Label
+var selected_agent_id: String = ""
 
 @onready var tick_label: Label = $UI/TopBar/TickCounter
 @onready var agent_count_label: Label = $UI/TopBar/AgentCount
@@ -95,21 +96,24 @@ func _on_world_updated(snapshot: Dictionary) -> void:
 	if world_agent_count_label:
 		world_agent_count_label.text = "Agent 数：%d" % agents.size()
 
-	# 如果已选择 Agent，更新其状态
+	# 如果没有选中 Agent，自动选第一个存活的
+	if selected_agent_id.is_empty():
+		for agent_data in agents.values():
+			if agent_data.get("is_alive", false):
+				selected_agent_id = agent_data.get("id", "")
+				break
+
+	# 每次世界更新都刷新已选中 Agent 的状态
 	var bridge = get_node_or_null("SimulationBridge")
-	if bridge and not bridge.selected_agent_id.is_empty():
-		var agent_data = bridge.get_agent_data(bridge.selected_agent_id)
+	if bridge and not selected_agent_id.is_empty():
+		var agent_data = bridge.get_agent_data(selected_agent_id)
 		if not agent_data.is_empty():
 			_update_agent_detail(agent_data)
 
 
 func _on_agent_selected(agent_id: String) -> void:
 	print("[Main] 选择了 Agent: %s" % agent_id)
-	var bridge = get_node_or_null("SimulationBridge")
-	if bridge:
-		var agent_data = bridge.get_agent_data(agent_id)
-		if not agent_data.is_empty():
-			_update_agent_detail(agent_data)
+	selected_agent_id = agent_id
 
 
 func _update_agent_detail(data: Dictionary) -> void:
@@ -121,6 +125,10 @@ func _update_agent_detail(data: Dictionary) -> void:
 		var max_health: int = data.get("max_health", 100)
 		var age: int = data.get("age", 0)
 		var current_action: String = data.get("current_action", "等待")
+		# 动作描述过长时截断，避免撑坏布局
+		if current_action.length() > 60:
+			current_action = current_action.substr(0, 57) + "..."
+
 		var is_alive: bool = data.get("is_alive", true)
 
 		var status_text = "状态：%s\n" % ("活动中" if is_alive else "已死亡")

@@ -6,11 +6,11 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CLIENT_DIR="$SCRIPT_DIR/client"
-GODOT_EXE="$HOME/tool/Godot_v4.6.2-stable_win64.exe/Godot_v4.6.2-stable_win64.exe"
+GODOT_EXE="$HOME/tool/Godot/Godot_v4.6.2-stable_win64.exe"
 
 # Windows 路径转换
 if [[ "$OSTYPE" == "msys" ]]; then
-    GODOT_EXE="D:/tool/Godot_v4.6.2-stable_win64.exe/Godot_v4.6.2-stable_win64.exe"
+    GODOT_EXE="D:/tool/Godot/Godot_v4.6.2-stable_win64.exe"
 fi
 
 echo "=== Agentora Client 启动脚本 ==="
@@ -39,7 +39,7 @@ cd "$CLIENT_DIR"
 # 启动模式选择
 if [ "$1" == "--editor" ]; then
     echo "以编辑器模式启动..."
-    "$GODOT_EXE" --path .
+    "$GODOT_EXE" --path . --editor
 elif [ "$1" == "--build" ]; then
     echo "构建 Release 版本..."
     cd "$SCRIPT_DIR"

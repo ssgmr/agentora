@@ -92,9 +92,12 @@ script = ExtResource("motivation_radar")
 
 [node name="StatusLabel" type="Label" parent="UI/RightPanel/AgentDetail"]
 layout_mode = 2
+size_flags_vertical = 0
 text = "状态：等待
 健康：100/100
 年龄：0"
+autowrap_mode = 2
+max_lines_visible = 6
 
 [node name="GuidePanel" type="VBoxContainer" parent="UI/RightPanel/AgentDetail"]
 layout_mode = 2
