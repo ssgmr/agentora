@@ -24,8 +24,8 @@ impl crate::agent::Agent {
     }
 
     /// 接受交易
-    pub fn accept_trade(&mut self, trade: &TradeOffer) -> bool {
-        // 检查自己是否有足够的wanted资源
+    pub fn accept_trade(&mut self, trade: &TradeOffer, proposer_inventory: &HashMap<String, u32>) -> bool {
+        // 检查自己是否有足够的 wanted 资源
         for (resource, amount) in &trade.want {
             let key = resource.as_str();
             let current = self.inventory.get(key).copied().unwrap_or(0);
@@ -34,7 +34,17 @@ impl crate::agent::Agent {
             }
         }
 
-        // 执行交易：给出want，获得offer
+        // 检查发起方是否有足够的 offer 资源（欺诈检测）
+        for (resource, amount) in &trade.offer {
+            let key = resource.as_str();
+            let proposer_has = proposer_inventory.get(key).copied().unwrap_or(0);
+            if proposer_has < *amount {
+                // 发起方资源不足，标记欺诈
+                return false;
+            }
+        }
+
+        // 执行交易：给出 want，获得 offer
         for (resource, amount) in &trade.want {
             self.consume(*resource, *amount);
         }

@@ -13,6 +13,7 @@ use crate::types::{AgentId, Position, ActionType, Action, TerrainType, ResourceT
 use crate::legacy::Legacy;
 use crate::strategy::decay::{decay_all_strategies, check_deprecation, auto_delete_deprecated};
 use crate::strategy::create::{should_create_strategy, create_strategy, scan_strategy_content};
+use crate::snapshot::NarrativeEvent;
 use crate::strategy::motivation_link::{on_strategy_success, on_strategy_failure};
 use crate::decision::SparkType;
 use std::collections::HashMap;
@@ -30,6 +31,51 @@ pub struct World {
     pub legacies: Vec<Legacy>,
     /// 当前 tick 各 Agent 的动作
     pub current_actions: HashMap<AgentId, String>,
+    /// 当前 tick 的叙事事件
+    pub tick_events: Vec<NarrativeEvent>,
+    /// 待处理的交易
+    pub pending_trades: Vec<PendingTrade>,
+    /// 对话日志
+    pub dialogue_logs: Vec<DialogueLog>,
+}
+
+// ===== 辅助类型 =====
+
+/// 交易状态
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TradeStatus {
+    Pending,
+    Accepted,
+    Rejected,
+}
+
+/// 待处理交易
+#[derive(Debug, Clone)]
+pub struct PendingTrade {
+    pub proposer_id: AgentId,
+    pub acceptor_id: AgentId,
+    pub offer_resources: HashMap<String, u32>,
+    pub want_resources: HashMap<String, u32>,
+    pub status: TradeStatus,
+    pub tick_created: u64,
+}
+
+/// 对话日志
+#[derive(Debug, Clone)]
+pub struct DialogueLog {
+    pub agent_a: AgentId,
+    pub agent_b: AgentId,
+    pub messages: Vec<DialogueMessage>,
+    pub tick_started: u64,
+    pub is_active: bool,
+}
+
+/// 对话消息
+#[derive(Debug, Clone)]
+pub struct DialogueMessage {
+    pub speaker_id: AgentId,
+    pub content: String,
+    pub tick: u64,
 }
 
 impl World {
@@ -45,6 +91,9 @@ impl World {
             pressure_pool: Vec::new(),
             legacies: Vec::new(),
             current_actions: HashMap::new(),
+            tick_events: Vec::new(),
+            pending_trades: Vec::new(),
+            dialogue_logs: Vec::new(),
         };
 
         // 生成地形
@@ -131,11 +180,14 @@ impl World {
         let template_names: Vec<&str> = seed.motivation_templates.keys().map(|s| s.as_str()).collect();
 
         for i in 0..seed.initial_agents {
-            // 找一个可通行位置
+            // 找一个可通行位置（出生在地图中心附近，确保相机能看到）
             let mut pos;
+            let cx = width / 2;
+            let cy = height / 2;
+            let spawn_radius = 16u32; // 中心 32x32 区域内出生
             loop {
-                let x = rng.gen_range(0..width);
-                let y = rng.gen_range(0..height);
+                let x = rng.gen_range(cx.saturating_sub(spawn_radius)..(cx + spawn_radius).min(width));
+                let y = rng.gen_range(cy.saturating_sub(spawn_radius)..(cy + spawn_radius).min(height));
                 pos = Position::new(x, y);
                 if map.get_terrain(pos).is_passable() {
                     break;
@@ -192,9 +244,55 @@ impl World {
         self.tick
     }
 
+    /// 记录叙事事件
+    fn record_event(&mut self, agent_id: &AgentId, agent_name: &str, event_type: &str, description: &str, color_code: &str) {
+        self.tick_events.push(NarrativeEvent {
+            tick: self.tick,
+            agent_id: agent_id.as_str().to_string(),
+            agent_name: agent_name.to_string(),
+            event_type: event_type.to_string(),
+            description: description.to_string(),
+            color_code: color_code.to_string(),
+        });
+    }
+
+    /// 查找同一格的存活 Agent（排除自己）
+    fn find_alive_at(&self, agent_id: &AgentId) -> Vec<AgentId> {
+        let agent = match self.agents.get(agent_id) {
+            Some(a) => a,
+            None => return vec![],
+        };
+        let pos = agent.position;
+        self.agents
+            .values()
+            .filter(|a| a.is_alive && a.id != *agent_id && a.position == pos)
+            .map(|a| a.id.clone())
+            .collect()
+    }
+
+    /// 查找待处理交易
+    fn find_pending_trade(&self, proposer_id: &AgentId, acceptor_id: &AgentId) -> Option<usize> {
+        self.pending_trades.iter().position(|t| {
+            (t.proposer_id == *proposer_id && t.acceptor_id == *acceptor_id)
+                || (t.proposer_id == *acceptor_id && t.acceptor_id == *proposer_id)
+        })
+    }
+
     /// 推进 tick
     pub fn advance_tick(&mut self) {
         self.tick += 1;
+
+        // 动机惯性衰减（向中性值 0.5 收敛）
+        for (_, agent) in self.agents.iter_mut() {
+            agent.motivation.decay();
+        }
+
+        // 更新所有存活 Agent 的临时偏好
+        for (_, agent) in self.agents.iter_mut() {
+            if agent.is_alive {
+                agent.tick_preferences();
+            }
+        }
 
         // 环境压力 tick
         self.pressure_tick();
@@ -229,6 +327,36 @@ impl World {
                 continue;
             }
 
+            let agent_name = agent.name.clone();
+            let agent_pos = agent.position;
+
+            // 资源散落：将背包资源散落在当前位置
+            let scattered: Vec<(String, u32)> = agent.inventory.iter()
+                .filter(|(_, v)| **v > 0)
+                .map(|(k, v)| (k.clone(), *v))
+                .collect();
+
+            for (res_type, amount) in &scattered {
+                if let Some(node) = self.resources.get_mut(&agent_pos) {
+                    // 如果当前位置已有资源节点，增加数量
+                    if format!("{:?}", node.resource_type) == *res_type {
+                        node.current_amount += amount;
+                    }
+                } else {
+                    // 创建新资源节点
+                    let resource_type = match res_type.as_str() {
+                        "iron" => ResourceType::Iron,
+                        "food" => ResourceType::Food,
+                        "wood" => ResourceType::Wood,
+                        "water" => ResourceType::Water,
+                        "stone" => ResourceType::Stone,
+                        _ => ResourceType::Food,
+                    };
+                    let node = resource::ResourceNode::new(agent_pos, resource_type, *amount);
+                    self.resources.insert(agent_pos, node);
+                }
+            }
+
             // 创建遗产
             let legacy = Legacy::from_agent(agent, self.tick);
             let legacy_event = crate::legacy::LegacyEvent::from_legacy(&legacy);
@@ -240,7 +368,15 @@ impl World {
             let agent = self.agents.get_mut(&agent_id).unwrap();
             agent.is_alive = false;
 
-            tracing::info!("Agent {} 死亡，产生遗产 {}", agent.name, legacy_event.legacy_id);
+            // 记录死亡事件
+            let res_desc = if scattered.is_empty() {
+                String::new()
+            } else {
+                format!("，留下: {}", scattered.iter().map(|(r, a)| format!("{}x{}", r, a)).collect::<Vec<_>>().join(", "))
+            };
+            self.record_event(&agent_id, &agent_name, "death", &format!("{} 已死亡{}{}", agent_name, res_desc, if !scattered.is_empty() { "，资源散落在地".to_string() } else { String::new() }), "#FF0000");
+
+            tracing::info!("Agent {} 死亡，产生遗产 {}", agent_name, legacy_event.legacy_id);
 
             // 3.2 广播到"legacy"topic（简化实现，实际应通过网络层广播）
             // TODO: 调用网络层 broadcast_to_topic("legacy", legacy_event)
@@ -265,6 +401,7 @@ impl World {
         let result = match &action.action_type {
             ActionType::Move { direction } => {
                 let agent = self.agents.get_mut(agent_id).unwrap();
+                let agent_name = agent.name.clone();
                 let (dx, dy) = direction.delta();
                 let new_x = agent.position.x as i32 + dx;
                 let new_y = agent.position.y as i32 + dy;
@@ -275,6 +412,7 @@ impl World {
                         let terrain = self.map.get_terrain(new_pos);
                         if terrain.is_passable() {
                             agent.position = new_pos;
+                            self.record_event(agent_id, &agent_name, "move", &format!("{} 移动至 ({},{})", agent_name, new_pos.x, new_pos.y), "#888888");
                             ActionResult::Success
                         } else {
                             ActionResult::Blocked
@@ -289,14 +427,23 @@ impl World {
 
             ActionType::Gather { resource } => {
                 let agent = self.agents.get_mut(agent_id).unwrap();
-                // 简化实现：直接添加资源到背包
+                let agent_name = agent.name.clone();
                 let resource_key = resource.as_str().to_string();
                 let current = *agent.inventory.get(&resource_key).unwrap_or(&0);
-                agent.inventory.insert(resource_key, current + 1);
+                agent.inventory.insert(resource_key.clone(), current + 1);
+                self.record_event(agent_id, &agent_name, "gather", &format!("{} 采集了 1 个 {}", agent_name, resource_key), "#88CC44");
                 ActionResult::Success
             }
 
             ActionType::Wait => {
+                let (agent_name, health) = {
+                    let agent = self.agents.get_mut(agent_id).unwrap();
+                    if agent.health < agent.max_health {
+                        agent.health = (agent.health + 5).min(agent.max_health);
+                    }
+                    (agent.name.clone(), agent.health)
+                };
+                self.record_event(agent_id, &agent_name, "wait", &format!("{} 正在休息，生命值 {}", agent_name, health), "#CCCCCC");
                 ActionResult::Success
             }
 
@@ -306,8 +453,7 @@ impl World {
             }
 
             _ => {
-                // 其他动作类型暂不实现
-                ActionResult::NotImplemented
+                self.handle_special_action(agent_id, action)
             }
         };
 
@@ -396,13 +542,49 @@ impl World {
             })
             .collect();
 
+        // 从 tick_events 填充 events
+        let events = self.tick_events.iter().map(|e| NarrativeEvent {
+            tick: e.tick,
+            agent_id: e.agent_id.clone(),
+            agent_name: e.agent_name.clone(),
+            event_type: e.event_type.clone(),
+            description: e.description.clone(),
+            color_code: e.color_code.clone(),
+        }).collect();
+
+        // 从 legacies 填充 legacies
+        let legacies = self.legacies.iter().map(|l| LegacyEvent {
+            id: l.id.clone(),
+            position: (l.position.x, l.position.y),
+            legacy_type: "agent_legacy".to_string(),
+            original_agent_name: l.original_agent_name.clone(),
+        }).collect();
+
+        // 从 pressure_pool 填充 pressures
+        let pressures = self.pressure_pool.iter().map(|p| PressureSnapshot {
+            id: p.id.clone(),
+            pressure_type: format!("{:?}", p.pressure_type),
+            description: p.description.clone(),
+            remaining_ticks: p.remaining_ticks,
+        }).collect();
+
+        // 从 structures 填充 map_changes
+        let map_changes = self.structures.iter().map(|(pos, s)| CellChange {
+            x: pos.x,
+            y: pos.y,
+            terrain: format!("{:?}", self.map.get_terrain(*pos)),
+            structure: Some(s.structure_type.clone()).map(|s| format!("{:?}", s)),
+            resource_type: None,
+            resource_amount: None,
+        }).collect();
+
         WorldSnapshot {
             tick: self.tick,
             agents,
-            map_changes: vec![],
-            events: vec![],
-            legacies: vec![],
-            pressures: vec![],
+            map_changes,
+            events,
+            legacies,
+            pressures,
         }
     }
 
@@ -434,6 +616,91 @@ impl World {
         self.legacies.retain(|legacy| {
             !legacy.items.is_empty() || (self.tick - legacy.created_tick) < 100
         });
+    }
+
+    /// 处理特殊动作（交易、对话、战斗、建造、探索、结盟等）
+    /// TODO: 逐步实现各动作类型，当前先返回 NotImplemented 确保编译通过
+    fn handle_special_action(&mut self, agent_id: &AgentId, action: &Action) -> ActionResult {
+        let agent = self.agents.get(agent_id).unwrap();
+        let agent_name = agent.name.clone();
+
+        match &action.action_type {
+            ActionType::Explore { .. } => {
+                // 探索：向随机方向移动 1-3 步
+                use rand::Rng;
+                let mut rng = rand::thread_rng();
+                let steps = rng.gen_range(1..=3);
+                let dir_idx = rng.gen_range(0..4);
+                let directions = [
+                    crate::types::Direction::North,
+                    crate::types::Direction::South,
+                    crate::types::Direction::East,
+                    crate::types::Direction::West,
+                ];
+                let dir = directions[dir_idx];
+                let (dx, dy) = dir.delta();
+                let agent = self.agents.get_mut(agent_id).unwrap();
+                for _ in 0..steps {
+                    let new_x = agent.position.x as i32 + dx;
+                    let new_y = agent.position.y as i32 + dy;
+                    if new_x >= 0 && new_y >= 0 {
+                        let new_pos = Position::new(new_x as u32, new_y as u32);
+                        if self.map.is_valid(new_pos) && self.map.get_terrain(new_pos).is_passable() {
+                            agent.position = new_pos;
+                        }
+                    }
+                }
+                self.record_event(agent_id, &agent_name, "explore",
+                    &format!("{} 探索周边区域，移动了 {} 步", agent_name, steps), "#44AAFF");
+                ActionResult::Success
+            }
+            ActionType::Talk { message } => {
+                self.record_event(agent_id, &agent_name, "talk",
+                    &format!("{} 说：「{}」", agent_name, message), "#FFAA44");
+                ActionResult::Success
+            }
+            ActionType::Build { structure } => {
+                let agent = self.agents.get_mut(agent_id).unwrap();
+                let pos = agent.position;
+                self.record_event(agent_id, &agent_name, "build",
+                    &format!("{} 在 ({},{}) 建造了 {:?}", agent_name, pos.x, pos.y, structure), "#FF44AA");
+                ActionResult::Success
+            }
+            ActionType::Attack { target_id } => {
+                let agent = self.agents.get(agent_id).unwrap();
+                let agent_name = agent.name.clone();
+                // 简单攻击：扣目标 10 生命值
+                let target_exists = self.agents.contains_key(target_id);
+                let target_alive = self.agents.get(target_id).map(|a| a.is_alive).unwrap_or(false);
+                let target_name = self.agents.get(target_id).map(|a| a.name.clone()).unwrap_or_default();
+
+                if target_exists && target_alive {
+                    let target_agent = self.agents.get_mut(target_id).unwrap();
+                    target_agent.health = target_agent.health.saturating_sub(10);
+                    if target_agent.health == 0 {
+                        target_agent.is_alive = false;
+                        self.record_event(agent_id, &agent_name, "attack",
+                            &format!("{} 攻击了 {} 并将其击败", agent_name, target_name), "#FF0000");
+                    } else {
+                        self.record_event(agent_id, &agent_name, "attack",
+                            &format!("{} 攻击了 {}，造成 10 点伤害", agent_name, target_name), "#FF4444");
+                    }
+                    return ActionResult::Success;
+                }
+                ActionResult::Blocked
+            }
+            ActionType::TradeOffer { .. } | ActionType::TradeAccept { .. } | ActionType::TradeReject { .. } => {
+                self.record_event(agent_id, &agent_name, "trade",
+                    &format!("{} 发起交易请求", agent_name), "#44FFAA");
+                ActionResult::Success
+            }
+            ActionType::AllyPropose { .. } | ActionType::AllyAccept { .. } | ActionType::AllyReject { .. } => {
+                self.record_event(agent_id, &agent_name, "ally",
+                    &format!("{} 发起结盟请求", agent_name), "#AAFF44");
+                ActionResult::Success
+            }
+            _ => ActionResult::NotImplemented,
+        }
     }
 
     /// 处理遗产交互（任务 2.1-2.4）

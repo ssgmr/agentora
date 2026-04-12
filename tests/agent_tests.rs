@@ -1,0 +1,244 @@
+//! 单元测试 - Agent 模块 (阶段3新功能)
+//!
+//! 5.1 临时偏好系统 | 5.2 交易逻辑 | 5.3 战斗逻辑 | 5.4 perceive_nearby
+
+use agentora_core::agent::Agent;
+use agentora_core::agent::trade::TradeOffer;
+use agentora_core::agent::movement::PerceivedResource;
+use agentora_core::types::{AgentId, Position, ResourceType};
+use std::collections::HashMap;
+
+// ===== 5.1 Agent 临时偏好系统 =====
+
+#[test]
+fn test_inject_preference_new() {
+    let mut agent = Agent::new(AgentId::default(), "test".into(), Position::new(0, 0));
+    assert!(agent.temp_preferences.is_empty());
+
+    agent.inject_preference(2, 0.3, 10);
+
+    assert_eq!(agent.temp_preferences.len(), 1);
+    let pref = &agent.temp_preferences[0];
+    assert_eq!(pref.dimension, 2);
+    assert!((pref.boost - 0.3).abs() < f32::EPSILON);
+    assert_eq!(pref.remaining_ticks, 10);
+}
+
+#[test]
+fn test_inject_preference_stack_same_dimension() {
+    let mut agent = Agent::new(AgentId::default(), "test".into(), Position::new(0, 0));
+    agent.inject_preference(2, 0.3, 10);
+    agent.inject_preference(2, 0.2, 5);
+
+    assert_eq!(agent.temp_preferences.len(), 1);
+    let pref = &agent.temp_preferences[0];
+    assert!((pref.boost - 0.5).abs() < f32::EPSILON);
+    assert_eq!(pref.remaining_ticks, 10); // 取较大值
+}
+
+#[test]
+fn test_tick_preferences_expire() {
+    let mut agent = Agent::new(AgentId::default(), "test".into(), Position::new(0, 0));
+    agent.inject_preference(1, 0.3, 2);
+
+    agent.tick_preferences();
+    assert_eq!(agent.temp_preferences.len(), 1);
+    assert_eq!(agent.temp_preferences[0].remaining_ticks, 1);
+
+    agent.tick_preferences();
+    assert!(agent.temp_preferences.is_empty());
+}
+
+#[test]
+fn test_effective_motivation_with_preference() {
+    let mut agent = Agent::new(AgentId::default(), "test".into(), Position::new(0, 0));
+    agent.inject_preference(0, 0.3, 5);
+
+    let effective = agent.effective_motivation();
+    // 基础生存=0.5, boost=0.3
+    assert!((effective[0] - 0.8).abs() < f32::EPSILON);
+    // 其他维度不受影响
+    assert!((effective[1] - 0.5).abs() < f32::EPSILON);
+}
+
+#[test]
+fn test_effective_motivation_clamp() {
+    let mut agent = Agent::new(AgentId::default(), "test".into(), Position::new(0, 0));
+    agent.inject_preference(0, 0.8, 5); // 0.5 + 0.8 = 1.3 → clamp to 1.0
+
+    let effective = agent.effective_motivation();
+    assert!((effective[0] - 1.0).abs() < f32::EPSILON);
+}
+
+// ===== 5.2 交易逻辑 =====
+
+fn make_test_trade(offer: ResourceType, offer_amount: u32, want: ResourceType, want_amount: u32) -> TradeOffer {
+    let mut offer_map = HashMap::new();
+    offer_map.insert(offer, offer_amount);
+    let mut want_map = HashMap::new();
+    want_map.insert(want, want_amount);
+
+    let proposer = Agent::new(AgentId::default(), "proposer".into(), Position::new(0, 0));
+    proposer.propose_trade(AgentId::default(), offer_map, want_map)
+}
+
+#[test]
+fn test_accept_trade_sufficient_resources() {
+    let mut acceptor = Agent::new(AgentId::default(), "acceptor".into(), Position::new(0, 0));
+    // 给予足够资源来接受交易
+    acceptor.gather(ResourceType::Food, 10);
+
+    let trade = make_test_trade(ResourceType::Wood, 5, ResourceType::Food, 3);
+
+    // 发起方有足够offer资源
+    let mut proposer_inv = HashMap::new();
+    proposer_inv.insert("wood".to_string(), 10);
+
+    assert!(acceptor.accept_trade(&trade, &proposer_inv));
+    // acceptor 付出3 food, 获得5 wood
+    assert_eq!(acceptor.inventory.get("food").copied().unwrap_or(0), 7);
+    assert_eq!(acceptor.inventory.get("wood").copied().unwrap_or(0), 5);
+}
+
+#[test]
+fn test_accept_trade_insufficient_own_resources() {
+    let mut acceptor = Agent::new(AgentId::default(), "acceptor".into(), Position::new(0, 0));
+    // 没有足够资源
+
+    let trade = make_test_trade(ResourceType::Wood, 5, ResourceType::Food, 10);
+
+    let proposer_inv = HashMap::new();
+    assert!(!acceptor.accept_trade(&trade, &proposer_inv));
+}
+
+#[test]
+fn test_accept_trade_fraud_detection() {
+    let mut acceptor = Agent::new(AgentId::default(), "acceptor".into(), Position::new(0, 0));
+    acceptor.gather(ResourceType::Food, 10);
+
+    let trade = make_test_trade(ResourceType::Wood, 10, ResourceType::Food, 3);
+    // 发起方实际只有5 wood，不足offer的10
+    let mut proposer_inv = HashMap::new();
+    proposer_inv.insert("wood".to_string(), 5);
+
+    assert!(!acceptor.accept_trade(&trade, &proposer_inv));
+}
+
+// ===== 5.3 战斗逻辑 =====
+
+#[test]
+fn test_attack_deals_damage() {
+    let mut attacker = Agent::new(AgentId::default(), "attacker".into(), Position::new(0, 0));
+    let mut target = Agent::new(AgentId::default(), "target".into(), Position::new(0, 0));
+    target.health = 100;
+
+    let result = attacker.attack(&mut target, 25);
+
+    assert_eq!(result.damage, 25);
+    assert_eq!(target.health, 75);
+    assert!(result.target_alive);
+}
+
+#[test]
+fn test_attack_kills_target() {
+    let mut attacker = Agent::new(AgentId::default(), "attacker".into(), Position::new(0, 0));
+    let mut target = Agent::new(AgentId::default(), "target".into(), Position::new(0, 0));
+    target.health = 10;
+
+    let result = attacker.attack(&mut target, 15);
+
+    assert_eq!(target.health, 0);
+    assert!(!result.target_alive);
+}
+
+#[test]
+fn test_attack_sets_enemy_relation() {
+    let mut attacker = Agent::new(AgentId::default(), "attacker".into(), Position::new(0, 0));
+    let mut target = Agent::new(AgentId::default(), "target".into(), Position::new(0, 0));
+
+    attacker.attack(&mut target, 5);
+
+    // 双方互相标记为敌人
+    assert!(attacker.relations.get(&target.id).unwrap().trust == 0.0);
+    assert!(target.relations.get(&attacker.id).unwrap().trust == 0.0);
+}
+
+#[test]
+fn test_attack_no_negative_health() {
+    let mut attacker = Agent::new(AgentId::default(), "attacker".into(), Position::new(0, 0));
+    let mut target = Agent::new(AgentId::default(), "target".into(), Position::new(0, 0));
+    target.health = 5;
+
+    attacker.attack(&mut target, 100);
+
+    assert_eq!(target.health, 0); // saturating_sub 不会溢出到负数
+}
+
+// ===== 5.4 perceive_nearby =====
+
+#[test]
+fn test_perceive_resources_in_range() {
+    let agent = Agent::new(AgentId::default(), "agent".into(), Position::new(50, 50));
+
+    // 模拟世界数据
+    let resource_data = |pos: &Position| -> Option<(ResourceType, u32)> {
+        if pos.x == 52 && pos.y == 50 {
+            Some((ResourceType::Food, 5))
+        } else if pos.x == 48 && pos.y == 51 {
+            Some((ResourceType::Water, 3))
+        } else {
+            None
+        }
+    };
+
+    let result = agent.perceive_nearby::<_, _, ()>(
+        |_| None,  // 无其他agent
+        resource_data,
+        256,
+    );
+
+    assert_eq!(result.nearby_resources.len(), 2);
+    assert_eq!(result.position, Position::new(50, 50));
+}
+
+#[test]
+fn test_perceive_resources_out_of_range() {
+    let agent = Agent::new(AgentId::default(), "agent".into(), Position::new(50, 50));
+
+    let resource_data = |pos: &Position| -> Option<(ResourceType, u32)> {
+        // 距离10格，超出视野半径5
+        if pos.x == 60 && pos.y == 50 {
+            Some((ResourceType::Food, 5))
+        } else {
+            None
+        }
+    };
+
+    let result = agent.perceive_nearby::<_, _, ()>(
+        |_| None,
+        resource_data,
+        256,
+    );
+
+    assert_eq!(result.nearby_resources.len(), 0);
+}
+
+#[test]
+fn test_perceive_map_boundary_respected() {
+    let agent = Agent::new(AgentId::default(), "agent".into(), Position::new(253, 253));
+
+    let resource_data = |pos: &Position| -> Option<(ResourceType, u32)> {
+        Some((ResourceType::Iron, 1))
+    };
+
+    let result = agent.perceive_nearby::<_, _, ()>(
+        |_| None,
+        resource_data,
+        256,
+    );
+
+    // 在角落，视野被地图边界截断
+    // 253=248..255, 253=248..255 → 8×8-1=63个位置(排除自己)
+    // 但因为resource_data对所有位置都返回Some，所以nearby_resources=63
+    assert_eq!(result.nearby_resources.len(), 63);
+}

@@ -71,6 +71,7 @@ dependencies = [
 name = "agentora-bridge"
 version = "0.1.0"
 dependencies = [
+ "agentora-ai",
  "agentora-core",
  "anyhow",
  "godot",
@@ -78,6 +79,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
+ "toml",
  "tracing",
 ]
 

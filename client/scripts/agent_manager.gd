@@ -1,20 +1,22 @@
 # AgentManager - Agent 管理器
-# 创建和管理 Agent 节点
+# 支持增量 delta 更新 + snapshot 一致性校验
 extends Node2D
 
 const AGENT_COLOR = Color(0.2, 0.6, 0.9)
 const AGENT_SIZE = 24
 const SELECTION_COLOR = Color.YELLOW
 const LABEL_FONT_SIZE = 11
+const MAX_DELTA_PER_FRAME = 100
 
 var _agent_idle_texture: Texture2D
 var _agent_selected_texture: Texture2D
 var _agent_nodes: Dictionary = {}
 var _selected_agent_id: String = ""
+var _pending_deltas: Array = []
 
 
 func _ready() -> void:
-	print("[AgentManager] Agent 管理器初始化")
+	print("[AgentManager] Agent 管理器初始化（增量渲染模式）")
 
 	# 加载 Agent 纹理（可选）
 	_agent_idle_texture = load("res://assets/sprites/agent_idle.png")
@@ -25,24 +27,92 @@ func _ready() -> void:
 		print("[AgentManager] Agent 纹理加载失败，使用颜色回退")
 
 	# 连接信号
-	var bridge = get_node_or_null("/root/SimulationBridge")
+	var bridge = get_node_or_null("../../SimulationBridge")
 	if bridge:
 		bridge.world_updated.connect(_on_world_updated)
 		bridge.agent_selected.connect(_on_agent_selected)
+		# 新增：连接 delta 事件
+		if bridge.has_signal("agent_delta"):
+			bridge.agent_delta.connect(_on_agent_delta)
+			print("[AgentManager] agent_delta 信号已连接")
+
+
+func _physics_process(_delta: float) -> void:
+	# 每帧最多处理 MAX_DELTA_PER_FRAME 个 delta，剩余留给下一帧
+	var processed = 0
+	while _pending_deltas.size() > 0 and processed < MAX_DELTA_PER_FRAME:
+		var delta_data = _pending_deltas.pop_front()
+		_process_delta(delta_data)
+		processed += 1
+
+
+func _on_agent_delta(delta_data: Dictionary) -> void:
+	_pending_deltas.append(delta_data)
+
+
+func _process_delta(delta_data: Dictionary) -> void:
+	var event_type = delta_data.get("type", "")
+
+	match event_type:
+		"agent_moved":
+			var agent_id = delta_data.get("id", "")
+			_update_or_create_agent(agent_id, delta_data)
+
+		"agent_died":
+			var agent_id = delta_data.get("id", "")
+			_remove_agent(agent_id)
+
+		"agent_spawned":
+			var agent_id = delta_data.get("id", "")
+			_create_agent_node(agent_id, delta_data)
+
+
+func _update_or_create_agent(agent_id: String, data: Dictionary) -> void:
+	var agent_node: Node2D = _agent_nodes.get(agent_id)
+
+	if agent_node == null:
+		# Agent 不存在，创建新的
+		agent_node = _create_agent_node(agent_id, data)
+		add_child(agent_node)
+		_agent_nodes[agent_id] = agent_node
+	else:
+		# 增量更新：只改位置
+		var pos: Vector2 = data.get("position", Vector2.ZERO)
+		agent_node.position = pos * 16  # 转换为像素坐标
+
+		# 更新健康值（通过 modulate 调整透明度）
+		var sprite: Sprite2D = agent_node.get_node_or_null("Sprite")
+		if sprite:
+			var health_ratio: float = float(data.get("health", 100)) / float(data.get("max_health", 100))
+			sprite.modulate.a = health_ratio
+
+		# 更新 Alive 状态
+		var is_alive: bool = data.get("is_alive", true)
+		agent_node.visible = is_alive
 
 
 func _on_world_updated(snapshot: Dictionary) -> void:
 	var agents: Dictionary = snapshot.get("agents", {})
 
-	# 更新或创建 Agent 节点
+	# 一致性校验：创建 snapshot 中有但本地缺失的 agent
 	for agent_id in agents.keys():
-		var agent_data: Dictionary = agents[agent_id]
-		_update_agent(agent_id, agent_data)
+		if not _agent_nodes.has(agent_id):
+			var agent_data = agents[agent_id]
+			var agent_node = _create_agent_node(agent_id, agent_data)
+			add_child(agent_node)
+			_agent_nodes[agent_id] = agent_node
+			var pos: Vector2 = agent_data.get("position", Vector2.ZERO)
+			print("[AgentManager] 一致性修复：创建缺失的 Agent %s 在 (%.0f, %.0f)" % [agent_id, pos.x, pos.y])
 
-	# 删除不存在的 Agent
+	# 一致性校验：删除本地有但 snapshot 中不存在的 agent（幽灵 agent）
+	var to_remove = []
 	for existing_id in _agent_nodes.keys():
 		if not agents.has(existing_id):
-			_remove_agent(existing_id)
+			to_remove.append(existing_id)
+
+	for agent_id in to_remove:
+		_remove_agent(agent_id)
+		print("[AgentManager] 一致性修复：移除幽灵 Agent ", agent_id)
 
 
 func _update_agent(agent_id: String, data: Dictionary) -> void:
@@ -159,7 +229,7 @@ func _input(event: InputEvent) -> void:
 			var distance = agent_node.position.distance_to(mouse_pos)
 
 			if distance < AGENT_SIZE:
-				var bridge = get_node_or_null("/root/SimulationBridge")
+				var bridge = get_node_or_null("../../SimulationBridge")
 				if bridge:
 					bridge.select_agent(agent_id)
 				break

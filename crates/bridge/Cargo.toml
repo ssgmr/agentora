@@ -14,6 +14,9 @@ anyhow.workspace = true
 godot.workspace = true
 
 agentora-core = { workspace = true }
+agentora-ai = { workspace = true }
+
+toml = "0.8"
 
 [lib]
 crate-type = ["cdylib"]  # GDExtension需要动态库

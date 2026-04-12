@@ -85,7 +85,7 @@ func screen_to_world(screen_pos: Vector2) -> Vector2:
 
 func focus_on_agent(agent_id: String) -> void:
 	# 获取Agent位置并移动摄像机
-	var bridge = get_node_or_null("/root/SimulationBridge")
+	var bridge = get_node_or_null("../../SimulationBridge")
 	if bridge:
 		var data = bridge.get_agent_data(agent_id)
 		var agent_pos: Vector2 = data.get("position", Vector2.ZERO)

@@ -22,8 +22,9 @@ pub const DIMENSION_NAMES: [&str; 6] = [
     "意义与传承",
 ];
 
-/// 惯性衰减系数
-pub const DECAY_ALPHA: f32 = 0.85;
+/// 惯性衰减系数（值越大衰减越慢，动机变化越持久）
+/// 0.99 意味着每 tick 只向中性值回归 1%，6 次 decay 后仍保留约 94% 的变化
+pub const DECAY_ALPHA: f32 = 0.99;
 pub const NEUTRAL_VALUE: f32 = 0.5;
 
 /// 6维动机向量

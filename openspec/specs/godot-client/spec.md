@@ -8,14 +8,15 @@
 
 ### Requirement: GDExtension Bridge
 
-系统 SHALL 通过godot-rust GDExtension将Rust模拟核心桥接至Godot 4。SimulationBridge作为Godot节点运行，在单独的Tokio运行时中驱动模拟，通过mpsc Channel将WorldSnapshot传递至Godot主线程。
+系统 SHALL 通过godot-rust GDExtension将Rust模拟核心桥接至Godot 4。SimulationBridge作为Godot节点运行，在`crates/bridge/src/lib.rs`中实现，通过mpsc Channel将WorldSnapshot传递至Godot主线程。
 
 #### Scenario: 启动模拟
 
 - **WHEN** Godot主场景加载完成
-- **THEN** SimulationBridge节点 SHALL 启动Tokio运行时
+- **THEN** SimulationBridge节点（Rust GDExtension类）SHALL 启动Tokio运行时
 - **AND** 初始化World/Network/Sync/AI模块
 - **AND** 开始tick循环
+- **AND** autoload 配置从 `res://scripts/simulation_bridge.gd` 切换为 GDExtension 注册的类型
 
 #### Scenario: 快照传递
 
@@ -28,6 +29,11 @@
 - **WHEN** Godot场景退出
 - **THEN** 系统 SHALL 优雅关闭Tokio运行时
 - **AND** 保存世界状态至本地存储
+
+#### Scenario: GDExtension 加载失败回退
+
+- **WHEN** GDExtension DLL 文件不存在或版本不兼容
+- **THEN** 系统 SHALL 回退至 GDScript 模拟版 `res://scripts/simulation_bridge.gd`
 
 ### Requirement: 2D地图渲染
 

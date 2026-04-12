@@ -41,10 +41,16 @@ func _ready() -> void:
 		_setup_styling()
 
 	# 连接信号
-	var bridge = get_node_or_null("/root/SimulationBridge")
+	# NarrativeFeed 在 UI 下，SimulationBridge 在 Main 下，需要上两层
+	var bridge = get_node_or_null("../../SimulationBridge")
 	if bridge:
+		print("[NarrativeFeed] 找到 bridge，检查信号...")
+		print("[NarrativeFeed] 有 narrative_event 信号: ", bridge.has_signal("narrative_event"))
 		# 只连接 narrative_event，不连接 world_updated（避免重复）
 		bridge.narrative_event.connect(_on_narrative_event)
+		print("[NarrativeFeed] narrative_event 信号已连接")
+	else:
+		printerr("[NarrativeFeed] 未找到 SimulationBridge! 当前路径: ", get_path())
 
 
 func _setup_styling() -> void:
@@ -78,7 +84,10 @@ func _setup_ui_fallback() -> void:
 	_setup_styling()
 
 
-func _on_narrative_event(event: Dictionary) -> void:
+func _on_narrative_event(event: Variant) -> void:
+	print("[NarrativeFeed] 收到事件: type=%s agent=%s desc=%s" % [
+		event.get("event_type", "?"), event.get("agent_name", "?"), event.get("description", "").substr(0, min(30, len(event.get("description", ""))))
+	])
 	add_event(event)
 
 
@@ -91,8 +100,8 @@ func add_event(event: Dictionary) -> void:
 	# 获取颜色
 	var color: String = EVENT_COLORS.get(event_type, "#FFFFFF")
 
-	# 格式化事件文本
-	var formatted: String = "[color=%s][tick %d] %s: %s[/color]\n" % [color, tick, agent_name, description]
+	# 格式化事件文本（description 已包含 agent 名字）
+	var formatted: String = "[color=%s][tick %d] %s[/color]\n" % [color, tick, description]
 
 	# 添加到文本框
 	var current_text = _text_box.text

@@ -12,10 +12,32 @@ func _ready() -> void:
 	_setup_sliders()
 	_setup_buttons()
 
-	# 连接信号
-	var bridge = get_node_or_null("/root/SimulationBridge")
+	var bridge = get_node_or_null("../../../../SimulationBridge")
 	if bridge:
 		bridge.agent_selected.connect(_on_agent_selected)
+		bridge.world_updated.connect(_on_world_updated)
+
+
+func _on_world_updated(snapshot: Dictionary) -> void:
+	if _selected_agent_id.is_empty():
+		var agents = snapshot.get("agents", {})
+		if not agents.is_empty():
+			for agent_data in agents.values():
+				if agent_data.get("is_alive", false):
+					_selected_agent_id = agent_data.get("id", "")
+					break
+
+	if not _selected_agent_id.is_empty():
+		var bridge = get_node_or_null("../../../../SimulationBridge")
+		if bridge:
+			var data = bridge.get_agent_data(_selected_agent_id)
+			if not data.is_empty():
+				var motivation: Array = data.get("motivation", [])
+				if not motivation.is_empty():
+					for i in range(6):
+						_sliders[i].value = motivation[i]
+						if i < _value_labels.size():
+							_value_labels[i].text = "%.2f" % motivation[i]
 
 
 func _setup_sliders() -> void:
@@ -126,7 +148,7 @@ func _on_slider_changed(dimension: int, value: float) -> void:
 
 	# 发送到Rust
 	if not _selected_agent_id.is_empty():
-		var bridge = get_node_or_null("/root/SimulationBridge")
+		var bridge = get_node_or_null("../../../../SimulationBridge")
 		if bridge:
 			bridge.adjust_motivation(_selected_agent_id, dimension, value)
 
@@ -135,10 +157,11 @@ func _on_agent_selected(agent_id: String) -> void:
 	_selected_agent_id = agent_id
 
 	# 更新滑块显示当前Agent的动机值
-	var bridge = get_node_or_null("/root/SimulationBridge")
+	var bridge = get_node_or_null("../../../../SimulationBridge")
 	if bridge:
 		var data = bridge.get_agent_data(agent_id)
 		var motivation: Array = data.get("motivation", [0.5, 0.5, 0.5, 0.5, 0.5, 0.5])
+		printerr("[GuidePanel] motivation: %s" % str(motivation))
 
 		for i in range(6):
 			_sliders[i].value = motivation[i]
@@ -148,27 +171,27 @@ func _on_agent_selected(agent_id: String) -> void:
 
 func _inject_explore_preference() -> void:
 	if not _selected_agent_id.is_empty():
-		var bridge = get_node_or_null("/root/SimulationBridge")
+		var bridge = get_node_or_null("../../../../SimulationBridge")
 		if bridge:
 			bridge.inject_preference(_selected_agent_id, 2, 0.3, 10)  # 认知维度
 
 
 func _inject_trade_preference() -> void:
 	if not _selected_agent_id.is_empty():
-		var bridge = get_node_or_null("/root/SimulationBridge")
+		var bridge = get_node_or_null("../../../../SimulationBridge")
 		if bridge:
 			bridge.inject_preference(_selected_agent_id, 1, 0.3, 10)  # 社交维度
 
 
 func _inject_build_preference() -> void:
 	if not _selected_agent_id.is_empty():
-		var bridge = get_node_or_null("/root/SimulationBridge")
+		var bridge = get_node_or_null("../../../../SimulationBridge")
 		if bridge:
 			bridge.inject_preference(_selected_agent_id, 3, 0.3, 10)  # 表达维度
 
 
 func _toggle_pause() -> void:
-	var bridge = get_node_or_null("/root/SimulationBridge")
+	var bridge = get_node_or_null("../../../../SimulationBridge")
 	if bridge:
 		if bridge.is_paused:
 			bridge.start()
@@ -183,7 +206,7 @@ func _reset_motivations() -> void:
 			_value_labels[i].text = "0.50"
 
 	if not _selected_agent_id.is_empty():
-		var bridge = get_node_or_null("/root/SimulationBridge")
+		var bridge = get_node_or_null("../../../../SimulationBridge")
 		if bridge:
 			for i in range(6):
 				bridge.adjust_motivation(_selected_agent_id, i, 0.5)

@@ -33,7 +33,7 @@ func _ready() -> void:
 	_terrain_textures["desert"] = load("res://assets/textures/terrain_desert.png")
 
 	# 连接信号
-	var bridge = get_node_or_null("/root/SimulationBridge")
+	var bridge = get_node_or_null("../../SimulationBridge")
 	if bridge:
 		bridge.world_updated.connect(_on_world_updated)
 

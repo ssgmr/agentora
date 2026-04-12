@@ -183,36 +183,49 @@ impl DecisionPipeline {
 
         // 阶段 1: 硬约束过滤 - 生成合法候选动作
         let filtered_actions = self.rule_engine.filter_hard_constraints(world_state);
-        tracing::debug!("硬约束过滤后剩余 {} 个候选动作", filtered_actions.len());
+        println!("[Decision] Agent {} 硬约束过滤后剩余 {} 个候选动作", agent_id.as_str(), filtered_actions.len());
 
         // 阶段 2: 上下文构建 (Prompt 组装)
         let prompt = self.build_prompt(agent_id, motivation, spark, world_state);
-        tracing::debug!("Prompt 长度：{} chars", prompt.len());
+        println!("[Decision] Agent {} Prompt 长度：{} chars", agent_id.as_str(), prompt.len());
 
         // 阶段 3: LLM 调用
         match self.call_llm(&prompt).await {
             Ok(llm_candidates) => {
-                tracing::info!("LLM 返回 {} 个候选动作", llm_candidates.len());
+                println!("[Decision] Agent {} LLM 返回 {} 个候选动作", agent_id.as_str(), llm_candidates.len());
 
                 // 阶段 4: 规则校验
                 let validated: Vec<ActionCandidate> = llm_candidates
                     .into_iter()
-                    .filter(|c| {
-                        let is_valid = self.rule_engine.validate_action(c, world_state);
+                    .filter_map(|c| {
+                        let is_valid = self.rule_engine.validate_action(&c, world_state);
                         if !is_valid {
-                            tracing::debug!("动作校验失败：{:?}", c.action_type);
+                            println!("[Decision] Agent {} 动作校验失败：{:?}", agent_id.as_str(), c.action_type);
+                            // Gather 不合法时，转换为 Explore（向附近移动寻找资源）
+                            if let ActionType::Gather { resource } = &c.action_type {
+                                println!("[Decision] Agent {} Gather {:?} 当前位置无资源，转换为 Explore 兜底", agent_id.as_str(), resource);
+                                return Some(ActionCandidate {
+                                    reasoning: format!("LLM建议采集{:?}但当前位置无资源，改为探索寻找", resource),
+                                    action_type: ActionType::Explore { target_region: 0 },
+                                    target: c.target,
+                                    params: c.params,
+                                    motivation_delta: c.motivation_delta,
+                                    source: c.source,
+                                });
+                            }
+                            return None;
                         }
-                        is_valid
+                        Some(c)
                     })
                     .collect();
 
-                tracing::debug!("规则校验后剩余 {} 个候选动作", validated.len());
+                println!("[Decision] Agent {} 规则校验后剩余 {} 个候选动作", agent_id.as_str(), validated.len());
 
                 // 阶段 5: 动机加权选择
                 if validated.is_empty() {
                     // 无候选通过校验，使用规则引擎兜底
                     let fallback = self.rule_engine.fallback_action(motivation, world_state);
-                    tracing::warn!("LLM 候选均未通过校验，使用规则引擎兜底");
+                    println!("[Decision] Agent {} LLM 候选均未通过校验，使用规则引擎兜底: {:?}", agent_id.as_str(), fallback.action_type);
                     DecisionResult {
                         selected_action: fallback,
                         all_candidates: vec![],
@@ -221,7 +234,7 @@ impl DecisionPipeline {
                 } else if validated.len() == 1 {
                     // 唯一候选直接选择
                     let selected = validated.first().unwrap().clone();
-                    tracing::info!("唯一候选直接选择：{:?}", selected.action_type);
+                    println!("[Decision] Agent {} 唯一候选直接选择：{:?}", agent_id.as_str(), selected.action_type);
                     DecisionResult {
                         selected_action: selected,
                         all_candidates: validated,
@@ -230,7 +243,7 @@ impl DecisionPipeline {
                 } else {
                     // 多候选加权选择
                     let selected = self.select_with_motivation(&validated, motivation);
-                    tracing::info!("动机加权选择：{:?}", selected.action_type);
+                    println!("[Decision] Agent {} 动机加权选择：{:?}", agent_id.as_str(), selected.action_type);
                     DecisionResult {
                         selected_action: selected,
                         all_candidates: validated,
@@ -240,8 +253,9 @@ impl DecisionPipeline {
             }
             Err(e) => {
                 // LLM 调用失败，降级到规则引擎
-                tracing::error!("LLM 调用失败：{}", e);
+                println!("[Decision] Agent {} LLM 调用失败，降级到规则引擎: {}", agent_id.as_str(), e);
                 let fallback = self.rule_engine.fallback_action(motivation, world_state);
+                println!("[Decision] Agent {} 规则引擎兜底: {:?}", agent_id.as_str(), fallback.action_type);
                 DecisionResult {
                     selected_action: fallback,
                     all_candidates: vec![],
@@ -347,21 +361,40 @@ impl DecisionPipeline {
                 stop_sequences: vec![],
             };
 
-            match provider.generate(request).await {
-                Ok(response) => {
-                    // 使用 parser 解析 JSON
-                    match parse_action_json(&response.raw_text) {
-                        Ok(json_value) => {
-                            // 将 JSON 转换为 ActionCandidate
-                            match self.json_to_candidate(json_value) {
-                                Ok(candidate) => Ok(vec![candidate]),
-                                Err(e) => Err(format!("转换候选动作失败：{}", e)),
-                            }
+            // 使用 tokio 超时确保不会无限期挂起
+            let generate_fut = provider.generate(request);
+            let response = match tokio::time::timeout(std::time::Duration::from_secs(60), generate_fut).await {
+                Ok(Ok(resp)) => {
+                    println!("[Decision] LLM 调用成功，raw_text 前200字符: {:.200}", resp.raw_text);
+                    resp
+                }
+                Ok(Err(e)) => {
+                    println!("[Decision] LLM 调用失败: {}", e);
+                    return Err(format!("LLM 调用失败：{}", e));
+                }
+                Err(_) => {
+                    println!("[Decision] LLM 调用超时（60秒）");
+                    return Err("LLM 调用超时（60秒）".to_string());
+                }
+            };
+
+            // 使用 parser 解析 JSON
+            match parse_action_json(&response.raw_text) {
+                Ok(json_value) => {
+                    println!("[Decision] JSON 解析成功: {}", json_value);
+                    // 将 JSON 转换为 ActionCandidate
+                    match self.json_to_candidate(json_value) {
+                        Ok(candidate) => Ok(vec![candidate]),
+                        Err(e) => {
+                            println!("[Decision] 转换候选动作失败: {}", e);
+                            Err(format!("转换候选动作失败：{}", e))
                         }
-                        Err(e) => Err(format!("JSON 解析失败：{}", e)),
                     }
                 }
-                Err(e) => Err(format!("LLM 调用失败：{}", e)),
+                Err(e) => {
+                    println!("[Decision] JSON 解析失败: {}，原始响应: {}", e, response.raw_text);
+                    Err(format!("JSON 解析失败：{}", e))
+                }
             }
         } else {
             Err("未配置 LLM Provider".to_string())
@@ -424,53 +457,71 @@ impl DecisionPipeline {
         use crate::types::{Direction, ResourceType, StructureType};
 
         match type_str {
-            "Move" => {
-                let dir = json["params"]["direction"].as_str()?;
+            "Move" | "move" | "移动" => {
+                let dir = json["params"]["direction"].as_str().unwrap_or("north");
                 let direction = match dir {
                     "North" | "north" | "北" => Direction::North,
                     "South" | "south" | "南" => Direction::South,
                     "East" | "east" | "东" => Direction::East,
                     "West" | "west" | "西" => Direction::West,
-                    _ => return None,
+                    _ => Direction::North,
                 };
                 Some(ActionType::Move { direction })
             }
-            "Gather" => {
-                let res = json["params"]["resource"].as_str()?;
+            "Gather" | "gather" | "采集" | "收集" => {
+                let res = json["params"]["resource"].as_str().unwrap_or("food");
                 let resource = match res {
                     "iron" | "Iron" | "铁矿" => ResourceType::Iron,
                     "food" | "Food" | "食物" => ResourceType::Food,
                     "wood" | "Wood" | "木材" => ResourceType::Wood,
                     "water" | "Water" | "水源" => ResourceType::Water,
                     "stone" | "Stone" | "石材" => ResourceType::Stone,
-                    _ => return None,
+                    _ => ResourceType::Food,
                 };
                 Some(ActionType::Gather { resource })
             }
-            "Wait" => Some(ActionType::Wait),
-            "Explore" => {
+            "Wait" | "wait" | "等待" => Some(ActionType::Wait),
+            "Explore" | "explore" | "探索" => {
                 let region = json["params"]["target_region"].as_u64().unwrap_or(0) as u32;
                 Some(ActionType::Explore { target_region: region })
             }
-            "Talk" => {
-                let message = json["params"]["message"].as_str()?.to_string();
-                Some(ActionType::Talk { message })
+            "Talk" | "talk" | "对话" | "交流" => {
+                // 优先从 params.message 获取，其次从 target 获取，最后用默认值
+                let message = json["params"]["message"]
+                    .as_str()
+                    .or_else(|| json["params"]["topic"].as_str())
+                    .unwrap_or("你好");
+                Some(ActionType::Talk { message: message.to_string() })
             }
-            "Build" => {
-                let structure = json["params"]["structure"].as_str()?;
+            "Build" | "build" | "建造" => {
+                let structure = json["params"]["structure"].as_str().unwrap_or("Camp");
                 let structure_type = match structure {
                     "Camp" | "camp" | "营地" => StructureType::Camp,
                     "Fence" | "fence" | "围栏" => StructureType::Fence,
                     "Warehouse" | "warehouse" | "仓库" => StructureType::Warehouse,
-                    _ => return None,
+                    _ => StructureType::Camp,
                 };
                 Some(ActionType::Build { structure: structure_type })
             }
-            "Attack" => {
-                let target_id = json["params"]["target_id"].as_str()?;
+            "Attack" | "attack" | "攻击" => {
+                let target_id = json["params"]["target_id"]
+                    .as_str()
+                    .or_else(|| json["target"].as_str())
+                    .unwrap_or("unknown");
                 Some(ActionType::Attack { target_id: AgentId::new(target_id) })
             }
-            _ => None,
+            "TradeOffer" | "trade" | "交易" => {
+                // 交易暂时用 Wait 兜底
+                Some(ActionType::Wait)
+            }
+            "AllyPropose" | "ally" | "结盟" => {
+                // 结盟暂时用 Wait 兜底
+                Some(ActionType::Wait)
+            }
+            _ => {
+                println!("[Decision] 未知 action_type: {}，使用 Wait 兜底", type_str);
+                Some(ActionType::Wait)
+            }
         }
     }
 

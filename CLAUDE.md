@@ -93,13 +93,14 @@ crates/
 
 ### Godot客户端 (`client/`)
 Godot 4 GDScript客户端，负责渲染和交互：
-- `simulation_bridge.gd` — 桥接GDScript与Rust GDExtension
 - `agent_manager.gd` — Agent生命周期和状态管理
 - `world_renderer.gd` — TileMap世界渲染
 - `camera_controller.gd` — 相机控制
 - `narrative_feed.gd` — 叙事流面板
 - `motivation_radar.gd` — 6维动机雷达图
 - `guide_panel.gd` — 引导面板
+
+**注意**：`simulation_bridge.gd` 是已废弃的占位文件（生成随机假数据），场景中的 `SimulationBridge` 节点使用 Rust GDExtension 类型，与该脚本无关。应删除。
 
 #### Godot可执行文件路径
 - 路径：`D:/tool/Godot/Godot_v4.6.2-stable_win64.exe`（注意是文件，不是目录）
@@ -108,26 +109,38 @@ Godot 4 GDScript客户端，负责渲染和交互：
 #### UI布局验证：自动截图
 外部屏幕截图工具（nircmd、snipping tool、Windows.Graphics.Capture等）无法捕获Godot窗口（Vulkan渲染器绕过GDI）。**必须使用Godot内部截图**。
 
+**关键陷阱：`.godot/imported/` 缓存损坏**
+- Godot 导入 PNG 后会在 `.godot/imported/` 生成 `.ctex` 缓存文件
+- 缓存损坏时会导致 `Failed loading resource` 错误，即使 PNG 文件本身是合法的
+- **解决**：`rm -rf client/.godot/imported/` 删除缓存，然后打开 Godot 编辑器让它重新导入
+- 验证 PNG 是否合法：`file client/assets/textures/*.png` 应显示 `PNG image data`
+
 **步骤：**
 1. 创建 `client/scripts/auto_screenshot.gd`（作为Autoload加载）：
 ```gdscript
 extends Node
 func _ready():
-    await get_tree().create_timer(3.0).timeout
+    print("[AutoScreenshot] Auto screenshot loaded, waiting 15s...")
+    await get_tree().create_timer(15.0).timeout
+    print("[AutoScreenshot] Taking screenshot now...")
     var viewport = get_viewport()
     var img = viewport.get_texture().get_image()
     img.save_png("D:/work/code/rust/agentora/screenshot_godot.png")
     print("[AutoScreenshot] Saved screenshot_godot.png")
     get_tree().quit()
 ```
-2. 在 `client/project.godot` 中添加Autoload：
+2. 在 `client/project.godot` 的 `[autoload]` 段下添加：
 ```ini
-[autoload]
 AutoScreenshot="*res://scripts/auto_screenshot.gd"
 ```
-3. 运行后自动截图到项目根目录并退出，用 `Read` 工具查看PNG
+3. 运行 Godot：`"D:/tool/Godot/Godot_v4.6.2-stable_win64.exe" --path client `
 
-**重要：** 验证完成后删除 `auto_screenshot.gd` 和Autoload配置，避免每次运行都截图退出。
+4. 用 `Read` 工具查看 `screenshot_godot.png`
+
+**重要：**
+- 验证时不要用 headless 模式，Vulkan 渲染需要窗口
+- 验证完成后注释 `[autoload]` 下的 AutoScreenshot 配置，避免每次运行都截图退出
+- 截图路径必须使用绝对路径 `D:/work/code/rust/agentora/screenshot_godot.png`，不能用 `user://`（无法从外部读取）
 
 #### Godot UI布局经验总结
 - **CanvasLayer + Control锚定**：Control节点在CanvasLayer下必须设置 `layout_mode = 2` 才能生效
@@ -177,9 +190,14 @@ AutoScreenshot="*res://scripts/auto_screenshot.gd"
 GDExtension桥接Rust核心引擎到Godot客户端：
 - **`SimulationBridge`** — Godot Node扩展，通过mpsc通道与模拟线程通信
 - **`SimCommand`** — 控制命令枚举（Start/Pause/SetTickInterval/AdjustMotivation/InjectPreference）
-- **双线程模型** — Godot主线程渲染 + Rust后台模拟线程（内嵌Tokio运行时）
-- **`WorldSnapshot`** — 每tick序列化世界状态发送至Godot
-- **`agent_decision()`** — 简化决策循环（5维动机 + 规则引擎）
+- **`SimConfig`** — 从`config/sim.toml`加载模拟配置（Agent数量/NPC数量/决策间隔）
+- **多Agent独立心跳** — 每个Agent独立tokio task运行决策循环，不等待其他Agent
+- **双通道推送** — delta通道（实时动作推送）+ snapshot通道（5秒完整状态兜底）
+- **`run_agent_loop`** — 每个Agent独立决策task，LLM调用有60s超时保护
+- **`run_apply_loop`** — 串行应用动作，并发发送delta到Godot
+- **`run_snapshot_loop`** — 每5秒生成完整WorldSnapshot
+- **`AgentDelta`** — 增量更新枚举（AgentMoved/AgentDied/AgentSpawned）
+- **读写分离** — 决策不持锁，Apply阶段串行获取写权限
 - 产物为`cdylib`动态库，复制到`client/bin/agentora_bridge.dll`
 
 **动机引擎** (`crates/core/src/motivation.rs`)
@@ -270,5 +288,4 @@ agentora/
 
 - 代码注释和文档使用中文
 - 许可证：MIT License
-- 设计红线：规则开源可审计，平台抽成≤15%，死亡不重置进度，不售卖数值优势（盈利模式待定）
-- 经济双轨：尘(Dust)软货币 + 星(Star)硬货币，基尼系数<0.6 （经济系统待定）
+- 多主动运行系统，通过打印日志、截图等方式验证、修复问题

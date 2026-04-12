@@ -15,7 +15,7 @@ var _agent_id: String = ""
 
 func _ready() -> void:
 	# 连接信号
-	var bridge = get_node_or_null("/root/SimulationBridge")
+	var bridge = get_node_or_null("../../../../SimulationBridge")
 	if bridge:
 		bridge.agent_selected.connect(_on_agent_selected)
 		bridge.world_updated.connect(_on_world_updated)
@@ -135,17 +135,28 @@ func _on_agent_selected(agent_id: String) -> void:
 
 func _on_world_updated(snapshot: Dictionary) -> void:
 	if _agent_id.is_empty():
-		return
-	_update_from_bridge()
+		var agents = snapshot.get("agents", {})
+		if not agents.is_empty():
+			for agent_data in agents.values():
+				if agent_data.get("is_alive", false):
+					_agent_id = agent_data.get("id", "")
+					_update_from_bridge()
+					return
+
+	if not _agent_id.is_empty():
+		_update_from_bridge()
 
 
 func _update_from_bridge() -> void:
-	var bridge = get_node_or_null("/root/SimulationBridge")
+	var bridge = get_node_or_null("../../../../SimulationBridge")
 	if bridge and not _agent_id.is_empty():
 		var data = bridge.get_agent_data(_agent_id)
-		var motivation: Array = data.get("motivation", [0.5, 0.5, 0.5, 0.5, 0.5, 0.5])
+		if data.is_empty():
+			return
+		var motivation: Array = data.get("motivation", [])
+		if motivation.is_empty():
+			return
 
-		# 转换为Array[float]
 		var float_values: Array[float] = []
 		for v in motivation:
 			float_values.append(float(v))

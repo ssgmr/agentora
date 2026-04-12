@@ -12,6 +12,7 @@ TEXTURES_DIR = os.path.join(SCRIPT_DIR, "..", "assets", "textures")
 SPRITES = {
     "agent_idle.svg": ("agent_idle.png", 32, 32),
     "agent_selected.svg": ("agent_selected.png", 32, 32),
+    "agent.svg": ("agent.png", 32, 32),
 }
 
 # 16x16 textures (terrain, structures, legacies)

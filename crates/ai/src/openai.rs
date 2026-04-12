@@ -45,9 +45,9 @@ impl LlmProvider for OpenAiProvider {
             "temperature": request.temperature,
         });
 
-        // 重试逻辑：最多重试 2 次
+        // 重试逻辑：最多重试 1 次（快速失败，走规则引擎兜底）
         let mut last_error = None;
-        for attempt in 0..=2 {
+        for attempt in 0..=1 {
             if attempt > 0 {
                 tracing::info!("OpenAI Provider 重试第 {} 次", attempt);
             }
@@ -68,7 +68,7 @@ impl LlmProvider for OpenAiProvider {
                     .and_then(|v| v.parse::<u32>().ok())
                     .unwrap_or(60);
 
-                if attempt < 2 {
+                if attempt < 1 {
                     tracing::warn!("被限流，等待 {} 秒后重试", retry_after);
                     tokio::time::sleep(tokio::time::Duration::from_secs(retry_after as u64)).await;
                     last_error = Some(LlmError::RateLimited { retry_after });
@@ -104,6 +104,7 @@ impl LlmProvider for OpenAiProvider {
     }
 
     fn is_available(&self) -> bool {
-        !self.api_key.is_empty()
+        // 端点已配置即视为可用（很多本地/私有部署不需要 API key）
+        !self.api_base.is_empty()
     }
 }

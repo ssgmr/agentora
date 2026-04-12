@@ -19,7 +19,7 @@ func _ready() -> void:
 	print("[Main] 主场景初始化")
 
 	# 连接 SimulationBridge 信号
-	var bridge = get_node_or_null("/root/SimulationBridge")
+	var bridge = get_node_or_null("SimulationBridge")
 	if bridge:
 		bridge.world_updated.connect(_on_world_updated)
 		bridge.agent_selected.connect(_on_agent_selected)
@@ -62,7 +62,7 @@ func _setup_speed_control() -> void:
 
 
 func _on_speed_changed(index: int) -> void:
-	var bridge = get_node_or_null("/root/SimulationBridge")
+	var bridge = get_node_or_null("SimulationBridge")
 	if not bridge:
 		return
 
@@ -96,7 +96,7 @@ func _on_world_updated(snapshot: Dictionary) -> void:
 		world_agent_count_label.text = "Agent 数：%d" % agents.size()
 
 	# 如果已选择 Agent，更新其状态
-	var bridge = get_node_or_null("/root/SimulationBridge")
+	var bridge = get_node_or_null("SimulationBridge")
 	if bridge and not bridge.selected_agent_id.is_empty():
 		var agent_data = bridge.get_agent_data(bridge.selected_agent_id)
 		if not agent_data.is_empty():
@@ -105,7 +105,7 @@ func _on_world_updated(snapshot: Dictionary) -> void:
 
 func _on_agent_selected(agent_id: String) -> void:
 	print("[Main] 选择了 Agent: %s" % agent_id)
-	var bridge = get_node_or_null("/root/SimulationBridge")
+	var bridge = get_node_or_null("SimulationBridge")
 	if bridge:
 		var agent_data = bridge.get_agent_data(agent_id)
 		if not agent_data.is_empty():

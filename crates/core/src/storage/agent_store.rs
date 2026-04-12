@@ -63,6 +63,7 @@ pub fn load_agent(conn: &Connection, id: &AgentId) -> Result<Option<Agent>, rusq
         };
 
         Ok(Agent {
+            temp_preferences: Vec::new(),
             id: AgentId::new(row.get::<_, String>(0)?),
             name: row.get(1)?,
             position: Position::new(row.get(2)?, row.get(3)?),

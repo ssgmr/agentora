@@ -11,6 +11,8 @@
 [node name="Main" type="Node"]
 script = ExtResource("main_script")
 
+[node name="SimulationBridge" type="SimulationBridge" parent="."]
+
 [node name="Camera2D" type="Camera2D" parent="."]
 script = ExtResource("camera_controller")
 zoom = Vector2(1, 1)
