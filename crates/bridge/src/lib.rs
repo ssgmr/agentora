@@ -15,6 +15,8 @@ use agentora_core::{World, WorldSeed, Agent, Position, WorldSnapshot, AgentId, A
 use agentora_core::snapshot::{AgentSnapshot, NarrativeEvent as CoreNarrativeEvent};
 use agentora_core::decision::{DecisionPipeline, Spark};
 use agentora_core::rule_engine::WorldState;
+use agentora_core::vision::scan_vision;
+use agentora_core::memory::MemoryEvent;
 use std::collections::HashMap;
 
 // AI 类型
@@ -365,13 +367,13 @@ impl SimulationBridge {
     }
 
     fn create_llm_provider() -> Option<Box<dyn LlmProvider>> {
-        let config_path = "config/llm.toml";
+        let config_path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/llm.toml");
         match load_llm_config(config_path) {
             Ok(config) => {
-                let endpoint = config.primary.api_base.clone();
+                let model = config.primary.model.clone();
                 godot::global::print(&[Variant::from(format!(
-                    "SimulationBridge: LLM 配置加载成功，endpoint={}",
-                    endpoint
+                    "SimulationBridge: LLM 配置加载成功，model={}",
+                    model
                 ))]);
 
                 let openai = OpenAiProvider::new(
@@ -380,7 +382,7 @@ impl SimulationBridge {
                     config.primary.model,
                 ).with_timeout(config.primary.timeout_seconds);
 
-                let fallback = FallbackChain::new(vec![Box::new(openai)], true);
+                let fallback = FallbackChain::new(vec![Box::new(openai)]);
                 godot::global::print(&[Variant::from("SimulationBridge: LLM Provider 链已创建")]);
                 Some(Box::new(fallback))
             }
@@ -717,70 +719,11 @@ async fn create_npc_agents(
         agent.motivation = agentora_core::motivation::MotivationVector::from_array(template);
 
         let aid = agent.id.clone();
-        world.agents.insert(aid.clone(), agent);
+        world.insert_agent_at(aid.clone(), agent);
         ids.push(aid);
     }
 
     ids
-}
-
-/// NPC 规则引擎决策（不调用 LLM）
-fn npc_rule_decision(agent: &agentora_core::agent::Agent, _world_state: &WorldState) -> Action {
-    use agentora_core::types::ActionType;
-    let mot = agent.effective_motivation();
-    // 动机索引：0=生存, 1=社交, 2=认知, 3=表达, 4=权力, 5=传承
-    let survival = mot[0];
-    let social = mot[1];
-    let cognitive = mot[2];
-    let expression = mot[3];
-
-    // 找出最高动机维度（相对比较，不依赖绝对阈值）
-    // 如果有平局，用位置哈希打破
-    let dims = [survival, social, cognitive, expression];
-    let mut max_idx = 0;
-    let mut max_val = dims[0];
-    for i in 1..4 {
-        if dims[i] > max_val || (dims[i] == max_val && (agent.position.x + agent.position.y + i as u32) % 2 == 0) {
-            max_val = dims[i];
-            max_idx = i;
-        }
-    }
-
-    // 根据最高动机选择动作，并产生对应的动机变化
-    let (action_type, reasoning, motivation_delta) = match max_idx {
-        0 => (
-            ActionType::Explore { target_region: 0 },
-            "生存动机最高，寻找资源".to_string(),
-            [0.12, 0.0, 0.06, 0.0, 0.0, 0.0],  // 生存+认知
-        ),
-        1 => (
-            ActionType::Talk { message: "问候".to_string() },
-            "社交动机最高，尝试交流".to_string(),
-            [0.0, 0.12, 0.0, 0.06, 0.0, 0.0],  // 社交+表达
-        ),
-        2 => (
-            ActionType::Explore { target_region: 0 },
-            "认知动机最高，探索周边".to_string(),
-            [0.06, 0.0, 0.12, 0.0, 0.0, 0.0],  // 认知+生存
-        ),
-        3 => (
-            ActionType::Talk { message: "分享".to_string() },
-            "表达动机最高，分享想法".to_string(),
-            [0.0, 0.06, 0.0, 0.12, 0.0, 0.0],  // 表达+社交
-        ),
-        _ => unreachable!(),
-    };
-
-    println!("[NPC] {} 规则决策: {:?} (生存={:.2} 社交={:.2} 认知={:.2} 表达={:.2})",
-        agent.name, action_type, survival, social, cognitive, expression);
-
-    Action {
-        reasoning,
-        action_type,
-        target: None,
-        params: HashMap::new(),
-        motivation_delta,
-    }
 }
 
 /// Agent 独立决策循环
@@ -815,32 +758,20 @@ async fn run_agent_loop(
             break;
         }
 
-        // 构建 WorldState（快速快照，持有锁时间短）
+        // 构建 WorldState（锁内纯计算 + 锁外 I/O）
         let (agent_clone, world_state) = {
             let w = world.lock().await;
+
+            // scan_vision() → VisionScanResult  ← 纯计算，快
+            let vision = scan_vision(&w, &agent_id, 5);
+
+            // clone Agent 的必要字段
             let agent = match w.agents.get(&agent_id) {
                 Some(a) => a.clone(),
                 None => break,
             };
 
-            let mut terrain_at = HashMap::new();
-            let mut resources_at = HashMap::new();
-            let vision_radius = 5u32;
-            let cx = agent.position.x;
-            let cy = agent.position.y;
-            for dx in 0..=vision_radius {
-                for dy in 0..=vision_radius {
-                    if dx == 0 && dy == 0 { continue; }
-                    let nx = cx.saturating_add(dx).min(255);
-                    let ny = cy.saturating_add(dy).min(255);
-                    let pos = Position::new(nx, ny);
-                    terrain_at.insert(pos, w.map.get_terrain(pos));
-                    if let Some(res) = w.resources.get(&pos) {
-                        resources_at.insert(pos, res.resource_type);
-                    }
-                }
-            }
-
+            // 将 VisionScanResult 映射到 WorldState
             let ws = WorldState {
                 map_size: 256,
                 agent_position: agent.position,
@@ -855,12 +786,27 @@ async fn run_agent_loop(
                     };
                     (resource, *v)
                 }).collect(),
-                terrain_at,
+                terrain_at: vision.terrain_at,
                 existing_agents: w.agents.keys().cloned().collect(),
-                resources_at,
+                resources_at: vision.resources_at,
+                nearby_agents: vision.nearby_agents,
             };
 
             (agent, ws)
+        };
+
+        // 锁外 I/O：获取记忆摘要
+        let memory_summary_opt = {
+            let effective = agent_clone.effective_motivation();
+            let mot = agentora_core::motivation::MotivationVector::from_array(effective);
+            let spark = Spark::from_gap(
+                &mot,
+                &[0.5; 6],
+            );
+            let spark_type = spark.spark_type;
+            // clone 后的 Agent memory 已重连 SQLite，可以安全调用 get_summary
+            let summary = agent_clone.memory.get_summary(spark_type);
+            if summary.is_empty() { None } else { Some(summary) }
         };
 
         println!("[AgentLoop] Agent {:?} ({}) 开始决策{}", agent_id.as_str(), agent_clone.name,
@@ -868,7 +814,11 @@ async fn run_agent_loop(
 
         let action = if is_npc {
             // NPC：规则引擎决策（不调用 LLM）
-            npc_rule_decision(&agent_clone, &world_state)
+            use agentora_core::rule_engine::RuleEngine;
+            let effective = agent_clone.effective_motivation();
+            let mot = agentora_core::motivation::MotivationVector::from_array(effective);
+            let engine = RuleEngine::new();
+            engine.rule_decision(&mot, &world_state)
         } else {
             // Player Agent：LLM 决策
             let effective = agent_clone.effective_motivation();
@@ -880,7 +830,7 @@ async fn run_agent_loop(
             let effective_mot = agentora_core::motivation::MotivationVector::from_array(effective);
 
             let start = std::time::Instant::now();
-            let result = pipeline.execute(&agent_clone.id, &effective_mot, &spark, &world_state).await;
+            let result = pipeline.execute(&agent_clone.id, &effective_mot, &spark, &world_state, memory_summary_opt.as_deref()).await;
             let elapsed = start.elapsed().as_secs_f32();
 
             if result.error_info.is_some() {
@@ -927,6 +877,38 @@ async fn run_apply_loop(
 
             // 应用动作
             w.apply_action(&agent_id, &action);
+
+            // 记录到 Agent 记忆系统（任务 4.2-4.3）
+            if let Some(agent) = w.agents.get(&agent_id) {
+                let action_type_str = format!("{:?}", action.action_type);
+                // 根据 ActionType 自动标注 emotion_tags 和 importance
+                let (emotion_tags, importance) = match action.action_type {
+                    agentora_core::types::ActionType::Move { .. } => (vec!["neutral".to_string()], 0.2),
+                    agentora_core::types::ActionType::Gather { .. } => (vec!["satisfied".to_string()], 0.4),
+                    agentora_core::types::ActionType::Wait => (vec!["resting".to_string()], 0.1),
+                    agentora_core::types::ActionType::Attack { .. } => (vec!["aggressive".to_string(), "angry".to_string()], 0.8),
+                    agentora_core::types::ActionType::Talk { .. } => (vec!["social".to_string()], 0.5),
+                    agentora_core::types::ActionType::Build { .. } => (vec!["creative".to_string()], 0.6),
+                    agentora_core::types::ActionType::Explore { .. } => (vec!["curious".to_string()], 0.5),
+                    agentora_core::types::ActionType::TradeOffer { .. } | agentora_core::types::ActionType::TradeAccept { .. } => (vec!["cooperative".to_string()], 0.6),
+                    agentora_core::types::ActionType::AllyPropose { .. } | agentora_core::types::ActionType::AllyAccept { .. } => (vec!["trust".to_string(), "bonding".to_string()], 0.7),
+                    agentora_core::types::ActionType::InteractLegacy { .. } => (vec!["reverent".to_string()], 0.7),
+                    _ => (vec!["unknown".to_string()], 0.3),
+                };
+
+                let event = MemoryEvent {
+                    tick: w.tick as u32,
+                    event_type: action_type_str,
+                    content: action.reasoning.clone(),
+                    emotion_tags,
+                    importance,
+                };
+
+                // 需要可变引用，重新获取 agent
+                if let Some(agent_mut) = w.agents.get_mut(&agent_id) {
+                    agent_mut.memory.record(&event);
+                }
+            }
 
             // 提取叙事事件
             let events: Vec<NarrativeEvent> = w.tick_events.drain(..).map(|e| NarrativeEvent {

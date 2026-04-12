@@ -47,14 +47,43 @@ fn test_filter_move_boundary() {
 
 #[test]
 fn test_fallback_decision() {
+    // 生存动机最高 → 规则决策返回 Explore
     let motivation = MotivationVector::from_array([0.8, 0.5, 0.5, 0.5, 0.5, 0.5]);
     let world_state = agentora_core::rule_engine::WorldState::default();
 
     let engine = RuleEngine::new();
     let action = engine.fallback_action(&motivation, &world_state);
 
-    // 应返回安全动作（等待）
+    // 应返回动机驱动的兜底动作（生存→Explore）
+    assert!(matches!(action.action_type, ActionType::Explore { .. }));
+    assert!(action.reasoning.contains("生存"));
+    assert_eq!(action.source, CandidateSource::RuleEngine);
+}
+
+#[test]
+fn test_fallback_decision_social() {
+    // 社交动机最高 → 规则决策返回 Talk
+    let motivation = MotivationVector::from_array([0.3, 0.9, 0.3, 0.3, 0.3, 0.3]);
+    let world_state = agentora_core::rule_engine::WorldState::default();
+
+    let engine = RuleEngine::new();
+    let action = engine.fallback_action(&motivation, &world_state);
+
+    assert!(matches!(action.action_type, ActionType::Talk { .. }));
+    assert!(action.reasoning.contains("社交"));
+}
+
+#[test]
+fn test_fallback_decision_legacy() {
+    // 传承动机最高 → 规则决策返回 Wait
+    let motivation = MotivationVector::from_array([0.3, 0.3, 0.3, 0.3, 0.3, 0.9]);
+    let world_state = agentora_core::rule_engine::WorldState::default();
+
+    let engine = RuleEngine::new();
+    let action = engine.fallback_action(&motivation, &world_state);
+
     assert_eq!(action.action_type, ActionType::Wait);
+    assert!(action.reasoning.contains("传承"));
 }
 
 #[test]

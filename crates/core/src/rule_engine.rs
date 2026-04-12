@@ -3,6 +3,7 @@
 use crate::decision::{ActionCandidate, CandidateSource};
 use crate::motivation::MotivationVector;
 use crate::types::{ActionType, AgentId, Position, TerrainType, ResourceType, StructureType};
+use crate::vision::NearbyAgentInfo;
 use std::collections::{HashMap, HashSet};
 
 /// 世界状态快照（用于规则校验）
@@ -13,7 +14,8 @@ pub struct WorldState {
     pub agent_inventory: HashMap<ResourceType, u32>,
     pub terrain_at: HashMap<Position, TerrainType>,
     pub existing_agents: HashSet<AgentId>,
-    pub resources_at: HashMap<Position, ResourceType>,
+    pub resources_at: HashMap<Position, (ResourceType, u32)>,
+    pub nearby_agents: Vec<NearbyAgentInfo>,
 }
 
 impl Default for WorldState {
@@ -25,6 +27,7 @@ impl Default for WorldState {
             terrain_at: HashMap::new(),
             existing_agents: HashSet::new(),
             resources_at: HashMap::new(),
+            nearby_agents: Vec::new(),
         }
     }
 }
@@ -50,9 +53,9 @@ impl RuleEngine {
         }
 
         // 采集动作：当前位置有资源
-        if let Some(_) = world_state.resources_at.get(&world_state.agent_position) {
+        if let Some((resource_type, _amount)) = world_state.resources_at.get(&world_state.agent_position) {
             candidates.push(ActionType::Gather {
-                resource: world_state.resources_at[&world_state.agent_position]
+                resource: resource_type.clone()
             });
         }
 
@@ -125,7 +128,9 @@ impl RuleEngine {
             }
             ActionType::Gather { resource } => {
                 // 检查当前位置是否有该资源
-                world_state.resources_at.get(&world_state.agent_position) == Some(resource)
+                world_state.resources_at.get(&world_state.agent_position)
+                    .map(|(rt, _)| rt.as_str() == resource.as_str())
+                    .unwrap_or(false)
             }
             ActionType::Build { structure } => {
                 self.can_build(*structure, world_state)
@@ -170,18 +175,84 @@ impl RuleEngine {
         }
     }
 
-    /// 兜底动作：当 LLM 全部失败时的安全默认动作
-    pub fn fallback_action(&self, motivation: &MotivationVector, world_state: &WorldState) -> ActionCandidate {
-        // 优先级 1: 向最近资源移动（解决资源压力）
-        // 优先级 2: 原地等待（安全默认）
+    /// 规则决策：基于 6 维动机缺口选择对应动作
+    ///
+    /// 动机维度索引：0=生存, 1=社交, 2=认知, 3=表达, 4=权力, 5=传承
+    /// 平局打破：使用 Agent 位置坐标哈希 `(x + y + i) % 2`
+    pub fn rule_decision(&self, motivation: &MotivationVector, world_state: &WorldState) -> crate::types::Action {
+        use crate::types::ActionType;
 
-        // 简化实现：原地等待
-        ActionCandidate {
-            reasoning: "LLM 失败，规则引擎兜底：原地等待".to_string(),
-            action_type: ActionType::Wait,
+        let mot = motivation.to_array();
+
+        // 1. 找出最高动机维度，平局用位置哈希打破
+        let mut max_idx = 0;
+        let mut max_val = mot[0];
+        for i in 1..6 {
+            let pos_hash = (world_state.agent_position.x + world_state.agent_position.y + i as u32) % 2;
+            if mot[i] > max_val || (mot[i] == max_val && pos_hash == 0) {
+                max_val = mot[i];
+                max_idx = i;
+            }
+        }
+
+        // 2. 动机-动作映射表
+        //    0=生存→Explore, 1=社交→Talk, 2=认知→Explore,
+        //    3=表达→Talk, 4=权力→Explore, 5=传承→Wait
+        let (action_type, reasoning, motivation_delta) = match max_idx {
+            0 => (
+                ActionType::Explore { target_region: 0 },
+                "生存动机最高，寻找资源".to_string(),
+                [0.12, 0.0, 0.06, 0.0, 0.0, 0.0], // 生存+认知
+            ),
+            1 => (
+                ActionType::Talk { message: "问候".to_string() },
+                "社交动机最高，尝试交流".to_string(),
+                [0.0, 0.12, 0.0, 0.06, 0.0, 0.0], // 社交+表达
+            ),
+            2 => (
+                ActionType::Explore { target_region: 0 },
+                "认知动机最高，探索学习".to_string(),
+                [0.06, 0.0, 0.12, 0.0, 0.0, 0.0], // 认知+生存
+            ),
+            3 => (
+                ActionType::Talk { message: "分享".to_string() },
+                "表达动机最高，分享想法".to_string(),
+                [0.0, 0.06, 0.0, 0.12, 0.0, 0.0], // 表达+社交
+            ),
+            4 => (
+                ActionType::Explore { target_region: 0 },
+                "权力动机最高，竞争扩张".to_string(),
+                [0.06, 0.0, 0.0, 0.0, 0.12, 0.0], // 权力+生存
+            ),
+            5 => (
+                ActionType::Wait,
+                "传承动机最高，原地沉淀".to_string(),
+                [0.0, 0.0, 0.0, 0.0, 0.0, 0.12], // 传承
+            ),
+            _ => unreachable!(),
+        };
+
+        println!("[RuleEngine] 规则决策: 维度{} = {:.2}, 动作={:?}", max_idx, max_val, action_type);
+
+        crate::types::Action {
+            reasoning,
+            action_type,
             target: None,
             params: HashMap::new(),
-            motivation_delta: [0.0; 6],
+            motivation_delta,
+        }
+    }
+
+    /// 兜底动作：当 LLM 全部失败时的安全默认动作
+    /// 委托给 `rule_decision()`，基于当前动机状态返回有意义的动作
+    pub fn fallback_action(&self, motivation: &MotivationVector, world_state: &WorldState) -> ActionCandidate {
+        let action = self.rule_decision(motivation, world_state);
+        ActionCandidate {
+            reasoning: format!("LLM 失败，规则引擎兜底：{}", action.reasoning),
+            action_type: action.action_type,
+            target: action.target,
+            params: action.params.into_iter().map(|(k, v)| (k, serde_json::Value::String(v))).collect(),
+            motivation_delta: action.motivation_delta,
             source: CandidateSource::RuleEngine,
         }
     }

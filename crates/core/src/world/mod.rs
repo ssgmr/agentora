@@ -37,6 +37,8 @@ pub struct World {
     pub pending_trades: Vec<PendingTrade>,
     /// 对话日志
     pub dialogue_logs: Vec<DialogueLog>,
+    /// 位置到 Agent ID 的反向索引，用于空间查询
+    pub agent_positions: HashMap<Position, Vec<AgentId>>,
 }
 
 // ===== 辅助类型 =====
@@ -94,6 +96,7 @@ impl World {
             tick_events: Vec::new(),
             pending_trades: Vec::new(),
             dialogue_logs: Vec::new(),
+            agent_positions: HashMap::new(),
         };
 
         // 生成地形
@@ -106,9 +109,17 @@ impl World {
         Self::generate_resources(&mut world.map, &mut world.resources, seed);
 
         // 生成初始 Agent
-        Self::generate_agents(&mut world.agents, &world.map, seed);
+        let map_size = world.map.size();
+        Self::generate_agents(&mut world, map_size, seed);
 
         world
+    }
+
+    /// 插入 Agent 并初始化位置索引
+    pub fn insert_agent_at(&mut self, agent_id: AgentId, agent: Agent) {
+        let pos = agent.position;
+        self.agent_positions.entry(pos).or_default().push(agent_id.clone());
+        self.agents.insert(agent_id, agent);
     }
 
     /// 生成地形
@@ -171,10 +182,10 @@ impl World {
     }
 
     /// 生成初始 Agent
-    fn generate_agents(agents: &mut HashMap<AgentId, Agent>, map: &map::CellGrid, seed: &WorldSeed) {
+    fn generate_agents(world: &mut World, map_size: (u32, u32), seed: &WorldSeed) {
         use rand::Rng;
         let mut rng = rand::thread_rng();
-        let (width, height) = map.size();
+        let (width, height) = map_size;
 
         let templates: Vec<&[f32; 6]> = seed.motivation_templates.values().collect();
         let template_names: Vec<&str> = seed.motivation_templates.keys().map(|s| s.as_str()).collect();
@@ -189,7 +200,7 @@ impl World {
                 let x = rng.gen_range(cx.saturating_sub(spawn_radius)..(cx + spawn_radius).min(width));
                 let y = rng.gen_range(cy.saturating_sub(spawn_radius)..(cy + spawn_radius).min(height));
                 pos = Position::new(x, y);
-                if map.get_terrain(pos).is_passable() {
+                if world.map.get_terrain(pos).is_passable() {
                     break;
                 }
             }
@@ -204,7 +215,7 @@ impl World {
                 agent.motivation = crate::motivation::MotivationVector::from_array(**template);
             }
 
-            agents.insert(agent.id.clone(), agent);
+            world.insert_agent_at(agent.id.clone(), agent);
         }
     }
 
@@ -368,6 +379,14 @@ impl World {
             let agent = self.agents.get_mut(&agent_id).unwrap();
             agent.is_alive = false;
 
+            // 清理死亡 Agent 的位置记录
+            if let Some(ids) = self.agent_positions.get_mut(&agent_pos) {
+                ids.retain(|id| *id != agent_id);
+                if ids.is_empty() {
+                    self.agent_positions.remove(&agent_pos);
+                }
+            }
+
             // 记录死亡事件
             let res_desc = if scattered.is_empty() {
                 String::new()
@@ -393,6 +412,9 @@ impl World {
         if !agent_check.unwrap().is_alive {
             return ActionResult::AgentDead;
         }
+
+        // 记录旧位置（用于维护 agent_positions 反向索引）
+        let old_position = self.agents.get(agent_id).map(|a| a.position);
 
         // 记录当前动作
         self.current_actions.insert(agent_id.clone(), action.reasoning.clone());
@@ -506,6 +528,22 @@ impl World {
             if let Some(strategy) = strategy_data {
                 let agent = self.agents.get_mut(agent_id).unwrap();
                 on_strategy_failure(&mut agent.motivation, &strategy);
+            }
+        }
+
+        // 统一维护 agent_positions 反向索引：检查位置变化并更新
+        if let (Some(old_pos), Some(agent)) = (old_position, self.agents.get(agent_id)) {
+            if old_pos != agent.position {
+                // 从旧位置移除
+                if let Some(ids) = self.agent_positions.get_mut(&old_pos) {
+                    ids.retain(|id| *id != *agent_id);
+                    if ids.is_empty() {
+                        self.agent_positions.remove(&old_pos);
+                    }
+                }
+                // 加入新位置
+                self.agent_positions.entry(agent.position)
+                    .or_default().push(agent_id.clone());
             }
         }
 

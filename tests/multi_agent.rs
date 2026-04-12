@@ -159,7 +159,8 @@ mod tests {
                 agent_inventory: agent.inventory.clone(),
                 terrain_at: self.terrain.clone(),
                 existing_agents: other_agents.iter().map(|a| a.id.clone()).collect::<HashSet<_>>(),
-                resources_at: self.resources.iter().map(|(k, v)| (*k, *v)).collect(),
+                resources_at: self.resources.iter().map(|(k, v)| (*k, (*v, 1))).collect(),
+                nearby_agents: Vec::new(),
             }
         }
     }

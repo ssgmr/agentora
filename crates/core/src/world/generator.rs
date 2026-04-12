@@ -146,7 +146,7 @@ impl WorldGenerator {
                 agent.motivation = crate::motivation::MotivationVector::from_array(**template);
             }
 
-            world.agents.insert(agent.id.clone(), agent);
+            world.insert_agent_at(agent.id.clone(), agent);
         }
     }
 }

@@ -178,6 +178,7 @@ impl DecisionPipeline {
         motivation: &MotivationVector,
         spark: &Spark,
         world_state: &WorldState,
+        memory_summary: Option<&str>,
     ) -> DecisionResult {
         tracing::info!("开始决策管道执行 for agent {}", agent_id.as_str());
 
@@ -186,7 +187,7 @@ impl DecisionPipeline {
         println!("[Decision] Agent {} 硬约束过滤后剩余 {} 个候选动作", agent_id.as_str(), filtered_actions.len());
 
         // 阶段 2: 上下文构建 (Prompt 组装)
-        let prompt = self.build_prompt(agent_id, motivation, spark, world_state);
+        let prompt = self.build_prompt(agent_id, motivation, spark, world_state, memory_summary);
         println!("[Decision] Agent {} Prompt 长度：{} chars", agent_id.as_str(), prompt.len());
 
         // 阶段 3: LLM 调用
@@ -272,12 +273,13 @@ impl DecisionPipeline {
         motivation: &MotivationVector,
         spark: &Spark,
         world_state: &WorldState,
+        memory_summary: Option<&str>,
     ) -> String {
         // 构建感知摘要
         let perception_summary = self.build_perception_summary(world_state);
 
-        // 构建记忆摘要（从记忆系统获取）
-        let memory_summary = "";
+        // 使用传入的记忆摘要，默认为空
+        let memory_summary = memory_summary.unwrap_or("");
 
         // 构建策略提示（任务 5.1-5.4：从策略系统检索并注入）
         let strategy_hint = self.strategy_hub.as_ref().and_then(|hub| {
@@ -286,6 +288,11 @@ impl DecisionPipeline {
                 wrap_strategy_for_prompt(&summary)
             })
         });
+
+        // DEBUG: 打印记忆摘要（临时验证）
+        if !memory_summary.is_empty() {
+            println!("[记忆摘要 DEBUG]\n{}", memory_summary);
+        }
 
         self.prompt_builder.build_decision_prompt(
             agent_id.as_str(),
@@ -331,21 +338,56 @@ impl DecisionPipeline {
             world_state.agent_position.y
         ));
 
-        // 附近 Agent
-        if !world_state.existing_agents.is_empty() {
-            summary.push_str(&format!("附近 Agent 数量：{}\n", world_state.existing_agents.len()));
+        // 地形概览
+        if !world_state.terrain_at.is_empty() {
+            let mut terrain_counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+            for terrain in world_state.terrain_at.values() {
+                *terrain_counts.entry(format!("{:?}", terrain)).or_default() += 1;
+            }
+            if !terrain_counts.is_empty() {
+                summary.push_str("地形：");
+                let parts: Vec<String> = terrain_counts.iter()
+                    .map(|(t, c)| format!("{} {}格", t, c))
+                    .collect();
+                summary.push_str(&parts.join(", "));
+                summary.push('\n');
+            }
         }
 
-        // 资源信息
+        // 附近 Agent（任务 5.1：名字/距离/关系状态）
+        if !world_state.nearby_agents.is_empty() {
+            summary.push_str(&format!("附近 Agent ({} 个):\n", world_state.nearby_agents.len()));
+            for agent_info in &world_state.nearby_agents {
+                let relation_str = match agent_info.relation_type {
+                    crate::agent::RelationType::Ally => "盟友",
+                    crate::agent::RelationType::Enemy => "敌人",
+                    crate::agent::RelationType::Neutral => "陌生人",
+                };
+                summary.push_str(&format!(
+                    "  {} (距离:{}, 关系:{}, 信任:{:.1})\n",
+                    agent_info.name,
+                    agent_info.distance,
+                    relation_str,
+                    agent_info.trust,
+                ));
+            }
+        } else if !world_state.existing_agents.is_empty() {
+            summary.push_str(&format!("附近 Agent 数量：{}（无详细信息）\n", world_state.existing_agents.len()));
+        }
+
+        // 资源信息（任务 5.2：位置/类型/数量）
         if !world_state.resources_at.is_empty() {
             summary.push_str("资源分布:\n");
-            for (pos, resource) in &world_state.resources_at {
+            for (pos, (resource, amount)) in &world_state.resources_at {
                 summary.push_str(&format!(
-                    "  ({}, {}): {:?}\n",
-                    pos.x, pos.y, resource
+                    "  ({}, {}): {} x{}\n",
+                    pos.x, pos.y, format!("{:?}", resource), amount
                 ));
             }
         }
+
+        // DEBUG: 打印感知摘要内容（临时验证）
+        println!("[感知摘要 DEBUG]\n{}", summary);
 
         summary
     }

@@ -1,4 +1,4 @@
-# Agentora 模拟配置
+# Agentora 模拟配置（实际游戏用户只会有一个agent，且无npc。目前多agent+npc只是开发测试时用）
 
 [simulation]
 # LLM 驱动 Agent 数量（走完整决策管道，耗时较长，建议 1-5）

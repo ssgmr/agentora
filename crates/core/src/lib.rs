@@ -16,6 +16,7 @@ pub mod world;
 pub mod legacy;
 pub mod storage;
 pub mod snapshot;
+pub mod vision;
 
 // 重导出常用类型
 pub use types::*;

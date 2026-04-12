@@ -9,14 +9,12 @@ use crate::types::{LlmRequest, LlmResponse, LlmError};
 /// 降级链：多个 Provider 依次尝试
 pub struct FallbackChain {
     providers: Vec<Box<dyn LlmProvider>>,
-    use_rule_engine_fallback: bool,
 }
 
 impl FallbackChain {
-    pub fn new(providers: Vec<Box<dyn LlmProvider>>, use_rule_engine_fallback: bool) -> Self {
+    pub fn new(providers: Vec<Box<dyn LlmProvider>>) -> Self {
         Self {
             providers,
-            use_rule_engine_fallback,
         }
     }
 
@@ -45,47 +43,8 @@ impl FallbackChain {
             }
         }
 
-        // 所有 Provider 都失败，使用规则引擎兜底
-        if self.use_rule_engine_fallback {
-            tracing::warn!("所有 LLM Provider 都失败，使用规则引擎兜底");
-            return self.generate_rule_engine_fallback(request).await;
-        }
-
+        // 所有 Provider 都失败
         Err(LlmError::ProviderUnavailable("所有 Provider 都失败".to_string()))
-    }
-
-    /// 规则引擎兜底生成
-    async fn generate_rule_engine_fallback(&self, _request: LlmRequest) -> Result<LlmResponse, LlmError> {
-        // 使用 rule_engine 模块生成兜底动作
-        use crate::rule_engine::{fallback_decision, SimplePosition};
-
-        // 默认位置和动机（实际使用时应该从上下文获取）
-        let position = SimplePosition { x: 0, y: 0 };
-        let motivation = [0.5; 6];
-
-        let action = fallback_decision(&position, &motivation);
-
-        tracing::info!("规则引擎兜底：{}", action.reasoning);
-
-        // 将兜底动作转换为 JSON 响应
-        let json_str = match &action.action_type {
-            crate::rule_engine::SimpleActionType::Wait => {
-                format!(r#"{{"action": "wait", "reasoning": "{}"}}"#, action.reasoning)
-            }
-            crate::rule_engine::SimpleActionType::Move { direction } => {
-                format!(r#"{{"action": "move", "direction": "{}", "reasoning": "{}"}}"#, direction, action.reasoning)
-            }
-            crate::rule_engine::SimpleActionType::Explore { target_region } => {
-                format!(r#"{{"action": "explore", "target_region": {}, "reasoning": "{}"}}"#, target_region, action.reasoning)
-            }
-        };
-
-        Ok(LlmResponse {
-            raw_text: json_str,
-            parsed_action: None,
-            usage: crate::types::TokenUsage::default(),
-            provider_name: "rule_engine_fallback".to_string(),
-        })
     }
 }
 
@@ -155,7 +114,6 @@ mod tests {
                 Box::new(MockProvider::new("first", false)),
                 Box::new(MockProvider::new("second", true)),
             ],
-            false,
         );
 
         let request = LlmRequest::default();
@@ -171,7 +129,6 @@ mod tests {
                 Box::new(MockProvider::new("first", true)),
                 Box::new(MockProvider::new("second", false)),
             ],
-            false,
         );
 
         let request = LlmRequest::default();
@@ -181,35 +138,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_fallback_chain_all_fail_without_rule_engine() {
+    async fn test_fallback_chain_all_fail() {
         let chain = FallbackChain::new(
             vec![
                 Box::new(MockProvider::new("first", true)),
                 Box::new(MockProvider::new("second", true)),
             ],
-            false, // 不使用规则引擎兜底
         );
 
         let request = LlmRequest::default();
         let result = chain.generate(request).await;
         assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_fallback_chain_rule_engine_fallback() {
-        let chain = FallbackChain::new(
-            vec![
-                Box::new(MockProvider::new("first", true)),
-                Box::new(MockProvider::new("second", true)),
-            ],
-            true, // 使用规则引擎兜底
+        assert!(
+            result.unwrap_err().to_string().contains("所有 Provider 都失败")
         );
-
-        let request = LlmRequest::default();
-        let result = chain.generate(request).await;
-        assert!(result.is_ok());
-        let response = result.unwrap();
-        assert_eq!(response.provider_name, "rule_engine_fallback");
-        assert!(response.raw_text.contains("rule_engine") || response.raw_text.contains("action"));
     }
 }

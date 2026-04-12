@@ -4,9 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Agentora 智纪** — 端侧多模态大模型AI智能体驱动的去中心化数字文明模拟器。无中心服务器、无预设剧本、支持断网运行的持久化模拟沙盒。
+**Agentora 智纪** — 端侧多模态大模型AI智能体驱动的去中心化数文明模拟器。无中心服务器、无预设剧本、支持断网运行的持久化模拟沙盒（每个玩家只有一个Agent，玩家只做部分引导，Agent自主演化）。
 
-项目当前处于 **MVP内核开发阶段**
 
 ## Commands
 
@@ -71,7 +70,6 @@ crates/
 - **`RetryProvider`** — 速率限制重试（解析Retry-After header）
 - **`parse_action_json`** — 从LLM响应中提取JSON并解析为Action
 - **`LlmConfig`** — 从`config/llm.toml`加载配置，含记忆系统子配置
-- **`SimpleActionType`** — 规则引擎动作类型（移动/交互/建造/社交）
 - **`ResponseFormat`** — 支持JSON结构化响应
 
 ### Sync Crate (`crates/sync/src/`)
@@ -289,4 +287,4 @@ agentora/
 
 - 代码注释和文档使用中文
 - 许可证：MIT License
-- 多主动运行系统，通过打印日志、截图等方式验证、修复问题
+- 多主动运行客户端，通过日志信息、截图等方式验证、修复问题

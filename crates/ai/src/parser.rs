@@ -3,7 +3,8 @@
 //! Layer 0: 清理markdown代码块标记
 //! Layer 1: 直接解析
 //! Layer 2: 提取{}块
-//! Layer 3: 修复常见错误
+//! Layer 3: 修复常见错误（尾逗号/注释/引号/加号前缀）
+//! Layer 4: 激进修复（单引号/布尔值/多余内容截断）
 
 use serde_json::Value;
 
@@ -26,7 +27,21 @@ pub fn parse_action_json(raw: &str) -> Result<Value, ParseError> {
 
     // Layer 3: 修复常见错误
     let fixed = fix_common_json_errors(&cleaned);
+    if let Ok(action) = serde_json::from_str::<Value>(&fixed) {
+        return Ok(action);
+    }
     if let Some(json_block) = extract_first_json_block(&fixed) {
+        if let Ok(action) = serde_json::from_str::<Value>(json_block) {
+            return Ok(action);
+        }
+    }
+
+    // Layer 4: 激进修复
+    let aggressive = aggressive_fix(&cleaned);
+    if let Ok(action) = serde_json::from_str::<Value>(&aggressive) {
+        return Ok(action);
+    }
+    if let Some(json_block) = extract_first_json_block(&aggressive) {
         if let Ok(action) = serde_json::from_str::<Value>(json_block) {
             return Ok(action);
         }
@@ -62,20 +77,47 @@ fn strip_markdown_code_block(text: &str) -> String {
     result.trim().to_string()
 }
 
-/// 提取第一个{}块
+/// 提取第一个{}块（处理字符串内的{}}）
 fn extract_first_json_block(text: &str) -> Option<&str> {
     let start = text.find('{')?;
+    let remaining = &text[start..];
     let mut depth = 0;
-    for (i, ch) in text[start..].char_indices() {
-        match ch {
-            '{' => depth += 1,
-            '}' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(&text[start..start + i + 1]);
+    let mut in_string = false;
+    let mut escape_next = false;
+
+    for (byte_offset, ch) in remaining.char_indices() {
+        if escape_next {
+            escape_next = false;
+            continue;
+        }
+
+        if ch == '\\' && in_string {
+            escape_next = true;
+            continue;
+        }
+
+        if ch == '"' && !in_string {
+            in_string = true;
+            continue;
+        }
+
+        if ch == '"' && in_string {
+            in_string = false;
+            continue;
+        }
+
+        if !in_string {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        let end = start + byte_offset + ch.len_utf8();
+                        return Some(&text[start..end]);
+                    }
                 }
+                _ => {}
             }
-            _ => {}
         }
     }
     None
@@ -89,25 +131,145 @@ fn fix_common_json_errors(text: &str) -> String {
     fixed = fixed.replace(",}", "}");
     fixed = fixed.replace(",]", "]");
 
-    // 2. 替换单引号为双引号（简单处理）
-    // 注意：这可能会破坏合法的单引号字符串，但在JSON中不应该有单引号
+    // 2. 移除行注释（// 和 # 开头的注释）
+    // 需要按行处理，但要避免破坏字符串内的内容
+    fixed = remove_line_comments(&fixed);
 
-    // 3. 移除注释（JSON不支持注释，但有时LLM会生成）
-    // 移除 /* ... */ 注释
+    // 3. 移除块注释 /* ... */
     while let Some(start) = fixed.find("/*") {
-        if let Some(end) = fixed.find("*/") {
-            fixed = fixed.replace(&fixed[start..end + 2], "");
+        if let Some(end) = fixed[start..].find("*/") {
+            fixed.replace_range(start..start + end + 2, "");
+        } else {
+            break;
         }
     }
-    // 移除 // ... 行注释
-    let lines: Vec<String> = fixed.lines().map(|line| {
-        if let Some(comment_start) = line.find("//") {
-            line[..comment_start].to_string()
-        } else {
-            line.to_string()
+
+    // 4. 修复数字前的 + 号（+0.25 -> 0.25）
+    fixed = fix_plus_prefix_numbers(&fixed);
+
+    // 5. 替换单引号为双引号（简单处理，仅在非字符串内容中）
+    fixed = fixed.replace("': '", "\": \"");
+    fixed = fixed.replace("': ", "\": ");
+    fixed = fixed.replace("',", "\",");
+
+    fixed
+}
+
+/// 按行移除注释，但保留字符串内的内容
+fn remove_line_comments(text: &str) -> String {
+    let mut result = String::new();
+    for line in text.lines() {
+        let trimmed = remove_comment_from_line(line);
+        result.push_str(&trimmed);
+        result.push('\n');
+    }
+    // 移除末尾多余换行
+    result.trim_end().to_string()
+}
+
+/// 从单行中移除注释（处理 // 和 # 注释）
+fn remove_comment_from_line(line: &str) -> String {
+    let mut in_string = false;
+    let mut string_char = '\0';
+    let mut escape_next = false;
+    let chars: Vec<char> = line.chars().collect();
+    let len = chars.len();
+
+    for i in 0..len {
+        let ch = chars[i];
+
+        if escape_next {
+            escape_next = false;
+            continue;
         }
-    }).collect();
-    fixed = lines.join("\n");
+
+        if ch == '\\' && in_string {
+            escape_next = true;
+            continue;
+        }
+
+        if (ch == '"' || ch == '\'') && !in_string {
+            in_string = true;
+            string_char = ch;
+            continue;
+        }
+
+        if in_string && ch == string_char {
+            in_string = false;
+            continue;
+        }
+
+        // 不在字符串中，检查注释标记
+        if !in_string && ch == '/' && i + 1 < len && chars[i + 1] == '/' {
+            // 找到 // 注释，截断
+            return chars[..i].iter().collect::<String>().trim_end().to_string();
+        }
+
+        if !in_string && ch == '#' {
+            // 找到 # 注释，截断
+            return chars[..i].iter().collect::<String>().trim_end().to_string();
+        }
+    }
+
+    line.to_string()
+}
+
+/// 修复数字前的 + 号
+fn fix_plus_prefix_numbers(text: &str) -> String {
+    let mut result = String::new();
+    let chars: Vec<char> = text.chars().collect();
+    let len = chars.len();
+    let mut i = 0;
+
+    while i < len {
+        // 检查是否是数字前的 + 号（前面是 [, , 或空白）
+        if chars[i] == '+' && i + 1 < len && (chars[i + 1].is_ascii_digit() || chars[i + 1] == '.') {
+            // 检查前面字符是否是允许的上下文
+            let prev_ok = if i == 0 {
+                true
+            } else {
+                let prev = chars[i - 1];
+                prev == '[' || prev == ',' || prev.is_whitespace() || prev == ':'
+            };
+            if prev_ok {
+                // 跳过 + 号
+                i += 1;
+                continue;
+            }
+        }
+        result.push(chars[i]);
+        i += 1;
+    }
+
+    result
+}
+
+/// 激进修复：处理更复杂的格式问题
+fn aggressive_fix(text: &str) -> String {
+    let mut fixed = fix_common_json_errors(text);
+
+    // 尝试提取 JSON 块后再修复
+    if let Some(block) = extract_first_json_block(&fixed) {
+        fixed = block.to_string();
+    }
+
+    // 替换 True/False 为 true/false
+    fixed = fixed.replace(": True", ": true");
+    fixed = fixed.replace(": False", ": false");
+    fixed = fixed.replace(": True,", ": true,");
+    fixed = fixed.replace(": False,", ": false,");
+
+    // 替换 None 为 null
+    fixed = fixed.replace(": None", ": null");
+    fixed = fixed.replace(": None,", ": null,");
+
+    // 处理未转义的控制字符（LLM 可能在字符串中输出裸换行）
+    fixed = fixed.replace("\\n\\n", "\\n");
+
+    // 移除 JSON 块后的多余内容（如果 extract_first_json_block 没完全截断）
+    if let Some(block) = extract_first_json_block(&fixed) {
+        return block.to_string();
+    }
 
     fixed
 }
@@ -169,5 +331,89 @@ mod tests {
         let input = "{\"action\": \"move\", \"target\": \"north\",}";
         let result = parse_action_json(input);
         assert!(result.is_ok());
+    }
+
+    // gemma-4 兼容性测试
+
+    #[test]
+    fn test_gemma_comment_in_array() {
+        // gemma 会在数组元素后添加 // 注释
+        let input = r#"{
+  "action_type": "Talk",
+  "motivation_delta": [
+    0.0,
+    0.25,  // 增加社会与关系
+    0.0
+  ]
+}"#;
+        let result = parse_action_json(input);
+        assert!(result.is_ok(), "应能解析带注释的数组: {:?}", result);
+    }
+
+    #[test]
+    fn test_gemma_plus_prefix_number() {
+        // gemma 会在正数前加 + 号
+        let input = r#"{
+  "action_type": "Talk",
+  "motivation_delta": [
+    0.0,
+    +0.25,
+    +0.10,
+    0.0
+  ]
+}"#;
+        let result = parse_action_json(input);
+        assert!(result.is_ok(), "应能解析带+号前缀的数字: {:?}", result);
+    }
+
+    #[test]
+    fn test_gemma_comment_plus_combined() {
+        // gemma 同时使用注释和+号
+        let input = r#"{
+  "action_type": "Talk",
+  "motivation_delta": [
+    0.0,
+    +0.25,  // 增加社会与关系
+    0.0,
+    +0.10   // 认知
+  ]
+}"#;
+        let result = parse_action_json(input);
+        assert!(result.is_ok(), "应能同时处理注释和+号: {:?}", result);
+    }
+
+    #[test]
+    fn test_gemma_markdown_with_comments() {
+        // gemma 完整输出格式
+        let input = r#"```json
+{
+  "reasoning": "社交需求最重要",
+  "action_type": "Talk",
+  "motivation_delta": [
+    0.0,
+    +0.25,  // social
+    0.0
+  ]
+}
+```"#;
+        let result = parse_action_json(input);
+        assert!(result.is_ok(), "应能解析 markdown + 注释 + +号: {:?}", result);
+    }
+
+    #[test]
+    fn test_remove_comment_from_line() {
+        assert_eq!(remove_comment_from_line("hello // world"), "hello");
+        assert_eq!(remove_comment_from_line("\"hello // world\""), "\"hello // world\"");
+        assert_eq!(remove_comment_from_line("value,  // comment"), "value,");
+        assert_eq!(remove_comment_from_line("  +0.25,  // 增加"), "  +0.25,");
+    }
+
+    #[test]
+    fn test_fix_plus_prefix_numbers() {
+        assert_eq!(fix_plus_prefix_numbers("+0.25"), "0.25");
+        assert_eq!(fix_plus_prefix_numbers("[+0.25, +0.10]"), "[0.25, 0.10]");
+        assert_eq!(fix_plus_prefix_numbers(":+0.25,"), ":0.25,");
+        // 不修改字符串内的+号
+        assert_eq!(fix_plus_prefix_numbers("\"+test\""), "\"+test\"");
     }
 }
