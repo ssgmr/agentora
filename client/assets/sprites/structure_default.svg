@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
+  <!-- Structure - small building with roof -->
+  <rect width="16" height="16" fill="#8D6E63"/>
+  <!-- Building base -->
+  <rect x="3" y="6" width="10" height="8" fill="#A1887F"/>
+  <!-- Roof -->
+  <polygon points="2,6 8,2 14,6" fill="#5D4037"/>
+  <!-- Door -->
+  <rect x="6" y="9" width="4" height="5" fill="#4E342E"/>
+  <!-- Window -->
+  <rect x="4" y="7" width="2" height="2" fill="#FFCC80"/>
+  <rect x="10" y="7" width="2" height="2" fill="#FFCC80"/>
+</svg>

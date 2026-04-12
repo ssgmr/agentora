@@ -1,24 +1,14 @@
-[gd_resource type="PlaceholderTexture2D" load_steps=6 format=3 uid="uid://terrain_textures"]
+[gd_resource type="Texture2D" load_steps=6 format=3 uid="uid://terrain_textures"]
 
-[sub_resource type="PlaceholderTexture2D" id="PlaceholderTexture2D_plains"]
-size = Vector2i(16, 16)
-color = Color(0.3, 0.6, 0.2, 1)
-
-[sub_resource type="PlaceholderTexture2D" id="PlaceholderTexture2D_forest"]
-size = Vector2i(16, 16)
-color = Color(0.1, 0.4, 0.1, 1)
-
-[sub_resource type="PlaceholderTexture2D" id="PlaceholderTexture2D_mountain"]
-size = Vector2i(16, 16)
-color = Color(0.5, 0.5, 0.5, 1)
-
-[sub_resource type="PlaceholderTexture2D" id="PlaceholderTexture2D_water"]
-size = Vector2i(16, 16)
-color = Color(0.2, 0.4, 0.8, 1)
-
-[sub_resource type="PlaceholderTexture2D" id="PlaceholderTexture2D_desert"]
-size = Vector2i(16, 16)
-color = Color(0.8, 0.7, 0.3, 1)
+[ext_resource type="Texture2D" path="res://assets/textures/terrain_plains.png" id="plains"]
+[ext_resource type="Texture2D" path="res://assets/textures/terrain_forest.png" id="forest"]
+[ext_resource type="Texture2D" path="res://assets/textures/terrain_mountain.png" id="mountain"]
+[ext_resource type="Texture2D" path="res://assets/textures/terrain_water.png" id="water"]
+[ext_resource type="Texture2D" path="res://assets/textures/terrain_desert.png" id="desert"]
 
 [resource]
-resource = SubResource("PlaceholderTexture2D_plains")
+plains = ExtResource("plains")
+forest = ExtResource("forest")
+mountain = ExtResource("mountain")
+water = ExtResource("water")
+desert = ExtResource("desert")

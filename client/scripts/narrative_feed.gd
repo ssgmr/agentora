@@ -25,40 +25,61 @@ const EVENT_COLORS = {
 
 
 func _ready() -> void:
-	_setup_ui()
+	# 给 PanelContainer 加半透明深色背景
+	var panel_bg = StyleBoxFlat.new()
+	panel_bg.bg_color = Color(0, 0, 0, 0.6)
+	add_theme_stylebox_override("panel", panel_bg)
+
+	# 使用 tscn 中预定义的节点
+	_scroll_container = get_node_or_null("ScrollContainer")
+	_text_box = get_node_or_null("ScrollContainer/EventText")
+
+	# 如果 tscn 节点不存在，回退到动态创建
+	if not _scroll_container or not _text_box:
+		_setup_ui_fallback()
+	else:
+		_setup_styling()
 
 	# 连接信号
 	var bridge = get_node_or_null("/root/SimulationBridge")
 	if bridge:
+		# 只连接 narrative_event，不连接 world_updated（避免重复）
 		bridge.narrative_event.connect(_on_narrative_event)
-		bridge.world_updated.connect(_on_world_updated)
 
 
-func _setup_ui() -> void:
+func _setup_styling() -> void:
+	_text_box.add_theme_color_override("default_color", Color.WHITE)
+	var bg_style = StyleBoxFlat.new()
+	bg_style.bg_color = Color(0, 0, 0, 0.7)
+	bg_style.content_margin_left = 8
+	bg_style.content_margin_right = 8
+	bg_style.content_margin_top = 4
+	bg_style.content_margin_bottom = 4
+	_text_box.add_theme_stylebox_override("normal", bg_style)
+	_text_box.text = "[i]等待模拟开始...[/i]"
+
+
+func _setup_ui_fallback() -> void:
 	_scroll_container = ScrollContainer.new()
 	_scroll_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_scroll_container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_scroll_container.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_scroll_container.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	add_child(_scroll_container)
 
 	_text_box = RichTextLabel.new()
 	_text_box.bbcode_enabled = true
 	_text_box.fit_content = true
-	_text_box.scroll_active = false  # 使用外部ScrollContainer
+	_text_box.scroll_active = false
 	_text_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_text_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_scroll_container.add_child(_text_box)
 
-	# 初始提示
-	_text_box.text = "[i]等待模拟开始...[/i]"
+	_setup_styling()
 
 
 func _on_narrative_event(event: Dictionary) -> void:
 	add_event(event)
-
-
-func _on_world_updated(snapshot: Dictionary) -> void:
-	# 处理WorldSnapshot中的events列表
-	var events: Array = snapshot.get("events", [])
-	for event in events:
-		add_event(event)
 
 
 func add_event(event: Dictionary) -> void:

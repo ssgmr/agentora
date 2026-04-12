@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
+  <!-- Desert - yellow sand dunes -->
+  <rect width="16" height="16" fill="#F9A825"/>
+  <!-- Sand dunes -->
+  <path d="M 0 16 Q 4 10 8 12 Q 12 14 16 10 L 16 16 Z" fill="#F57F17"/>
+  <path d="M 0 16 Q 2 12 6 14 Q 10 16 16 12 L 16 16 Z" fill="#FF8F00"/>
+  <!-- Small rocks -->
+  <ellipse cx="3" cy="4" rx="2" ry="1.5" fill="#BDBDBD"/>
+  <ellipse cx="12" cy="6" rx="1.5" ry="1" fill="#9E9E9E"/>
+</svg>

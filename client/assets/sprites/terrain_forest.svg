@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
+  <!-- Forest - dark green with tree silhouettes -->
+  <rect width="16" height="16" fill="#2E7D32"/>
+  <!-- Trees -->
+  <polygon points="4,12 6,4 8,12" fill="#1B5E20"/>
+  <polygon points="10,12 12,5 14,12" fill="#1B5E20"/>
+  <rect x="5" y="12" width="2" height="4" fill="#4E342E"/>
+  <rect x="11" y="12" width="2" height="4" fill="#4E342E"/>
+  <!-- Ground cover -->
+  <rect x="0" y="14" width="16" height="2" fill="#33691E"/>
+</svg>

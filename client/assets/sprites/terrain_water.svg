@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
+  <!-- Water - blue with ripple patterns -->
+  <rect width="16" height="16" fill="#1E88E5"/>
+  <!-- Ripples -->
+  <path d="M 0 4 Q 4 2 8 4 Q 12 6 16 4" stroke="#64B5F6" stroke-width="1" fill="none"/>
+  <path d="M 0 8 Q 4 6 8 8 Q 12 10 16 8" stroke="#42A5F5" stroke-width="1" fill="none"/>
+  <path d="M 0 12 Q 4 10 8 12 Q 12 14 16 12" stroke="#90CAF9" stroke-width="1" fill="none"/>
+</svg>

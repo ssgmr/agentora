@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
+  <!-- Plains - light green grass with small flower -->
+  <rect width="16" height="16" fill="#7CB342"/>
+  <rect x="0" y="12" width="16" height="4" fill="#689F38"/>
+  <!-- Small flowers -->
+  <circle cx="4" cy="5" r="1.5" fill="#FFEB3B"/>
+  <circle cx="12" cy="8" r="1.5" fill="#FF5722"/>
+  <!-- Grass blades -->
+  <line x1="2" y1="12" x2="3" y2="8" stroke="#558B2F" stroke-width="0.5"/>
+  <line x1="8" y1="12" x2="7" y2="9" stroke="#558B2F" stroke-width="0.5"/>
+  <line x1="14" y1="12" x2="13" y2="7" stroke="#558B2F" stroke-width="0.5"/>
+</svg>

@@ -25,77 +25,86 @@ script = ExtResource("agent_manager")
 
 [node name="Legacies" type="Node2D" parent="WorldView"]
 
-[node name="RightPanel" type="Control" parent="."]
-layout_mode = 2
-anchors_preset = 1
-anchor_left = 1.0
-anchor_right = 1.0
-offset_left = -300.0
-offset_bottom = 720.0
-grow_horizontal = 0
+[node name="UI" type="CanvasLayer" parent="."]
 
-[node name="AgentDetail" type="PanelContainer" parent="RightPanel"]
+[node name="TopBar" type="HBoxContainer" parent="UI"]
+layout_mode = 2
+anchor_left = 0.0
+anchor_top = 0.0
+anchor_right = 1.0
+anchor_bottom = 0.0
+offset_bottom = 36.0
+
+[node name="TickCounter" type="Label" parent="UI/TopBar"]
+layout_mode = 2
+text = "Tick: 0"
+
+[node name="AgentCount" type="Label" parent="UI/TopBar"]
+layout_mode = 2
+text = "Agent: 5"
+
+[node name="SpeedControl" type="OptionButton" parent="UI/TopBar"]
+layout_mode = 2
+
+[node name="RightPanel" type="VBoxContainer" parent="UI"]
+layout_mode = 2
+anchor_left = 1.0
+anchor_top = 0.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -320.0
+offset_top = 36.0
+offset_right = 0.0
+
+[node name="WorldInfo" type="PanelContainer" parent="UI/RightPanel"]
+layout_mode = 2
+size_flags_vertical = 0
+visible = false
+
+[node name="TickLabel" type="Label" parent="UI/RightPanel/WorldInfo"]
+layout_mode = 2
+text = "Tick: 0"
+
+[node name="AgentCount" type="Label" parent="UI/RightPanel/WorldInfo"]
+layout_mode = 2
+text = "Agent 数：5"
+
+[node name="PressureList" type="ItemList" parent="UI/RightPanel/WorldInfo"]
+layout_mode = 2
+size_flags_vertical = 1
+
+[node name="AgentDetail" type="VBoxContainer" parent="UI/RightPanel"]
 layout_mode = 2
 size_flags_vertical = 3
+add_theme_constant_override("separation", 4)
 
-[node name="NameLabel" type="Label" parent="RightPanel/AgentDetail"]
+[node name="AgentNameLabel" type="Label" parent="UI/RightPanel/AgentDetail"]
 layout_mode = 2
 text = "Agent 名称"
 horizontal_alignment = 1
 
-[node name="MotivationRadar" type="Control" parent="RightPanel/AgentDetail"]
+[node name="MotivationRadar" type="Control" parent="UI/RightPanel/AgentDetail"]
 layout_mode = 2
-size_flags_vertical = 3
-custom_minimum_size = Vector2(200, 160)
+custom_minimum_size = Vector2(280, 220)
 script = ExtResource("motivation_radar")
 
-[node name="StatusLabel" type="Label" parent="RightPanel/AgentDetail"]
+[node name="StatusLabel" type="Label" parent="UI/RightPanel/AgentDetail"]
 layout_mode = 2
 text = "状态：等待
 健康：100/100
 年龄：0"
 
-[node name="GuidePanel" type="VBoxContainer" parent="RightPanel/AgentDetail"]
+[node name="GuidePanel" type="VBoxContainer" parent="UI/RightPanel/AgentDetail"]
 layout_mode = 2
+size_flags_vertical = 0
 script = ExtResource("guide_panel")
 
-[node name="WorldInfo" type="PanelContainer" parent="RightPanel"]
+[node name="NarrativeFeed" type="PanelContainer" parent="UI"]
 layout_mode = 2
-
-[node name="TickLabel" type="Label" parent="RightPanel/WorldInfo"]
-layout_mode = 2
-text = "Tick: 0"
-
-[node name="AgentCount" type="Label" parent="RightPanel/WorldInfo"]
-layout_mode = 2
-text = "Agent 数：5"
-
-[node name="PressureList" type="ItemList" parent="RightPanel/WorldInfo"]
-layout_mode = 2
-size_flags_vertical = 3
-
-[node name="NarrativeFeed" type="PanelContainer" parent="."]
-layout_mode = 2
-anchors_preset = 12
+anchor_left = 0.0
 anchor_top = 1.0
-anchor_bottom = 1.0
 anchor_right = 1.0
-offset_top = -200.0
-offset_left = 0.0
-offset_right = -300.0
-grow_vertical = 0
+anchor_bottom = 1.0
+offset_top = -220.0
+offset_right = -320.0
 script = ExtResource("narrative_feed")
-
-[node name="TopBar" type="HBoxContainer" parent="."]
-layout_mode = 2
-
-[node name="TickCounter" type="Label" parent="TopBar"]
-layout_mode = 2
-text = "Tick: 0"
-
-[node name="AgentCount" type="Label" parent="TopBar"]
-layout_mode = 2
-text = "Agent: 5"
-
-[node name="SpeedControl" type="OptionButton" parent="TopBar"]
-layout_mode = 2

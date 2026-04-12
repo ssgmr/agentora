@@ -1,8 +1,8 @@
-[gd_resource type="PlaceholderTexture2D" load_steps=2 format=3 uid="uid://agent_placeholder"]
+[gd_resource type="Texture2D" load_steps=3 format=3 uid="uid://agent_placeholder"]
 
-[sub_resource type="PlaceholderTexture2D" id="PlaceholderTexture2D_agent"]
-size = Vector2i(16, 16)
-color = Color(0.2, 0.6, 0.9, 1)
+[ext_resource type="Texture2D" path="res://assets/sprites/agent_idle.png" id="idle"]
+[ext_resource type="Texture2D" path="res://assets/sprites/agent_selected.png" id="selected"]
 
 [resource]
-resource = SubResource("PlaceholderTexture2D_agent")
+idle = ExtResource("idle")
+selected = ExtResource("selected")

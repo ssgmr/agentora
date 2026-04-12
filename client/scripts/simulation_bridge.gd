@@ -39,26 +39,44 @@ func _physics_process(delta: float) -> void:
 
 func _initialize_map_data() -> void:
 	# 生成初始地图数据
-	var terrains = ["plains", "forest", "mountain", "water", "desert"]
 	for x in range(256):
 		for y in range(256):
-			var noise = _simple_noise(x * 0.05, y * 0.05)
+			var noise = _fractal_noise(x, y, 4)
 			var terrain: String
-			if noise < 0.3:
+			if noise < 0.28:
 				terrain = "water"
-			elif noise < 0.5:
+			elif noise < 0.45:
 				terrain = "plains"
-			elif noise < 0.7:
+			elif noise < 0.65:
 				terrain = "forest"
-			elif noise < 0.85:
+			elif noise < 0.82:
 				terrain = "mountain"
 			else:
 				terrain = "desert"
 			_map_data["%d_%d" % [x, y]] = terrain
 
 
-func _simple_noise(x: float, y: float) -> float:
-	var value = sin(x * 1.5) * cos(y * 1.5) * 0.5 + 0.5
+# 多层噪声叠加，产生自然地形的斑块效果
+func _fractal_noise(x: int, y: int, octaves: int) -> float:
+	var value = 0.0
+	var amplitude = 1.0
+	var frequency = 1.0
+	var max_value = 0.0
+
+	for i in range(octaves):
+		var nx = x * 0.02 * frequency
+		var ny = y * 0.02 * frequency
+		value += amplitude * (
+			sin(nx * 1.2 + ny * 0.7 + i * 3.1) * 0.35 +
+			sin(ny * 1.5 - nx * 0.5 + i * 2.3) * 0.35 +
+			cos((nx + ny) * 0.8 + i * 1.7) * 0.3
+		)
+		max_value += amplitude
+		amplitude *= 0.5
+		frequency *= 2.1
+
+	value = value / max_value
+	value = value * 0.5 + 0.5
 	return clampf(value, 0.0, 1.0)
 
 

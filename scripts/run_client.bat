@@ -8,7 +8,7 @@ echo === Agentora Client 启动脚本 ===
 
 set SCRIPT_DIR=%~dp0
 set CLIENT_DIR=%SCRIPT_DIR%client
-set GODOT_EXE=D:\tool\Godot_v4.6.2-stable_win64.exe\Godot_v4.6.2-stable_win64.exe
+set GODOT_EXE=D:\tool\Godot\Godot_v4.6.2-stable_win64.exe\Godot_v4.6.2-stable_win64.exe
 
 echo 项目目录：%SCRIPT_DIR%
 echo 客户端目录：%CLIENT_DIR%

@@ -2,16 +2,20 @@
 # 负责协调 SimulationBridge 和 UI 组件
 extends Node
 
-@onready var tick_label: Label = $TopBar/TickCounter
-@onready var agent_count_label: Label = $TopBar/AgentCount
-@onready var world_tick_label: Label = $RightPanel/WorldInfo/TickLabel
-@onready var world_agent_count_label: Label = $RightPanel/WorldInfo/AgentCount
-@onready var status_label: Label = $RightPanel/AgentDetail/StatusLabel
-@onready var name_label: Label = $RightPanel/AgentDetail/NameLabel
-@onready var speed_control: OptionButton = $TopBar/SpeedControl
+var name_label: Label
+
+@onready var tick_label: Label = $UI/TopBar/TickCounter
+@onready var agent_count_label: Label = $UI/TopBar/AgentCount
+@onready var world_tick_label: Label = $UI/RightPanel/WorldInfo/TickLabel
+@onready var world_agent_count_label: Label = $UI/RightPanel/WorldInfo/AgentCount
+@onready var status_label: Label = $UI/RightPanel/AgentDetail/StatusLabel
+@onready var speed_control: OptionButton = $UI/TopBar/SpeedControl
 
 
 func _ready() -> void:
+	# 延迟获取 NameLabel，避免节点树初始化时序问题
+	call_deferred("_init_name_label")
+
 	print("[Main] 主场景初始化")
 
 	# 连接 SimulationBridge 信号
@@ -28,6 +32,23 @@ func _ready() -> void:
 	_setup_speed_control()
 
 	print("[Main] 主场景就绪")
+
+
+func _init_name_label() -> void:
+	var agent_detail = get_node_or_null("UI/RightPanel/AgentDetail")
+	if agent_detail:
+		# NameLabel 可能在场景加载时被跳过，动态创建
+		name_label = agent_detail.get_node_or_null("AgentNameLabel")
+		if name_label == null:
+			name_label = Label.new()
+			name_label.name = "AgentNameLabel"
+			name_label.text = "Agent 名称"
+			name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			name_label.layout_mode = 2
+			name_label.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+			agent_detail.add_child(name_label)
+			agent_detail.move_child(name_label, 0)
+			print("[Main] 动态创建 NameLabel")
 
 
 func _setup_speed_control() -> void:

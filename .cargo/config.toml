@@ -1,0 +1,6 @@
+# Workspace cargo 配置
+
+[alias]
+# 便捷别名
+bridge = "build -p agentora-bridge"
+bridge-release = "build -p agentora-bridge --release"
