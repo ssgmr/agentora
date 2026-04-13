@@ -183,7 +183,7 @@ fn test_validate_action_invalid_attack_target() {
 
 #[test]
 fn test_validate_action_trade_insufficient_resources() {
-    use agentora_core::types::ResourceType;
+    use agentora_core::types::{ResourceType, AgentId};
     let world_state = agentora_core::rule_engine::WorldState::default();
     // 没有资源却要交易
     let mut offer = HashMap::new();
@@ -191,7 +191,7 @@ fn test_validate_action_trade_insufficient_resources() {
 
     let candidate = ActionCandidate {
         reasoning: "交易".to_string(),
-        action_type: ActionType::TradeOffer { offer, want: HashMap::new() },
+        action_type: ActionType::TradeOffer { offer, want: HashMap::new(), target_id: AgentId::new("trader") },
         target: Some("trader".to_string()),
         params: HashMap::new(),
         motivation_delta: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
@@ -204,17 +204,18 @@ fn test_validate_action_trade_insufficient_resources() {
 
 #[test]
 fn test_validate_action_trade_valid() {
-    use agentora_core::types::ResourceType;
+    use agentora_core::types::{ResourceType, AgentId};
     let mut world_state = agentora_core::rule_engine::WorldState::default();
     let mut offer = HashMap::new();
     offer.insert(ResourceType::Wood, 5);
 
     // 背包有足够资源
     world_state.agent_inventory.insert(ResourceType::Wood, 10);
+    world_state.existing_agents.insert(AgentId::new("trader"));
 
     let candidate = ActionCandidate {
         reasoning: "交易".to_string(),
-        action_type: ActionType::TradeOffer { offer, want: HashMap::new() },
+        action_type: ActionType::TradeOffer { offer, want: HashMap::new(), target_id: AgentId::new("trader") },
         target: Some("trader".to_string()),
         params: HashMap::new(),
         motivation_delta: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],

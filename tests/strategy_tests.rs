@@ -7,15 +7,20 @@ use agentora_core::strategy::motivation_link::{on_strategy_success, on_strategy_
 use agentora_core::motivation::MotivationVector;
 use agentora_core::decision::SparkType;
 
+/// 生成唯一 agent ID，避免持久化目录交叉污染
+fn uid(prefix: &str) -> String {
+    format!("{}-{}", prefix, uuid::Uuid::new_v4())
+}
+
 #[test]
 fn test_strategy_hub_creation() {
-    let hub = StrategyHub::new("test-agent");
+    let hub = StrategyHub::new(&uid("test-agent"));
     assert!(hub.list_strategies().is_ok());
 }
 
 #[test]
 fn test_strategy_persistence() {
-    let hub = StrategyHub::new("test-agent-persist");
+    let hub = StrategyHub::new(&uid("test-agent-persist"));
 
     let strategy = Strategy {
         spark_type: "resource_pressure".to_string(),
@@ -43,7 +48,7 @@ fn test_strategy_persistence() {
 
 #[test]
 fn test_strategy_exists() {
-    let hub = StrategyHub::new("test-agent-exists");
+    let hub = StrategyHub::new(&uid("test-agent-exists"));
 
     assert!(!hub.strategy_exists("resource_pressure"));
 
@@ -79,7 +84,7 @@ fn test_should_create_strategy() {
 
 #[test]
 fn test_create_strategy() {
-    let hub = StrategyHub::new("test-agent-create");
+    let hub = StrategyHub::new(&uid("test-agent-create"));
 
     let strategy = create_strategy(
         &hub,
@@ -118,7 +123,7 @@ fn test_scan_strategy_content_unicode() {
 
 #[test]
 fn test_decay_all_strategies() {
-    let hub = StrategyHub::new("test-agent-decay");
+    let hub = StrategyHub::new(&uid("test-agent-decay"));
 
     // 创建策略
     let strategy = Strategy {
@@ -143,7 +148,7 @@ fn test_decay_all_strategies() {
 
 #[test]
 fn test_check_deprecation() {
-    let hub = StrategyHub::new("test-agent-deprecate");
+    let hub = StrategyHub::new(&uid("test-agent-deprecate"));
 
     // 创建低成功率策略
     let strategy = Strategy {
@@ -240,7 +245,7 @@ fn test_motivation_link_failure() {
 
 #[test]
 fn test_strategy_delete() {
-    let hub = StrategyHub::new("test-agent-delete");
+    let hub = StrategyHub::new(&uid("test-agent-delete"));
 
     let strategy = Strategy {
         spark_type: "resource_pressure".to_string(),
@@ -262,7 +267,7 @@ fn test_strategy_delete() {
 
 #[test]
 fn test_load_all_strategies() {
-    let mut hub = StrategyHub::new("test-agent-load-all");
+    let mut hub = StrategyHub::new(&uid("test-agent-load-all"));
 
     // 创建多个策略
     for spark_type in ["resource_pressure", "social_pressure", "explore"] {

@@ -6,6 +6,7 @@ pub mod resource;
 pub mod pressure;
 pub mod structure;
 pub mod generator;
+pub mod actions;
 
 use crate::seed::WorldSeed;
 use crate::agent::Agent;
@@ -402,14 +403,13 @@ impl World {
         }
     }
 
-    /// 应用动作到世界
+    /// 应用动作到世界（路由模式：校验 → 路由 → 统一处理结果）
     pub fn apply_action(&mut self, agent_id: &AgentId, action: &Action) -> ActionResult {
-        // 检查 Agent 是否存在且存活
-        let agent_check = self.agents.get(agent_id);
-        if agent_check.is_none() {
+        // 前置校验
+        if !self.agents.contains_key(agent_id) {
             return ActionResult::InvalidAgent;
         }
-        if !agent_check.unwrap().is_alive {
+        if !self.agents[agent_id].is_alive {
             return ActionResult::AgentDead;
         }
 
@@ -419,65 +419,30 @@ impl World {
         // 记录当前动作
         self.current_actions.insert(agent_id.clone(), action.reasoning.clone());
 
-        // 执行动作
+        // 路由到具体 handler
         let result = match &action.action_type {
-            ActionType::Move { direction } => {
-                let agent = self.agents.get_mut(agent_id).unwrap();
-                let agent_name = agent.name.clone();
-                let (dx, dy) = direction.delta();
-                let new_x = agent.position.x as i32 + dx;
-                let new_y = agent.position.y as i32 + dy;
-
-                if new_x >= 0 && new_y >= 0 {
-                    let new_pos = Position::new(new_x as u32, new_y as u32);
-                    if self.map.is_valid(new_pos) {
-                        let terrain = self.map.get_terrain(new_pos);
-                        if terrain.is_passable() {
-                            agent.position = new_pos;
-                            self.record_event(agent_id, &agent_name, "move", &format!("{} 移动至 ({},{})", agent_name, new_pos.x, new_pos.y), "#888888");
-                            ActionResult::Success
-                        } else {
-                            ActionResult::Blocked
-                        }
-                    } else {
-                        ActionResult::OutOfBounds
-                    }
-                } else {
-                    ActionResult::OutOfBounds
-                }
-            }
-
-            ActionType::Gather { resource } => {
-                let agent = self.agents.get_mut(agent_id).unwrap();
-                let agent_name = agent.name.clone();
-                let resource_key = resource.as_str().to_string();
-                let current = *agent.inventory.get(&resource_key).unwrap_or(&0);
-                agent.inventory.insert(resource_key.clone(), current + 1);
-                self.record_event(agent_id, &agent_name, "gather", &format!("{} 采集了 1 个 {}", agent_name, resource_key), "#88CC44");
-                ActionResult::Success
-            }
-
-            ActionType::Wait => {
-                let (agent_name, health) = {
-                    let agent = self.agents.get_mut(agent_id).unwrap();
-                    if agent.health < agent.max_health {
-                        agent.health = (agent.health + 5).min(agent.max_health);
-                    }
-                    (agent.name.clone(), agent.health)
-                };
-                self.record_event(agent_id, &agent_name, "wait", &format!("{} 正在休息，生命值 {}", agent_name, health), "#CCCCCC");
-                ActionResult::Success
-            }
-
+            ActionType::Move { direction } => self.handle_move(agent_id, *direction),
+            ActionType::Gather { resource } => self.handle_gather(agent_id, *resource),
+            ActionType::Wait => self.handle_wait(agent_id),
+            ActionType::Build { structure } => self.handle_build(agent_id, *structure),
+            ActionType::Attack { target_id } => self.handle_attack(agent_id, target_id.clone()),
+            ActionType::Talk { message } => self.handle_talk(agent_id, message.clone()),
+            ActionType::Explore { .. } => self.handle_explore(agent_id),
+            ActionType::TradeOffer { offer, want, target_id } => self.handle_trade_offer(agent_id, offer.clone(), want.clone(), target_id.clone()),
+            ActionType::TradeAccept { .. } => self.handle_trade_accept(agent_id),
+            ActionType::TradeReject { .. } => self.handle_trade_reject(agent_id),
+            ActionType::AllyPropose { target_id } => self.handle_ally_propose(agent_id, target_id.clone()),
+            ActionType::AllyAccept { ally_id } => self.handle_ally_accept(agent_id, ally_id.clone()),
+            ActionType::AllyReject { ally_id } => self.handle_ally_reject(agent_id, ally_id.clone()),
             ActionType::InteractLegacy { legacy_id, interaction } => {
-                // 2.4 交互合法性检查（必须在遗迹格）
                 self.handle_legacy_interaction(agent_id, legacy_id, interaction)
             }
-
-            _ => {
-                self.handle_special_action(agent_id, action)
-            }
         };
+
+        // 统一处理结果：失败时生成错误叙事
+        if let ActionResult::Blocked(ref reason) = result {
+            self.record_error_narrative(agent_id, &action.action_type, reason);
+        }
 
         // 应用动机变化
         let agent = self.agents.get_mut(agent_id).unwrap();
@@ -491,7 +456,6 @@ impl World {
         // 策略创建触发检查（任务 2.1-2.5）
         let is_success = matches!(result, ActionResult::Success);
         if is_success {
-            // 尝试从 params 提取候选数量和动机对齐度
             let candidate_count = action.params.get("candidate_count")
                 .and_then(|v| v.parse::<usize>().ok())
                 .unwrap_or(3);
@@ -501,7 +465,7 @@ impl World {
 
             if should_create_strategy(is_success, candidate_count, motivation_alignment) {
                 let agent = self.agents.get_mut(agent_id).unwrap();
-                let spark_type = SparkType::Explore; // 默认使用 Explore，实际应从决策上下文获取
+                let spark_type = SparkType::Explore;
                 let _ = scan_strategy_content(&action.reasoning);
                 let _ = create_strategy(
                     &agent.strategies,
@@ -512,7 +476,7 @@ impl World {
                 );
             }
 
-            // 动机联动：策略成功（任务 6.4）
+            // 动机联动：策略成功
             let strategy_data = self.agents.get(agent_id).and_then(|agent| {
                 agent.strategies.find_by_spark_type("explore").map(|s| s.clone())
             });
@@ -531,17 +495,15 @@ impl World {
             }
         }
 
-        // 统一维护 agent_positions 反向索引：检查位置变化并更新
+        // 统一维护 agent_positions 反向索引
         if let (Some(old_pos), Some(agent)) = (old_position, self.agents.get(agent_id)) {
             if old_pos != agent.position {
-                // 从旧位置移除
                 if let Some(ids) = self.agent_positions.get_mut(&old_pos) {
                     ids.retain(|id| *id != *agent_id);
                     if ids.is_empty() {
                         self.agent_positions.remove(&old_pos);
                     }
                 }
-                // 加入新位置
                 self.agent_positions.entry(agent.position)
                     .or_default().push(agent_id.clone());
             }
@@ -656,166 +618,6 @@ impl World {
         });
     }
 
-    /// 处理特殊动作（交易、对话、战斗、建造、探索、结盟等）
-    /// TODO: 逐步实现各动作类型，当前先返回 NotImplemented 确保编译通过
-    fn handle_special_action(&mut self, agent_id: &AgentId, action: &Action) -> ActionResult {
-        let agent = self.agents.get(agent_id).unwrap();
-        let agent_name = agent.name.clone();
-
-        match &action.action_type {
-            ActionType::Explore { .. } => {
-                // 探索：向随机方向移动 1-3 步
-                use rand::Rng;
-                let mut rng = rand::thread_rng();
-                let steps = rng.gen_range(1..=3);
-                let dir_idx = rng.gen_range(0..4);
-                let directions = [
-                    crate::types::Direction::North,
-                    crate::types::Direction::South,
-                    crate::types::Direction::East,
-                    crate::types::Direction::West,
-                ];
-                let dir = directions[dir_idx];
-                let (dx, dy) = dir.delta();
-                let agent = self.agents.get_mut(agent_id).unwrap();
-                for _ in 0..steps {
-                    let new_x = agent.position.x as i32 + dx;
-                    let new_y = agent.position.y as i32 + dy;
-                    if new_x >= 0 && new_y >= 0 {
-                        let new_pos = Position::new(new_x as u32, new_y as u32);
-                        if self.map.is_valid(new_pos) && self.map.get_terrain(new_pos).is_passable() {
-                            agent.position = new_pos;
-                        }
-                    }
-                }
-                self.record_event(agent_id, &agent_name, "explore",
-                    &format!("{} 探索周边区域，移动了 {} 步", agent_name, steps), "#44AAFF");
-                ActionResult::Success
-            }
-            ActionType::Talk { message } => {
-                self.record_event(agent_id, &agent_name, "talk",
-                    &format!("{} 说：「{}」", agent_name, message), "#FFAA44");
-                ActionResult::Success
-            }
-            ActionType::Build { structure } => {
-                let agent = self.agents.get_mut(agent_id).unwrap();
-                let pos = agent.position;
-                self.record_event(agent_id, &agent_name, "build",
-                    &format!("{} 在 ({},{}) 建造了 {:?}", agent_name, pos.x, pos.y, structure), "#FF44AA");
-                ActionResult::Success
-            }
-            ActionType::Attack { target_id } => {
-                let agent = self.agents.get(agent_id).unwrap();
-                let agent_name = agent.name.clone();
-                // 简单攻击：扣目标 10 生命值
-                let target_exists = self.agents.contains_key(target_id);
-                let target_alive = self.agents.get(target_id).map(|a| a.is_alive).unwrap_or(false);
-                let target_name = self.agents.get(target_id).map(|a| a.name.clone()).unwrap_or_default();
-
-                if target_exists && target_alive {
-                    let target_agent = self.agents.get_mut(target_id).unwrap();
-                    target_agent.health = target_agent.health.saturating_sub(10);
-                    if target_agent.health == 0 {
-                        target_agent.is_alive = false;
-                        self.record_event(agent_id, &agent_name, "attack",
-                            &format!("{} 攻击了 {} 并将其击败", agent_name, target_name), "#FF0000");
-                    } else {
-                        self.record_event(agent_id, &agent_name, "attack",
-                            &format!("{} 攻击了 {}，造成 10 点伤害", agent_name, target_name), "#FF4444");
-                    }
-                    return ActionResult::Success;
-                }
-                ActionResult::Blocked
-            }
-            ActionType::TradeOffer { .. } | ActionType::TradeAccept { .. } | ActionType::TradeReject { .. } => {
-                self.record_event(agent_id, &agent_name, "trade",
-                    &format!("{} 发起交易请求", agent_name), "#44FFAA");
-                ActionResult::Success
-            }
-            ActionType::AllyPropose { .. } | ActionType::AllyAccept { .. } | ActionType::AllyReject { .. } => {
-                self.record_event(agent_id, &agent_name, "ally",
-                    &format!("{} 发起结盟请求", agent_name), "#AAFF44");
-                ActionResult::Success
-            }
-            _ => ActionResult::NotImplemented,
-        }
-    }
-
-    /// 处理遗产交互（任务 2.1-2.4）
-    fn handle_legacy_interaction(&mut self, agent_id: &AgentId, legacy_id: &str, interaction: &crate::types::LegacyInteraction) -> ActionResult {
-        // 2.4 交互合法性检查：必须在遗迹格
-        let agent = self.agents.get(agent_id).unwrap();
-        let agent_pos = agent.position;
-
-        // 查找遗产
-        let legacy_index = self.legacies.iter().position(|l| l.id == legacy_id);
-        if legacy_index.is_none() {
-            return ActionResult::InvalidAgent; // 遗产不存在
-        }
-        let legacy = &self.legacies[legacy_index.unwrap()];
-
-        // 检查 Agent 是否在遗迹位置
-        if legacy.position != agent_pos {
-            return ActionResult::Blocked; // 不在遗迹位置，无法交互
-        }
-
-        // agent 借用在此结束，因为 agent_pos 已复制
-
-        match interaction {
-            // 2.1 祭拜动作（认知/传承动机 +0.05）
-            crate::types::LegacyInteraction::Worship => {
-                let agent = self.agents.get_mut(agent_id).unwrap();
-                // 认知动机（索引 2）+0.05
-                agent.motivation[2] = (agent.motivation[2] + 0.05).clamp(0.0, 1.0);
-                // 传承动机（索引 5）+0.05
-                agent.motivation[5] = (agent.motivation[5] + 0.05).clamp(0.0, 1.0);
-                ActionResult::Success
-            }
-
-            // 2.2 探索动作（认知动机 +0.1，获得回响日志）
-            crate::types::LegacyInteraction::Explore => {
-                let agent = self.agents.get_mut(agent_id).unwrap();
-                // 认知动机 +0.1
-                agent.motivation[2] = (agent.motivation[2] + 0.1).clamp(0.0, 1.0);
-                // 回响日志已在 legacy.echo_log 中，Agent 可以通过 memory 系统记录
-                ActionResult::Success
-            }
-
-            // 2.3 拾取动作（转移物品到背包）
-            crate::types::LegacyInteraction::Pickup => {
-                // 检查遗产是否有物品
-                let legacy = &mut self.legacies[legacy_index.unwrap()];
-                if legacy.items.is_empty() {
-                    return ActionResult::Blocked; // 没有物品可拾取
-                }
-
-                // 转移第一个物品到 Agent 背包
-                let mut items_to_transfer = Vec::new();
-                for (item_name, amount) in &legacy.items {
-                    if *amount > 0 {
-                        items_to_transfer.push((item_name.clone(), *amount));
-                        break; // 只拾取第一个物品
-                    }
-                }
-
-                if items_to_transfer.is_empty() {
-                    return ActionResult::Blocked;
-                }
-
-                let (item_name, amount) = items_to_transfer[0].clone();
-                let agent = self.agents.get_mut(agent_id).unwrap();
-                let current = *agent.inventory.get(&item_name).unwrap_or(&0);
-                agent.inventory.insert(item_name.clone(), current + amount);
-
-                // 从遗产中移除物品
-                let legacy = &mut self.legacies[legacy_index.unwrap()];
-                legacy.items.insert(item_name, amount - 1);
-
-                ActionResult::Success
-            }
-        }
-    }
-
     /// 持久化世界状态
     pub async fn persist(&self) -> Result<(), Box<dyn std::error::Error>> {
         // TODO: 实现持久化
@@ -824,12 +626,12 @@ impl World {
 }
 
 /// 动作执行结果
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActionResult {
     Success,
     InvalidAgent,
     AgentDead,
-    Blocked,
+    Blocked(String),
     OutOfBounds,
     NotImplemented,
 }

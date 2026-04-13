@@ -2,6 +2,7 @@
 
 use crate::motivation::{MotivationVector, DIMENSION_NAMES};
 use crate::types::{ActionType, AgentId};
+use crate::types::ResourceType;
 use crate::rule_engine::{RuleEngine, WorldState};
 use crate::prompt::PromptBuilder;
 use crate::strategy::retrieve::{retrieve_strategy, get_strategy_summary, wrap_strategy_for_prompt};
@@ -289,11 +290,6 @@ impl DecisionPipeline {
             })
         });
 
-        // DEBUG: 打印记忆摘要（临时验证）
-        if !memory_summary.is_empty() {
-            println!("[记忆摘要 DEBUG]\n{}", memory_summary);
-        }
-
         self.prompt_builder.build_decision_prompt(
             agent_id.as_str(),
             motivation,
@@ -385,9 +381,6 @@ impl DecisionPipeline {
                 ));
             }
         }
-
-        // DEBUG: 打印感知摘要内容（临时验证）
-        println!("[感知摘要 DEBUG]\n{}", summary);
 
         summary
     }
@@ -552,19 +545,80 @@ impl DecisionPipeline {
                     .unwrap_or("unknown");
                 Some(ActionType::Attack { target_id: AgentId::new(target_id) })
             }
-            "TradeOffer" | "trade" | "交易" => {
-                // 交易暂时用 Wait 兜底
-                Some(ActionType::Wait)
+            "TradeOffer" | "trade" | "交易" | "交易提议" => {
+                // 解析交易提议参数
+                let target_id = json["params"]["target_id"]
+                    .as_str()
+                    .or_else(|| json["target"].as_str())
+                    .unwrap_or("unknown");
+                let offer = Self::parse_resource_map(&json["params"]["offer"]);
+                let want = Self::parse_resource_map(&json["params"]["want"]);
+                Some(ActionType::TradeOffer {
+                    offer,
+                    want,
+                    target_id: AgentId::new(target_id),
+                })
             }
-            "AllyPropose" | "ally" | "结盟" => {
-                // 结盟暂时用 Wait 兜底
-                Some(ActionType::Wait)
+            "TradeAccept" | "交易接受" => {
+                let trade_id = json["params"]["trade_id"]
+                    .as_str()
+                    .unwrap_or("default");
+                Some(ActionType::TradeAccept { trade_id: trade_id.to_string() })
+            }
+            "TradeReject" | "交易拒绝" => {
+                let trade_id = json["params"]["trade_id"]
+                    .as_str()
+                    .unwrap_or("default");
+                Some(ActionType::TradeReject { trade_id: trade_id.to_string() })
+            }
+            "AllyPropose" | "ally" | "结盟" | "结盟提议" => {
+                let target_id = json["params"]["target_id"]
+                    .as_str()
+                    .or_else(|| json["target"].as_str())
+                    .unwrap_or("unknown");
+                Some(ActionType::AllyPropose { target_id: AgentId::new(target_id) })
+            }
+            "AllyAccept" | "结盟接受" => {
+                let ally_id = json["params"]["ally_id"]
+                    .as_str()
+                    .or_else(|| json["target"].as_str())
+                    .unwrap_or("unknown");
+                Some(ActionType::AllyAccept { ally_id: AgentId::new(ally_id) })
+            }
+            "AllyReject" | "结盟拒绝" => {
+                let ally_id = json["params"]["ally_id"]
+                    .as_str()
+                    .or_else(|| json["target"].as_str())
+                    .unwrap_or("unknown");
+                Some(ActionType::AllyReject { ally_id: AgentId::new(ally_id) })
             }
             _ => {
                 println!("[Decision] 未知 action_type: {}，使用 Wait 兜底", type_str);
                 Some(ActionType::Wait)
             }
         }
+    }
+
+    /// 解析资源映射 JSON
+    fn parse_resource_map(value: &serde_json::Value) -> HashMap<ResourceType, u32> {
+        let mut map = HashMap::new();
+        if let Some(obj) = value.as_object() {
+            for (k, v) in obj {
+                let resource = match k.as_str() {
+                    "iron" | "Iron" | "铁矿" => ResourceType::Iron,
+                    "food" | "Food" | "食物" => ResourceType::Food,
+                    "wood" | "Wood" | "木材" => ResourceType::Wood,
+                    "water" | "Water" | "水源" => ResourceType::Water,
+                    "stone" | "Stone" | "石材" => ResourceType::Stone,
+                    _ => continue,
+                };
+                let amount = v.as_u64().unwrap_or(0) as u32;
+                if amount > 0 {
+                    map.insert(resource, amount);
+                }
+            }
+        }
+        map
     }
 
     /// 动机加权选择（公共方法，供测试使用）

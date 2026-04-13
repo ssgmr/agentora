@@ -5,6 +5,15 @@ extends Node2D
 # 地形纹理配置
 var _terrain_textures: Dictionary = {}
 
+# 建筑结构字典 (position_key -> {type, sprite})
+var _structures: Dictionary = {}
+
+# 建筑纹理配置
+var _structure_textures: Dictionary = {}
+
+# 建筑 Sprite 节点容器（用于动态添加/删除）
+var _structure_sprites: Node2D = null
+
 # 地形颜色配置（回退用）
 const TERRAIN_COLORS = {
 	"plains": Color(0.3, 0.6, 0.2),    # 绿色草地
@@ -12,6 +21,17 @@ const TERRAIN_COLORS = {
 	"mountain": Color(0.5, 0.5, 0.5),  # 灰色山脉
 	"water": Color(0.2, 0.4, 0.8),     # 蓝色水域
 	"desert": Color(0.8, 0.7, 0.3)     # 黄色沙漠
+}
+
+# 建筑类型到纹理的映射
+const STRUCTURE_TEXTURE_MAP = {
+	"Camp": "res://assets/textures/structure_camp.png",
+	"Campfire": "res://assets/textures/structure_campfire.png",
+	"Warehouse": "res://assets/textures/structure_warehouse.png",
+	"Fortress": "res://assets/textures/structure_fortress.png",
+	"WatchTower": "res://assets/textures/structure_watchtower.png",
+	"Fence": "res://assets/textures/structure_wall.png",
+	"Wall": "res://assets/textures/structure_wall.png",
 }
 
 var _tile_size: int = 16
@@ -32,14 +52,36 @@ func _ready() -> void:
 	_terrain_textures["water"] = load("res://assets/textures/terrain_water.png")
 	_terrain_textures["desert"] = load("res://assets/textures/terrain_desert.png")
 
+	# 加载建筑结构纹理
+	_load_structure_textures()
+
+	# 创建建筑 Sprite 容器
+	_structure_sprites = Node2D.new()
+	_structure_sprites.name = "StructureSprites"
+	add_child(_structure_sprites)
+
 	# 连接信号
 	var bridge = get_node_or_null("../../SimulationBridge")
 	if bridge:
 		bridge.world_updated.connect(_on_world_updated)
+		# 连接 delta 信号（Tier 2）
+		if bridge.has_signal("agent_delta"):
+			bridge.agent_delta.connect(_on_delta_received)
 
 	# 生成地图数据
 	_generate_map_data()
 	print("[WorldRenderer] 地图生成完成：%d 个单元格" % _map_data.size())
+
+
+func _load_structure_textures() -> void:
+	for struct_type in STRUCTURE_TEXTURE_MAP:
+		var path = STRUCTURE_TEXTURE_MAP[struct_type]
+		var tex = load(path)
+		if tex:
+			_structure_textures[struct_type] = tex
+			print("[WorldRenderer] 加载建筑纹理: %s" % struct_type)
+		else:
+			push_warning("[WorldRenderer] 无法加载建筑纹理: %s" % path)
 
 
 func _generate_map_data() -> void:
@@ -129,6 +171,28 @@ func _draw() -> void:
 				var color: Color = TERRAIN_COLORS.get(terrain, Color.WHITE)
 				draw_rect(Rect2(pos_x, pos_y, _tile_size, _tile_size), color)
 
+	# 绘制建筑结构
+	_draw_structures(start_x, start_y, end_x, end_y)
+
+
+func _draw_structures(start_x: int, start_y: int, end_x: int, end_y: int) -> void:
+	for pos_key in _structures:
+		var parts = pos_key.split("_")
+		if parts.size() < 2:
+			continue
+		var sx = parts[0].to_int()
+		var sy = parts[1].to_int()
+
+		# 只绘制可见区域内的建筑
+		if sx < start_x or sx > end_x or sy < start_y or sy > end_y:
+			continue
+
+		var struct_info = _structures[pos_key]
+		var struct_type = struct_info.get("type", "Camp")
+		var texture: Texture2D = _structure_textures.get(struct_type)
+		if texture:
+			draw_texture(texture, Vector2(sx * _tile_size, sy * _tile_size))
+
 
 func _process(_delta: float) -> void:
 	# 每帧重绘
@@ -136,6 +200,64 @@ func _process(_delta: float) -> void:
 
 
 func _on_world_updated(snapshot: Dictionary) -> void:
-	# 地图变化时重绘
+	# 从 snapshot 加载建筑信息（兜底同步）
+	if snapshot.has("map_changes"):
+		for change in snapshot.map_changes:
+			if change.has("structure") and change.structure != null and change.structure != "":
+				var key = "%d_%d" % [change.x, change.y]
+				_structures[key] = {"type": _normalize_structure_type(change.structure)}
 	_needs_redraw = true
 	queue_redraw()
+
+
+# ===== Tier 2: Delta 事件处理 =====
+
+func _on_delta_received(delta: Dictionary) -> void:
+	var delta_type = delta.get("type", "")
+
+	match delta_type:
+		"structure_created":
+			_on_structure_created(delta)
+		"structure_destroyed":
+			_on_structure_destroyed(delta)
+		"resource_changed":
+			_on_resource_changed(delta)
+
+
+func _on_structure_created(delta: Dictionary) -> void:
+	var pos: Vector2 = delta.get("position", Vector2.ZERO)
+	var x = int(pos.x)
+	var y = int(pos.y)
+	var struct_type = delta.get("structure_type", "Camp")
+	var key = "%d_%d" % [x, y]
+
+	_structures[key] = {"type": _normalize_structure_type(struct_type)}
+	print("[WorldRenderer] 建筑创建: %s at (%d, %d)" % [struct_type, x, y])
+	queue_redraw()
+
+
+func _on_structure_destroyed(delta: Dictionary) -> void:
+	var pos: Vector2 = delta.get("position", Vector2.ZERO)
+	var x = int(pos.x)
+	var y = int(pos.y)
+	var key = "%d_%d" % [x, y]
+
+	if _structures.has(key):
+		_structures.erase(key)
+		print("[WorldRenderer] 建筑销毁: (%d, %d)" % [x, y])
+		queue_redraw()
+
+
+func _on_resource_changed(delta: Dictionary) -> void:
+	# 资源变化时不直接重绘整个地图，只记录日志
+	var pos: Vector2 = delta.get("position", Vector2.ZERO)
+	var resource_type = delta.get("resource_type", "")
+	var amount = delta.get("amount", 0)
+	print("[WorldRenderer] 资源变化: %s at (%d, %d) = %d" % [resource_type, pos.x, pos.y, amount])
+
+
+func _normalize_structure_type(raw: String) -> String:
+	# 从 "Camp" / "Structure::Camp" 等格式提取类型名
+	if raw.contains("::"):
+		return raw.split("::")[1]
+	return raw

@@ -87,3 +87,20 @@ impl WorldSnapshot {
         serde_json::to_vec(self).unwrap()
     }
 }
+
+/// 世界增量事件（实时推送到 Godot）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum WorldDelta {
+    // 已有
+    AgentMoved { id: String, x: u32, y: u32 },
+    AgentDied { id: String },
+    AgentSpawned { id: String, x: u32, y: u32 },
+
+    // 新增：Tier 2
+    StructureCreated { x: u32, y: u32, structure_type: String, owner_id: String },
+    StructureDestroyed { x: u32, y: u32, structure_type: String },
+    ResourceChanged { x: u32, y: u32, resource_type: String, amount: u32 },
+    TradeCompleted { from_id: String, to_id: String, items: String },
+    AllianceFormed { id1: String, id2: String },
+    AllianceBroken { id1: String, id2: String, reason: String },
+}

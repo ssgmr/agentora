@@ -35,8 +35,8 @@ fn test_motivation_vector_clamp() {
 fn test_decay_convergence() {
     let mut vec = MotivationVector::from_array([1.0, 0.0, 0.8, 0.2, 0.9, 0.1]);
 
-    // 连续衰减10次
-    for _ in 0..10 {
+    // alpha=0.99 收敛很慢，需要约 160 次迭代才能接近 0.5
+    for _ in 0..200 {
         vec.decay();
     }
 
@@ -53,7 +53,7 @@ fn test_decay_formula() {
     vec.decay();
 
     // 公式: new = old * α + 0.5 * (1 - α)
-    // 对于初始值1.0: 1.0 * 0.85 + 0.5 * 0.15 = 0.85 + 0.075 = 0.925
+    // 对于初始值1.0: 1.0 * 0.99 + 0.5 * 0.01 = 0.99 + 0.005 = 0.995
     let expected = 1.0 * DECAY_ALPHA + NEUTRAL_VALUE * (1.0 - DECAY_ALPHA);
     assert!((vec[0] - expected).abs() < 0.001);
 }

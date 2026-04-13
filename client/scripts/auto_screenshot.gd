@@ -1,8 +1,8 @@
 extends Node
 
 func _ready():
-	print("[AutoScreenshot] Auto screenshot loaded, waiting 30s...")
-	await get_tree().create_timer(22.0).timeout
+	print("[AutoScreenshot] Auto screenshot loaded, waiting 45s...")
+	await get_tree().create_timer(45.0).timeout
 	print("[AutoScreenshot] Taking screenshot now...")
 	var viewport = get_viewport()
 	var img = viewport.get_texture().get_image()

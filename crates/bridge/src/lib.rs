@@ -54,6 +54,45 @@ pub enum AgentDelta {
         max_health: u32,
         motivation: [f32; 6],
     },
+
+    // ===== Tier 2 新增 =====
+    /// 建筑创建
+    StructureCreated {
+        x: u32,
+        y: u32,
+        structure_type: String,
+        owner_id: String,
+    },
+    /// 建筑销毁
+    StructureDestroyed {
+        x: u32,
+        y: u32,
+        structure_type: String,
+    },
+    /// 资源变化
+    ResourceChanged {
+        x: u32,
+        y: u32,
+        resource_type: String,
+        amount: u32,
+    },
+    /// 交易完成
+    TradeCompleted {
+        from_id: String,
+        to_id: String,
+        items: String,
+    },
+    /// 联盟建立
+    AllianceFormed {
+        id1: String,
+        id2: String,
+    },
+    /// 联盟破裂
+    AllianceBroken {
+        id1: String,
+        id2: String,
+        reason: String,
+    },
 }
 
 // ===== 模拟配置 =====
@@ -300,6 +339,45 @@ impl SimulationBridge {
                 let mut mot_arr: Array<f32> = Array::new();
                 for &v in motivation { mot_arr.push(v); }
                 dict.set("motivation", &mot_arr.to_variant());
+            }
+
+            // Tier 2 新增
+            AgentDelta::StructureCreated { x, y, structure_type, owner_id } => {
+                dict.set("type", &"structure_created".to_variant());
+                dict.set("structure_type", &structure_type.to_variant());
+                dict.set("owner_id", &owner_id.to_variant());
+                let pos = Vector2::new(*x as f32, *y as f32);
+                dict.set("position", &pos.to_variant());
+            }
+            AgentDelta::StructureDestroyed { x, y, structure_type } => {
+                dict.set("type", &"structure_destroyed".to_variant());
+                dict.set("structure_type", &structure_type.to_variant());
+                let pos = Vector2::new(*x as f32, *y as f32);
+                dict.set("position", &pos.to_variant());
+            }
+            AgentDelta::ResourceChanged { x, y, resource_type, amount } => {
+                dict.set("type", &"resource_changed".to_variant());
+                dict.set("resource_type", &resource_type.to_variant());
+                dict.set("amount", &(Variant::from(*amount as i64)));
+                let pos = Vector2::new(*x as f32, *y as f32);
+                dict.set("position", &pos.to_variant());
+            }
+            AgentDelta::TradeCompleted { from_id, to_id, items } => {
+                dict.set("type", &"trade_completed".to_variant());
+                dict.set("from_id", &from_id.to_variant());
+                dict.set("to_id", &to_id.to_variant());
+                dict.set("items", &items.to_variant());
+            }
+            AgentDelta::AllianceFormed { id1, id2 } => {
+                dict.set("type", &"alliance_formed".to_variant());
+                dict.set("id1", &id1.to_variant());
+                dict.set("id2", &id2.to_variant());
+            }
+            AgentDelta::AllianceBroken { id1, id2, reason } => {
+                dict.set("type", &"alliance_broken".to_variant());
+                dict.set("id1", &id1.to_variant());
+                dict.set("id2", &id2.to_variant());
+                dict.set("reason", &reason.to_variant());
             }
         }
         dict.to_variant()
@@ -846,6 +924,8 @@ async fn run_agent_loop(
                 action_type: result.selected_action.action_type,
                 target: result.selected_action.target,
                 params: result.selected_action.params.into_iter().map(|(k, v)| (k, v.to_string())).collect(),
+                build_type: None,
+                direction: None,
                 motivation_delta: result.selected_action.motivation_delta,
             }
         };
@@ -869,7 +949,7 @@ async fn run_apply_loop(
     println!("[ApplyLoop] 启动");
     while let Some((agent_id, action)) = action_rx.recv().await {
         println!("[ApplyLoop] 收到 Agent {:?} 的动作: {:?}", agent_id, action.action_type);
-        let (delta, events) = {
+        let (delta, events, extra_deltas) = {
             let mut w = world.lock().await;
 
             // 每应用一个动作前推进 world tick（确保世界状态更新）
@@ -958,7 +1038,54 @@ async fn run_apply_loop(
                 }
             };
 
-            (delta, events)
+            // Tier 2: 基于动作类型生成额外 delta
+            let mut extra_deltas: Vec<AgentDelta> = Vec::new();
+            match &action.action_type {
+                agentora_core::types::ActionType::Build { structure } => {
+                    if let Some(agent) = w.agents.get(&agent_id) {
+                        extra_deltas.push(AgentDelta::StructureCreated {
+                            x: agent.position.x,
+                            y: agent.position.y,
+                            structure_type: format!("{:?}", structure),
+                            owner_id: agent_id.as_str().to_string(),
+                        });
+                    }
+                }
+                agentora_core::types::ActionType::Gather { resource } => {
+                    if let Some(agent) = w.agents.get(&agent_id) {
+                        if let Some(node) = w.resources.get(&agent.position) {
+                            extra_deltas.push(AgentDelta::ResourceChanged {
+                                x: agent.position.x,
+                                y: agent.position.y,
+                                resource_type: resource.as_str().to_string(),
+                                amount: node.current_amount,
+                            });
+                        }
+                    }
+                }
+                agentora_core::types::ActionType::TradeAccept { .. } => {
+                    // 查找最近的已完成交易叙事
+                    if let Some(event) = events.iter().find(|e| e.event_type == "trade") {
+                        extra_deltas.push(AgentDelta::TradeCompleted {
+                            from_id: agent_id.as_str().to_string(),
+                            to_id: "unknown".to_string(),
+                            items: event.description.clone(),
+                        });
+                    }
+                }
+                agentora_core::types::ActionType::AllyAccept { .. } => {
+                    // 查找结盟叙事
+                    if let Some(event) = events.iter().find(|e| e.event_type == "ally") {
+                        extra_deltas.push(AgentDelta::AllianceFormed {
+                            id1: agent_id.as_str().to_string(),
+                            id2: "unknown".to_string(),
+                        });
+                    }
+                }
+                _ => {}
+            }
+
+            (delta, events, extra_deltas)
         };
 
         // 发送叙事事件
@@ -970,6 +1097,13 @@ async fn run_apply_loop(
         // 在锁外发送 delta，避免阻塞
         if let Err(e) = delta_tx.send(delta) {
             println!("[ApplyLoop] delta 发送失败: {:?}", e);
+        }
+
+        // Tier 2: 发送额外 delta 事件
+        for extra_delta in extra_deltas {
+            if let Err(e) = delta_tx.send(extra_delta) {
+                println!("[ApplyLoop] extra delta 发送失败: {:?}", e);
+            }
         }
     }
 }

@@ -24,11 +24,19 @@ cargo test --test motivation_tests
 cargo test --test decision_tests
 cargo test --test crdt_tests
 cargo test --test json_parse_tests
+cargo test --test strategy_tests
+cargo test --test memory_tests
+cargo test --test legacy_tests
+cargo test --test agent_tests
+
+# 运行单个测试用例
+cargo test --test motivation_tests -- --test specific_test_name
 
 # 运行集成测试（需要LLM服务）
 cargo test --test single_agent
 cargo test --test multi_agent
 cargo test --test multi_node
+cargo test --test llm_local_test
 
 # 构建GDExtension动态库（bridge crate）并复制到client/bin/
 cargo build -p agentora-bridge
@@ -40,6 +48,11 @@ scripts/build-bridge.bat                # Windows批处理版本
 
 # 启动多节点测试环境
 bash scripts/start_multi_node.sh
+
+# 运行Godot客户端（本地调试）
+"D:/tool/Godot/Godot_v4.6.2-stable_win64.exe" --path client
+bash scripts/run_client.sh        # Linux/WSL别名
+scripts\run_client.bat             # Windows批处理
 
 # Godot客户端打包（需先编译bridge）
 godot --path client --export-release "Windows Desktop" agentora_windows.exe
@@ -161,15 +174,19 @@ AutoScreenshot="*res://scripts/auto_screenshot.gd"
 - `bridge` → `core` (桥接核心引擎到Godot)
 - 根包 → 所有crates (集成测试)
 
-### Storage层 (`crates/core/src/storage/`)
-- **`WorldStore`** — 世界状态持久化（SQLite）
-- **`AgentStore`** — Agent状态持久化（SQLite）
-- **`MemoryStore`** — 记忆存储封装
-- **`StrategyStore`** — 策略存储（创建/查询/更新/衰减）
-- **`MapStore`** — 地图数据持久化
-- **`Schema`** — SQLite表结构定义
+### Core Crate顶层模块 (`crates/core/src/`)
+- **`types.rs`** — 核心类型：AgentId, Position, Direction, ResourceType, TerrainType, StructureType, ActionType(13种), Action, PersonalitySeed, PeerId
+- **`motivation.rs`** — 6维动机向量（生存/社交/认知/表达/权力/传承），惯性衰减（alpha=0.99），缺口计算
+- **`decision.rs`** — DecisionPipeline：Spark生成 → 硬约束过滤 → Prompt构建 → LLM调用 → 规则校验 → Softmax选择
+- **`rule_engine.rs`** — 规则引擎：硬约束过滤 + 动作校验 + LLM失败兜底
+- **`prompt.rs`** — PromptBuilder：分级截断（策略→记忆→感知），最大2500 tokens，中文感知估算
+- **`seed.rs`** — WorldSeed配置加载
+- **`snapshot.rs`** — WorldSnapshot/AgentSnapshot/CellChange/NarrativeEvent/LegacyEvent/PressureSnapshot（Godot序列化）
+- **`legacy.rs`** — 遗产系统（Agent死亡/遗产沉淀）
+- **`vision.rs`** — 视野扫描（附近Agent/资源扫描）
 
 ### Agent模块 (`crates/core/src/agent/`)
+- **`mod.rs`** — Agent实体（信任关系/临时偏好）
 - **`movement.rs`** — 移动逻辑（边界检查、碰撞、地形影响）
 - **`inventory.rs`** — 物品栏管理（收集/消耗/交易）
 - **`trade.rs`** — Agent间交易协议
@@ -178,6 +195,7 @@ AutoScreenshot="*res://scripts/auto_screenshot.gd"
 - **`alliance.rs`** — 联盟系统
 
 ### World模块 (`crates/core/src/world/`)
+- **`mod.rs`** — World主结构（tick循环、apply_action、snapshot生成）
 - **`map.rs`** — TileMap地形生成和查询
 - **`region.rs`** — 区域划分和管理
 - **`resource.rs`** — 资源分布和刷新
@@ -185,8 +203,39 @@ AutoScreenshot="*res://scripts/auto_screenshot.gd"
 - **`structure.rs`** — 建筑放置和管理
 - **`generator.rs`** — 世界生成器（基于WorldSeed）
 
+### Storage层 (`crates/core/src/storage/`)
+- **`mod.rs`** — StorageManager（SQLite连接管理）
+- **`schema.rs`** — SQLite表结构定义
+- **`world_store.rs`** — 世界状态持久化
+- **`agent_store.rs`** — Agent状态持久化
+- **`memory_store.rs`** — 记忆存储封装
+- **`strategy_store.rs`** — 策略存储（创建/查询/更新/衰减）
+- **`map_store.rs`** — 地图数据持久化
+
+### Memory模块 (`crates/core/src/memory/`)
+- **`mod.rs`** — MemorySystem：ShortTerm + ChronicleDB + ChronicleStore + TokenBudget
+- **`chronicle_store.rs`** — 冻结快照（Markdown文件注入Prompt）
+- **`chronicle_db.rs`** — SQLite + FTS5全文索引
+- **`short_term.rs`** — 短期记忆队列
+- **`token_budget.rs`** — 总量控制（可配置预算）
+- **`fence.rs`** — 记忆围栏/隔离
+
+### Strategy模块 (`crates/core/src/strategy/`)
+- **`mod.rs`** — StrategyHub（YAML frontmatter STRATEGY.md文件加载）
+- **`create.rs`** — 策略自我创建
+- **`patch.rs`** — 策略改进/Patch
+- **`decay.rs`** — 衰减清理
+- **`retrieve.rs`** — Spark类型匹配检索
+- **`motivation_link.rs`** — 动机联动反馈
+
+### 依赖关系
+- `core` → `ai`, `sync` (决策需要LLM、状态需要CRDT类型)
+- `network` → `sync` (广播CRDT操作)
+- `bridge` → `core`, `ai` (桥接核心引擎和LLM到Godot)
+- 根包 → 所有crates (集成测试)
+
 ### Bridge架构 (`crates/bridge/src/`)
-GDExtension桥接Rust核心引擎到Godot客户端：
+GDExtension桥接Rust核心引擎到Godot客户端（单文件1000+行）：
 - **`SimulationBridge`** — Godot Node扩展，通过mpsc通道与模拟线程通信
 - **`SimCommand`** — 控制命令枚举（Start/Pause/SetTickInterval/AdjustMotivation/InjectPreference）
 - **`SimConfig`** — 从`config/sim.toml`加载模拟配置（Agent数量/NPC数量/决策间隔）
@@ -197,26 +246,38 @@ GDExtension桥接Rust核心引擎到Godot客户端：
 - **`run_snapshot_loop`** — 每5秒生成完整WorldSnapshot
 - **`AgentDelta`** — 增量更新枚举（AgentMoved/AgentDied/AgentSpawned）
 - **读写分离** — 决策不持锁，Apply阶段串行获取写权限
+- **NPC系统** — 规则引擎快速决策（无LLM），独立决策间隔（`npc_decision_interval_secs=5`）
+- **记忆记录** — 动作自动记录到Agent记忆，带情感标签和重要性评分
 - 产物为`cdylib`动态库，复制到`client/bin/agentora_bridge.dll`
 
 **动机引擎** (`crates/core/src/motivation.rs`)
 - 6维向量：生存/社交/认知/表达/权力/传承
-- 惯性衰减公式：`new = old * 0.85 + 0.5 * 0.15`
+- 惯性衰减公式：`new = old * 0.99 + 0.5 * 0.01`（alpha=0.99）
 - 缺口计算 → Spark触发决策
 
 **决策管道** (`crates/core/src/decision.rs`)
 - 火花生成 → 硬约束过滤 → Prompt构建 → LLM调用 → 规则校验 → 动机加权选择
 
+**规则引擎** (`crates/core/src/rule_engine.rs`)
+- `RuleEngine`：硬约束过滤 + 动作校验 + LLM失败兜底
+- `WorldState`：世界状态快照（位置/库存/地形/资源）
+- 保证LLM不可用时的系统鲁棒性
+
 **三层记忆** (`crates/core/src/memory/`)
 - `ChronicleStore`：冻结快照（Markdown文件注入Prompt）
 - `ChronicleDB`：SQLite + FTS5全文索引
-- `TokenBudget`：总量控制 ≤1800 chars（可配置）
+- `TokenBudget`：总量控制 ≤1800 chars（可配置：total=1800, chronicle=800, db=600, strategy=400）
 - `ShortTerm`：短期记忆队列
 - `Fence`：记忆围栏/隔离
 
 **策略库** (`crates/core/src/strategy/`)
 - 自我创建、Patch改进、衰减清理
 - Spark类型匹配检索，动机联动反馈
+- 基于YAML frontmatter的STRATEGY.md文件加载
+
+**Prompt构建** (`crates/core/src/prompt.rs`)
+- 分级截断策略：策略 → 记忆 → 感知（优先保留核心决策上下文）
+- 最大2500 tokens，中文感知估算
 
 ### 世界模型四层架构
 1. **公理层** — 物理常数/稀缺性/死亡规则，硬编码+签名配置，高门槛DAO投票修改
@@ -257,14 +318,9 @@ agentora/
 - **存储**: SQLite (热/温) + FAISS-lite (向量索引) + IPFS/Arweave (冷数据)
 
 ### 测试结构 (`tests/`)
-- **单元测试**：`motivation_tests`, `decision_tests`, `crdt_tests`, `json_parse_tests`, `strategy_tests`, `memory_tests`, `legacy_tests`
-- **集成测试**（需要LLM服务运行）：`single_agent`, `multi_agent`, `multi_node`
+- **单元测试**：`motivation_tests`, `decision_tests`, `crdt_tests`, `json_parse_tests`, `strategy_tests`, `memory_tests`, `legacy_tests`, `agent_tests`
+- **集成测试**（需要LLM服务运行）：`single_agent`, `multi_agent`, `multi_node`, `llm_local_test`
 - 集成测试通过`tempfile`创建临时数据库，测试后自动清理
-
-### 核心规则引擎 (`crates/core/src/rule_engine.rs`)
-- `RuleEngine`：硬约束过滤 + 动作校验 + 兜底决策
-- `WorldState`：世界状态快照（位置/库存/地形/资源）
-- LLM失败时提供规则引擎兜底动作，保证系统鲁棒性
 
 ### 关键性能指标
 - 骁龙8Gen3决策延迟 < 150ms，首token < 100ms
@@ -277,11 +333,18 @@ agentora/
 - 支持Anthropic兼容端点作为备用
 - 决策max_tokens=500，temperature=0.7
 - 记忆系统配置在 `[memory]` section，包含预算/存储/检索/容量/Prompt约束等参数
+  - `total_budget=1800` chars, `chronicle_budget=800`, `db_budget=600`, `strategy_budget=400`
+
+**模拟配置** (`config/sim.toml`)
+- `initial_agent_count=3`, `npc_count=3`
+- `npc_decision_interval_secs=5`, `player_decision_interval_secs=2`
 
 **世界种子** (`worldseeds/default.toml`)
 - 地图256×256，区域16×16
+- 地形比例：plains 0.5 / forest 0.25 / mountain 0.1 / water 0.1 / desert 0.05
 - 初始Agent=5，资源密度=0.15
 - 动机模板：gatherer/trader/explorer/builder
+- 环境压力系统配置（pressure section）
 
 ## Conventions
 

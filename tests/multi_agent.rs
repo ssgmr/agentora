@@ -64,6 +64,14 @@ mod tests {
                     candidates.first().cloned().unwrap_or(ActionType::Wait)
                 }
             }
+            // 认知动机最强：移动探索
+            _ if agent.motivation[2] > 0.6 => {
+                if let Some(a) = candidates.iter().find(|a| matches!(a, ActionType::Move { .. })) {
+                    a.clone()
+                } else {
+                    candidates.first().cloned().unwrap_or(ActionType::Wait)
+                }
+            }
             // 默认：选择第一个合法动作
             _ => {
                 // 有些随机性：不总是选第一个

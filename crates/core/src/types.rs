@@ -112,12 +112,29 @@ pub enum StructureType {
     Warehouse, // 仓库
 }
 
+impl StructureType {
+    /// 建造所需的资源消耗
+    pub fn resource_cost(&self) -> HashMap<ResourceType, u32> {
+        match self {
+            StructureType::Camp => {
+                [(ResourceType::Wood, 5), (ResourceType::Stone, 2)].into_iter().collect()
+            }
+            StructureType::Fence => {
+                [(ResourceType::Wood, 2)].into_iter().collect()
+            }
+            StructureType::Warehouse => {
+                [(ResourceType::Wood, 10), (ResourceType::Stone, 5)].into_iter().collect()
+            }
+        }
+    }
+}
+
 /// 动作类型枚举
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ActionType {
     Move { direction: Direction },
     Gather { resource: ResourceType },
-    TradeOffer { offer: HashMap<ResourceType, u32>, want: HashMap<ResourceType, u32> },
+    TradeOffer { offer: HashMap<ResourceType, u32>, want: HashMap<ResourceType, u32>, target_id: AgentId },
     TradeAccept { trade_id: String },
     TradeReject { trade_id: String },
     Talk { message: String },
@@ -146,6 +163,8 @@ pub struct Action {
     pub action_type: ActionType,
     pub target: Option<String>,
     pub params: HashMap<String, String>,
+    pub build_type: Option<StructureType>,  // Build 动作专用参数
+    pub direction: Option<Direction>,       // Move 动作专用参数
     pub motivation_delta: [f32; 6],
 }
 

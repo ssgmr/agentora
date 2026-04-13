@@ -93,6 +93,8 @@ fn test_multi_agent_legacy_interaction() {
         },
         target: Some(legacy_id.clone()),
         params: HashMap::new(),
+        build_type: None,
+        direction: None,
         motivation_delta: [0.0; 6],
     };
 
@@ -117,6 +119,8 @@ fn test_multi_agent_legacy_interaction() {
         },
         target: Some(legacy_id.clone()),
         params: HashMap::new(),
+        build_type: None,
+        direction: None,
         motivation_delta: [0.0; 6],
     };
 
@@ -210,6 +214,8 @@ fn test_motivation_feedback_from_legacy() {
         },
         target: Some("test-legacy".to_string()),
         params: HashMap::new(),
+        build_type: None,
+        direction: None,
         motivation_delta: [0.0; 6],
     };
 
