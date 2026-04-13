@@ -49,8 +49,8 @@ scripts/build-bridge.bat                # Windows批处理版本
 # 启动多节点测试环境
 bash scripts/start_multi_node.sh
 
-# 运行Godot客户端（本地调试）
-"D:/tool/Godot/Godot_v4.6.2-stable_win64.exe" --path client
+# 运行Godot客户端（本地调试，需确保godot命令在PATH中）
+godot --path client
 bash scripts/run_client.sh        # Linux/WSL别名
 scripts\run_client.bat             # Windows批处理
 
@@ -113,9 +113,11 @@ Godot 4 GDScript客户端，负责渲染和交互：
 
 **注意**：`simulation_bridge.gd` 是已废弃的占位文件（生成随机假数据），场景中的 `SimulationBridge` 节点使用 Rust GDExtension 类型，与该脚本无关。应删除。
 
-#### Godot可执行文件路径
-- 路径：`D:/tool/Godot/Godot_v4.6.2-stable_win64.exe`（注意是文件，不是目录）
-- 运行命令：`"D:/tool/Godot/Godot_v4.6.2-stable_win64.exe" --path client`
+#### Godot可执行文件
+- 使用 `godot` 命令（需安装Godot并添加到PATH）
+- macOS: 创建符号链接 `ln -sf /Applications/Godot.app/Contents/MacOS/Godot ~/.local/bin/godot`
+- Windows: 将Godot安装目录添加到系统PATH环境变量
+- 运行命令：`godot --path client`
 
 #### UI布局验证：自动截图
 外部屏幕截图工具（nircmd、snipping tool、Windows.Graphics.Capture等）无法捕获Godot窗口（Vulkan渲染器绕过GDI）。**必须使用Godot内部截图**。
@@ -144,14 +146,14 @@ func _ready():
 ```ini
 AutoScreenshot="*res://scripts/auto_screenshot.gd"
 ```
-3. 运行 Godot：`"D:/tool/Godot/Godot_v4.6.2-stable_win64.exe" --path client `
+3. 运行 Godot：`godot --path client`
 
 4. 用 `Read` 工具查看 `screenshot_godot.png`
 
 **重要：**
 - 验证时不要用 headless 模式，Vulkan 渲染需要窗口
 - 验证完成后注释 `[autoload]` 下的 AutoScreenshot 配置，避免每次运行都截图退出
-- 截图路径必须使用绝对路径 `D:/work/code/rust/agentora/screenshot_godot.png`，不能用 `user://`（无法从外部读取）
+- 截图路径必须使用项目根目录的绝对路径（如 `/Users/geminrong/work/code/python/agentora/screenshot_godot.png`），不能用 `user://`（无法从外部读取）
 - 首次运行，GDExtension 需要在 Godot 编辑器中打开一次，让它扫描并注册 .gdextension 文件。直接 --path . 运行时可能还没有正确注册类。
 
 #### Godot UI布局经验总结
@@ -248,7 +250,7 @@ GDExtension桥接Rust核心引擎到Godot客户端（单文件1000+行）：
 - **读写分离** — 决策不持锁，Apply阶段串行获取写权限
 - **NPC系统** — 规则引擎快速决策（无LLM），独立决策间隔（`npc_decision_interval_secs=5`）
 - **记忆记录** — 动作自动记录到Agent记忆，带情感标签和重要性评分
-- 产物为`cdylib`动态库，复制到`client/bin/agentora_bridge.dll`
+- 产物为`cdylib`动态库（macOS: `.dylib`, Linux: `.so`, Windows: `.dll`），复制到`client/bin/`
 
 **动机引擎** (`crates/core/src/motivation.rs`)
 - 6维向量：生存/社交/认知/表达/权力/传承
