@@ -1,12 +1,13 @@
 //! 决策管道：硬约束→上下文→LLM→校验→选择
 
 use crate::motivation::{MotivationVector, DIMENSION_NAMES};
-use crate::types::{ActionType, AgentId};
+use crate::types::{ActionType, AgentId, Position};
 use crate::types::ResourceType;
 use crate::rule_engine::{RuleEngine, WorldState};
 use crate::prompt::PromptBuilder;
 use crate::strategy::retrieve::{retrieve_strategy, get_strategy_summary, wrap_strategy_for_prompt};
 use crate::strategy::StrategyHub;
+use crate::vision::direction_description;
 use agentora_ai::config::MemoryConfig;
 use agentora_ai::provider::LlmProvider;
 use agentora_ai::types::{LlmRequest, ResponseFormat};
@@ -327,6 +328,33 @@ impl DecisionPipeline {
     fn build_perception_summary(&self, world_state: &WorldState) -> String {
         let mut summary = String::new();
 
+        // 生存状态
+        let satiety_status = if world_state.agent_satiety <= 30 {
+            "饥饿中！需要寻找食物"
+        } else {
+            "正常"
+        };
+        let hydration_status = if world_state.agent_hydration <= 30 {
+            "口渴中！需要寻找水源"
+        } else {
+            "正常"
+        };
+        summary.push_str(&format!(
+            "当前状态：\n  饱食度: {}/100{}, 水分度: {}/100{}\n",
+            world_state.agent_satiety,
+            if world_state.agent_satiety <= 30 { format!(" [{}]", satiety_status) } else { String::new() },
+            world_state.agent_hydration,
+            if world_state.agent_hydration <= 30 { format!(" [{}]", hydration_status) } else { String::new() },
+        ));
+
+        // 活跃压力事件
+        if !world_state.active_pressures.is_empty() {
+            summary.push_str("当前世界事件：\n");
+            for pressure_desc in &world_state.active_pressures {
+                summary.push_str(&format!("  - {}\n", pressure_desc));
+            }
+        }
+
         // 位置信息
         summary.push_str(&format!(
             "位置：({}, {})\n",
@@ -371,13 +399,60 @@ impl DecisionPipeline {
             summary.push_str(&format!("附近 Agent 数量：{}（无详细信息）\n", world_state.existing_agents.len()));
         }
 
-        // 资源信息（任务 5.2：位置/类型/数量）
+        // 资源信息（增强：显示方向、距离、丰富度，按优先级排序）
         if !world_state.resources_at.is_empty() {
             summary.push_str("资源分布:\n");
-            for (pos, (resource, amount)) in &world_state.resources_at {
+
+            // 按生存优先级和距离排序
+            let mut resources: Vec<_> = world_state.resources_at.iter().collect();
+            let agent_pos = &world_state.agent_position;
+            let satiety = world_state.agent_satiety;
+            let hydration = world_state.agent_hydration;
+
+            resources.sort_by(|(pos_a, (res_a, _)), (pos_b, (res_b, _))| {
+                // 计算距离
+                let dist_a = pos_a.manhattan_distance(agent_pos);
+                let dist_b = pos_b.manhattan_distance(agent_pos);
+
+                // 优先级函数：饥饿时 Food 优先，口渴时 Water 优先
+                fn resource_priority(r: &ResourceType, satiety: u32, hydration: u32) -> u32 {
+                    match r {
+                        ResourceType::Food if satiety <= 50 => 0,  // 饥饿时食物最高优先
+                        ResourceType::Water if hydration <= 50 => 0, // 口渴时水源最高优先
+                        ResourceType::Food => 1,
+                        ResourceType::Water => 2,
+                        ResourceType::Wood => 3,
+                        ResourceType::Stone => 4,
+                        ResourceType::Iron => 5,
+                    }
+                }
+
+                let priority_a = resource_priority(res_a, satiety, hydration);
+                let priority_b = resource_priority(res_b, satiety, hydration);
+
+                // 先按优先级排序，相同优先级按距离排序
+                match priority_a.cmp(&priority_b) {
+                    std::cmp::Ordering::Equal => dist_a.cmp(&dist_b),
+                    other => other,
+                }
+            });
+
+            for (pos, (resource, amount)) in resources {
+                // 计算方向和距离描述
+                let dir_desc = direction_description(agent_pos, pos);
+
+                // 丰富度描述
+                let abundance = if *amount >= 100 {
+                    "(大量)"
+                } else if *amount >= 50 {
+                    "(中等)"
+                } else {
+                    "(少量)"
+                };
+
                 summary.push_str(&format!(
-                    "  ({}, {}): {} x{}\n",
-                    pos.x, pos.y, format!("{:?}", resource), amount
+                    "  ({}, {}): {:?} x{} {} [{}]\n",
+                    pos.x, pos.y, resource, amount, abundance, dir_desc
                 ));
             }
         }
@@ -503,6 +578,10 @@ impl DecisionPipeline {
                 };
                 Some(ActionType::Move { direction })
             }
+            "MoveToward" | "move_toward" | "移动到" | "前往" => {
+                let target = self.parse_target_position(json)?;
+                Some(ActionType::MoveToward { target })
+            }
             "Gather" | "gather" | "采集" | "收集" => {
                 let res = json["params"]["resource"].as_str().unwrap_or("food");
                 let resource = match res {
@@ -597,6 +676,47 @@ impl DecisionPipeline {
                 Some(ActionType::Wait)
             }
         }
+    }
+
+    /// 解析 MoveToward 目标位置
+    ///
+    /// 支持多种格式：
+    /// - { x: 130, y: 125 }
+    /// - [130, 125]
+    /// - "130,125" 或 "(130, 125)"
+    fn parse_target_position(&self, json: &serde_json::Value) -> Option<Position> {
+        // 尝试从 params.target 获取
+        let target = json.get("params")?.get("target")?;
+
+        // 格式1: { x: 130, y: 125 }
+        if let (Some(x), Some(y)) = (target.get("x"), target.get("y")) {
+            let x = x.as_u64()? as u32;
+            let y = y.as_u64()? as u32;
+            return Some(Position::new(x, y));
+        }
+
+        // 格式2: [130, 125]
+        if let Some(arr) = target.as_array() {
+            if arr.len() >= 2 {
+                let x = arr[0].as_u64()? as u32;
+                let y = arr[1].as_u64()? as u32;
+                return Some(Position::new(x, y));
+            }
+        }
+
+        // 格式3: "130,125" 或 "(130, 125)"
+        if let Some(s) = target.as_str() {
+            let cleaned = s.trim_matches(|c| c == '(' || c == ')');
+            let parts: Vec<&str> = cleaned.split(',').collect();
+            if parts.len() >= 2 {
+                if let (Ok(x), Ok(y)) = (parts[0].trim().parse::<u32>(), parts[1].trim().parse::<u32>()) {
+                    return Some(Position::new(x, y));
+                }
+            }
+        }
+
+        println!("[Decision] MoveToward 目标位置解析失败，使用默认值");
+        None
     }
 
     /// 解析资源映射 JSON

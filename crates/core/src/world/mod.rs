@@ -9,14 +9,15 @@ pub mod generator;
 pub mod actions;
 
 use crate::seed::WorldSeed;
-use crate::agent::Agent;
-use crate::types::{AgentId, Position, ActionType, Action, TerrainType, ResourceType};
+use crate::agent::{Agent, RelationType};
+use crate::types::{AgentId, Position, ActionType, Action, TerrainType, ResourceType, StructureType};
 use crate::legacy::Legacy;
 use crate::strategy::decay::{decay_all_strategies, check_deprecation, auto_delete_deprecated};
 use crate::strategy::create::{should_create_strategy, create_strategy, scan_strategy_content};
 use crate::snapshot::NarrativeEvent;
 use crate::strategy::motivation_link::{on_strategy_success, on_strategy_failure};
 use crate::decision::SparkType;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// 世界状态
@@ -40,9 +41,41 @@ pub struct World {
     pub dialogue_logs: Vec<DialogueLog>,
     /// 位置到 Agent ID 的反向索引，用于空间查询
     pub agent_positions: HashMap<Position, Vec<AgentId>>,
+    /// 下次压力事件触发 tick
+    pub next_pressure_tick: u64,
+    /// 资源产出乘数（如干旱时 Water → 0.5）
+    pub pressure_multiplier: HashMap<String, f32>,
+    /// 文明里程碑
+    pub milestones: Vec<Milestone>,
+    /// 累计交易次数
+    pub total_trades: u32,
+    /// 累计攻击次数
+    pub total_attacks: u32,
+    /// 累计遗产交互次数
+    pub total_legacy_interacts: u32,
 }
 
 // ===== 辅助类型 =====
+
+/// 里程碑类型
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MilestoneType {
+    FirstCamp,           // 第一座营地
+    FirstTrade,          // 贸易萌芽
+    FirstFence,          // 领地意识
+    FirstAttack,         // 冲突爆发
+    FirstLegacyInteract, // 首次传承
+    CityState,           // 城邦雏形
+    GoldenAge,           // 文明黄金期
+}
+
+/// 文明里程碑
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Milestone {
+    pub name: String,
+    pub display_name: String,
+    pub achieved_tick: u64,
+}
 
 /// 交易状态
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -98,6 +131,15 @@ impl World {
             pending_trades: Vec::new(),
             dialogue_logs: Vec::new(),
             agent_positions: HashMap::new(),
+            next_pressure_tick: {
+                use rand::Rng;
+                rand::thread_rng().gen_range(40..80)
+            },
+            pressure_multiplier: HashMap::new(),
+            milestones: Vec::new(),
+            total_trades: 0,
+            total_attacks: 0,
+            total_legacy_interacts: 0,
         };
 
         // 生成地形
@@ -290,9 +332,28 @@ impl World {
         })
     }
 
+    /// 计算有效库存上限（受 Warehouse 影响）
+    pub fn effective_inventory_limit_for(&self, agent_position: Position) -> usize {
+        let base: usize = 20;
+        for (_, structure) in &self.structures {
+            if structure.structure_type == StructureType::Warehouse {
+                if agent_position.manhattan_distance(&structure.position) <= 1 {
+                    return base + 20; // Warehouse 范围内上限 40
+                }
+            }
+        }
+        base
+    }
+
     /// 推进 tick
     pub fn advance_tick(&mut self) {
         self.tick += 1;
+
+        // 生存消耗 tick：satiety/hydration 衰减，耗尽掉血
+        self.survival_consumption_tick();
+
+        // 建筑效果 tick
+        self.structure_effects_tick();
 
         // 动机惯性衰减（向中性值 0.5 收敛）
         for (_, agent) in self.agents.iter_mut() {
@@ -323,6 +384,9 @@ impl World {
                 let _ = auto_delete_deprecated(&agent.strategies, self.tick as u32);
             }
         }
+
+        // 里程碑检查
+        self.check_milestones();
     }
 
     /// 检查 Agent 死亡并产生遗产（任务 3.2）
@@ -422,6 +486,7 @@ impl World {
         // 路由到具体 handler
         let result = match &action.action_type {
             ActionType::Move { direction } => self.handle_move(agent_id, *direction),
+            ActionType::MoveToward { target } => self.handle_move_toward(agent_id, *target),
             ActionType::Gather { resource } => self.handle_gather(agent_id, *resource),
             ActionType::Wait => self.handle_wait(agent_id),
             ActionType::Build { structure } => self.handle_build(agent_id, *structure),
@@ -514,7 +579,7 @@ impl World {
 
     /// 生成世界快照
     pub fn snapshot(&self) -> crate::snapshot::WorldSnapshot {
-        use crate::snapshot::{WorldSnapshot, AgentSnapshot, CellChange, NarrativeEvent, LegacyEvent, PressureSnapshot};
+        use crate::snapshot::{WorldSnapshot, AgentSnapshot, CellChange, NarrativeEvent, LegacyEvent, PressureSnapshot, MilestoneSnapshot};
 
         let agents = self.agents
             .values()
@@ -532,6 +597,8 @@ impl World {
                     motivation: agent.motivation.to_array(),
                     health: agent.health,
                     max_health: agent.max_health,
+                    satiety: agent.satiety,
+                    hydration: agent.hydration,
                     inventory_summary: agent.inventory.iter()
                         .map(|(k, v)| (k.clone(), *v))
                         .collect(),
@@ -568,14 +635,38 @@ impl World {
             remaining_ticks: p.remaining_ticks,
         }).collect();
 
-        // 从 structures 填充 map_changes
-        let map_changes = self.structures.iter().map(|(pos, s)| CellChange {
-            x: pos.x,
-            y: pos.y,
-            terrain: format!("{:?}", self.map.get_terrain(*pos)),
-            structure: Some(s.structure_type.clone()).map(|s| format!("{:?}", s)),
-            resource_type: None,
-            resource_amount: None,
+        // 从 structures 和 resources 填充 map_changes
+        // 首先收集所有需要发送的位置
+        let mut positions_to_send: std::collections::HashSet<Position> = std::collections::HashSet::new();
+
+        // 收集建筑位置
+        for pos in self.structures.keys() {
+            positions_to_send.insert(*pos);
+        }
+
+        // 收集资源位置
+        for (pos, node) in &self.resources {
+            if !node.is_depleted && node.current_amount > 0 {
+                positions_to_send.insert(*pos);
+            }
+        }
+
+        let map_changes = positions_to_send.iter().map(|pos| {
+            let terrain = format!("{:?}", self.map.get_terrain(*pos));
+            let structure = self.structures.get(pos).map(|s| format!("{:?}", s.structure_type));
+            let (resource_type, resource_amount) = self.resources.get(pos)
+                .filter(|n| !n.is_depleted && n.current_amount > 0)
+                .map(|n| (Some(n.resource_type.as_str().to_string()), Some(n.current_amount)))
+                .unwrap_or((None, None));
+
+            CellChange {
+                x: pos.x,
+                y: pos.y,
+                terrain,
+                structure,
+                resource_type,
+                resource_amount,
+            }
         }).collect();
 
         WorldSnapshot {
@@ -585,22 +676,282 @@ impl World {
             events,
             legacies,
             pressures,
+            milestones: self.milestones.iter().map(|m| MilestoneSnapshot {
+                name: m.name.clone(),
+                display_name: m.display_name.clone(),
+                achieved_tick: m.achieved_tick,
+            }).collect(),
+        }
+    }
+
+    /// 生存消耗 tick：饱食度和水分度衰减，耗尽时掉血
+    fn survival_consumption_tick(&mut self) {
+        for (_, agent) in self.agents.iter_mut() {
+            if !agent.is_alive {
+                continue;
+            }
+            // 每 tick 衰减（降低消耗速度）
+            agent.satiety = agent.satiety.saturating_sub(1);
+            agent.hydration = agent.hydration.saturating_sub(1);
+
+            // 饱食度耗尽：HP -1/tick
+            if agent.satiety == 0 {
+                agent.health = agent.health.saturating_sub(1);
+            }
+            // 水分度耗尽：HP -1/tick
+            if agent.hydration == 0 {
+                agent.health = agent.health.saturating_sub(1);
+            }
+        }
+    }
+
+    /// 建筑效果 tick
+    fn structure_effects_tick(&mut self) {
+        use crate::world::structure::Structure;
+        use crate::types::StructureType;
+
+        // Camp 回血效果：曼哈顿距离 ≤ 1 的存活 Agent HP +2
+        let camp_positions: Vec<Position> = self.structures.iter()
+            .filter(|(_, s)| s.structure_type == StructureType::Camp)
+            .map(|(pos, _)| *pos)
+            .collect();
+
+        for camp_pos in &camp_positions {
+            let mut healed_agents: Vec<(AgentId, u32)> = Vec::new();
+            for (_, agent) in self.agents.iter() {
+                if !agent.is_alive { continue; }
+                if agent.position.manhattan_distance(camp_pos) <= 1 && agent.health < agent.max_health {
+                    let restored = 2.min(agent.max_health - agent.health);
+                    healed_agents.push((agent.id.clone(), restored));
+                }
+            }
+            for (agent_id, hp_restored) in healed_agents {
+                if let Some(agent) = self.agents.get_mut(&agent_id) {
+                    agent.health = (agent.health + hp_restored).min(agent.max_health);
+                }
+            }
+        }
+    }
+
+    /// 里程碑检查（将在 Task 5.3 完整实现）
+    fn check_milestones(&mut self) {
+        // 简单实现：检测关键里程碑
+        let milestones_to_check = [
+            (MilestoneType::FirstCamp, self.structures.values().any(|s| s.structure_type == StructureType::Camp)),
+            (MilestoneType::FirstTrade, self.total_trades > 0),
+            (MilestoneType::FirstFence, self.structures.values().any(|s| s.structure_type == StructureType::Fence)),
+            (MilestoneType::FirstAttack, self.total_attacks > 0),
+            (MilestoneType::FirstLegacyInteract, self.total_legacy_interacts > 0),
+        ];
+
+        for (milestone_type, condition) in &milestones_to_check {
+            if *condition {
+                let name = format!("{:?}", milestone_type).to_lowercase();
+                let display_name = match milestone_type {
+                    MilestoneType::FirstCamp => "第一座营地",
+                    MilestoneType::FirstTrade => "贸易萌芽",
+                    MilestoneType::FirstFence => "领地意识",
+                    MilestoneType::FirstAttack => "冲突爆发",
+                    MilestoneType::FirstLegacyInteract => "首次传承",
+                    MilestoneType::CityState => "城邦雏形",
+                    MilestoneType::GoldenAge => "文明黄金期",
+                };
+                // 检查是否已达成
+                let already_achieved = self.milestones.iter().any(|m| m.name == name);
+                if !already_achieved {
+                    self.milestones.push(Milestone {
+                        name: name.clone(),
+                        display_name: display_name.to_string(),
+                        achieved_tick: self.tick,
+                    });
+                    tracing::info!("里程碑达成: {} (tick {})", display_name, self.tick);
+                    // 添加叙事事件
+                    self.tick_events.push(NarrativeEvent {
+                        tick: self.tick,
+                        agent_id: "system".to_string(),
+                        agent_name: "文明".to_string(),
+                        event_type: "milestone".to_string(),
+                        description: format!("🏆 达成里程碑：【{}】", display_name),
+                        color_code: "#FFD700".to_string(),
+                    });
+                }
+            }
+        }
+
+        // 城邦雏形：3+ 建筑 + 2+ 盟友对 + 有 Warehouse
+        let structure_count = self.structures.len();
+        let has_warehouse = self.structures.values().any(|s| s.structure_type == StructureType::Warehouse);
+        let ally_count = self.agents.values()
+            .flat_map(|a| a.relations.iter())
+            .filter(|(_, r)| r.relation_type == RelationType::Ally)
+            .count();
+        if structure_count >= 3 && ally_count >= 2 && has_warehouse {
+            let name = "citystate";
+            if !self.milestones.iter().any(|m| m.name == name) {
+                self.milestones.push(Milestone {
+                    name: name.to_string(),
+                    display_name: "城邦雏形".to_string(),
+                    achieved_tick: self.tick,
+                });
+                tracing::info!("里程碑达成: 城邦雏形 (tick {})", self.tick);
+                // 添加叙事事件
+                self.tick_events.push(NarrativeEvent {
+                    tick: self.tick,
+                    agent_id: "system".to_string(),
+                    agent_name: "文明".to_string(),
+                    event_type: "milestone".to_string(),
+                    description: "🏛 达成里程碑：【城邦雏形】".to_string(),
+                    color_code: "#FFD700".to_string(),
+                });
+            }
+        }
+
+        // 文明黄金期：前六个全部达成
+        if self.milestones.len() >= 6 {
+            let name = "goldenage";
+            if !self.milestones.iter().any(|m| m.name == name) {
+                self.milestones.push(Milestone {
+                    name: name.to_string(),
+                    display_name: "文明黄金期".to_string(),
+                    achieved_tick: self.tick,
+                });
+                tracing::info!("里程碑达成: 文明黄金期 (tick {})", self.tick);
+                // 添加叙事事件
+                self.tick_events.push(NarrativeEvent {
+                    tick: self.tick,
+                    agent_id: "system".to_string(),
+                    agent_name: "文明".to_string(),
+                    event_type: "milestone".to_string(),
+                    description: "👑 达成里程碑：【文明黄金期】".to_string(),
+                    color_code: "#FFD700".to_string(),
+                });
+            }
         }
     }
 
     /// 环境压力 tick
     fn pressure_tick(&mut self) {
-        // 每 20-50 tick 生成一个压力事件
-        if self.tick % 30 == 0 {
-            // TODO: 生成压力事件
+        // 生成新压力事件
+        if self.tick >= self.next_pressure_tick && self.pressure_pool.len() < 3 {
+            use rand::Rng;
+            let mut rng = rand::thread_rng();
+
+            // 从三种压力事件中随机选择
+            let event_variants = ["drought", "abundance", "plague"];
+            let event_type = event_variants[rng.gen_range(0..event_variants.len())];
+
+            let (description, duration) = match event_type {
+                "drought" => ("干旱来袭，水源产出减半".to_string(), 30),
+                "abundance" => ("丰饶时节，食物产出翻倍".to_string(), 20),
+                "plague" => ("瘟疫蔓延，生命受到威胁".to_string(), 1),
+                _ => unreachable!(),
+            };
+
+            let event = pressure::PressureEvent {
+                id: uuid::Uuid::new_v4().to_string(),
+                pressure_type: match event_type {
+                    "drought" => pressure::PressureType::ResourceFluctuation,
+                    "abundance" => pressure::PressureType::ResourceFluctuation,
+                    "plague" => pressure::PressureType::ClimateEvent,
+                    _ => unreachable!(),
+                },
+                affected_resource: Some(match event_type {
+                    "drought" => "Water".to_string(),
+                    "abundance" => "Food".to_string(),
+                    _ => String::new(),
+                }),
+                description: description.clone(),
+                duration_ticks: duration,
+                remaining_ticks: duration,
+                intensity: match event_type {
+                    "drought" => 0.5,
+                    "abundance" => 2.0,
+                    "plague" => 1.0,
+                    _ => 1.0,
+                },
+                affected_region: None,
+                created_tick: self.tick,
+            };
+
+            // 应用立即效果
+            match event_type {
+                "drought" => {
+                    self.pressure_multiplier.insert("water".to_string(), 0.5);
+                }
+                "abundance" => {
+                    // 食物节点数量翻倍
+                    for node in self.resources.values_mut() {
+                        if node.resource_type == ResourceType::Food {
+                            node.current_amount = (node.current_amount * 2).min(node.max_amount);
+                        }
+                    }
+                }
+                "plague" => {
+                    // 随机 1-3 个 Agent HP -20
+                    let mut alive_agents: Vec<AgentId> = self.agents.iter()
+                        .filter(|(_, a)| a.is_alive)
+                        .map(|(id, _)| id.clone())
+                        .collect();
+                    let plague_count = rng.gen_range(1..=3).min(alive_agents.len());
+                    // 简单随机选择
+                    for _ in 0..plague_count {
+                        if alive_agents.is_empty() { break; }
+                        let idx = rng.gen_range(0..alive_agents.len());
+                        let target_id = alive_agents.remove(idx);
+                        if let Some(agent) = self.agents.get_mut(&target_id) {
+                            agent.health = agent.health.saturating_sub(20);
+                        }
+                    }
+                }
+                _ => {}
+            }
+
+            tracing::info!("压力事件生成: {} (持续{}tick)", description, duration);
+            // 添加叙事事件
+            self.tick_events.push(NarrativeEvent {
+                tick: self.tick,
+                agent_id: "system".to_string(),
+                agent_name: "世界".to_string(),
+                event_type: "pressure_start".to_string(),
+                description: format!("⚠️ {}", description),
+                color_code: "#FF9800".to_string(),
+            });
+            self.pressure_pool.push(event);
+            self.next_pressure_tick = self.tick + rng.gen_range(40..80);
+        } else if self.tick >= self.next_pressure_tick {
+            // 已达上限，推迟
+            self.next_pressure_tick = self.tick + 20;
         }
 
-        // 移除过期的压力事件
-        self.pressure_pool.retain(|p| p.remaining_ticks > 0);
-
-        // 减少剩余 tick
+        // 推进现有事件
         for pressure in &mut self.pressure_pool.iter_mut() {
-            pressure.remaining_ticks = pressure.remaining_ticks.saturating_sub(1);
+            pressure.advance();
+        }
+
+        // 移除过期事件并恢复效果
+        let expired: Vec<pressure::PressureEvent> = self.pressure_pool.drain(..)
+            .filter(|p| p.is_finished())
+            .collect();
+        for event in &expired {
+            // 恢复持续效果
+            if let Some(ref resource) = event.affected_resource {
+                match resource.as_str() {
+                    "Water" | "water" => {
+                        self.pressure_multiplier.remove("water");
+                    }
+                    _ => {}
+                }
+            }
+            tracing::info!("压力事件结束: {}", event.description);
+            // 添加叙事事件
+            self.tick_events.push(NarrativeEvent {
+                tick: self.tick,
+                agent_id: "system".to_string(),
+                agent_name: "世界".to_string(),
+                event_type: "pressure_end".to_string(),
+                description: format!("✓ {} 已结束", event.description),
+                color_code: "#8BC34A".to_string(),
+            });
         }
     }
 

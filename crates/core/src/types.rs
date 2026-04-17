@@ -133,6 +133,7 @@ impl StructureType {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ActionType {
     Move { direction: Direction },
+    MoveToward { target: Position },  // 导航到目标位置，每次移动一格
     Gather { resource: ResourceType },
     TradeOffer { offer: HashMap<ResourceType, u32>, want: HashMap<ResourceType, u32>, target_id: AgentId },
     TradeAccept { trade_id: String },

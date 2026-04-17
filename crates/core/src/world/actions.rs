@@ -17,6 +17,7 @@ impl World {
             let agent_name = agent.name.clone();
             let action_name = match action_type {
                 ActionType::Move { .. } => "移动",
+                ActionType::MoveToward { .. } => "导航移动",
                 ActionType::Gather { .. } => "采集",
                 ActionType::Build { .. } => "建造",
                 ActionType::Attack { .. } => "攻击",
@@ -38,11 +39,14 @@ impl World {
 
     // ===== Move =====
     pub fn handle_move(&mut self, agent_id: &AgentId, direction: Direction) -> ActionResult {
-        let agent = self.agents.get_mut(agent_id).unwrap();
-        let agent_name = agent.name.clone();
+        // 先提取必要信息，避免后续双重借用
+        let (agent_name, old_pos) = {
+            let agent = self.agents.get(agent_id).unwrap();
+            (agent.name.clone(), agent.position)
+        };
         let (dx, dy) = direction.delta();
-        let new_x = agent.position.x as i32 + dx;
-        let new_y = agent.position.y as i32 + dy;
+        let new_x = old_pos.x as i32 + dx;
+        let new_y = old_pos.y as i32 + dy;
 
         if new_x < 0 || new_y < 0 {
             return ActionResult::Blocked("移动超出地图边界".into());
@@ -58,16 +62,81 @@ impl World {
             return ActionResult::Blocked(format!("{:?} 地形不可通行", terrain));
         }
 
-        agent.position = new_pos;
+        // Fence 碰撞检查：目标格有 Fence 且 Agent 与所有者为 Enemy → 阻挡
+        if let Some(fence) = self.structures.get(&new_pos) {
+            if fence.structure_type == StructureType::Fence {
+                if let Some(ref owner_id) = fence.owner_id {
+                    let is_enemy = self.agents.get(agent_id)
+                        .and_then(|a| a.relations.get(owner_id))
+                        .map(|r| r.relation_type == RelationType::Enemy)
+                        .unwrap_or(false);
+                    if is_enemy {
+                        return ActionResult::Blocked("被围栏阻挡，无法通过敌对领地".into());
+                    }
+                }
+            }
+        }
+
+        // 更新位置
+        self.agents.get_mut(agent_id).unwrap().position = new_pos;
         self.record_event(agent_id, &agent_name, "move",
             &format!("{} 移动至 ({},{})", agent_name, new_pos.x, new_pos.y), "#888888");
         ActionResult::Success
+    }
+
+    // ===== MoveToward =====
+    /// 处理 MoveToward 动作：导航到目标位置（单步移动）
+    ///
+    /// 每次只移动一格，朝向目标位置的方向移动
+    /// 使用 calculate_direction 计算最优方向
+    pub fn handle_move_toward(&mut self, agent_id: &AgentId, target: Position) -> ActionResult {
+        let (agent_name, current_pos) = {
+            let agent = self.agents.get(agent_id).unwrap();
+            (agent.name.clone(), agent.position)
+        };
+
+        // 如果已在目标位置，无操作
+        if current_pos == target {
+            self.record_event(agent_id, &agent_name, "move_toward",
+                &format!("{} 已在目标位置 ({},{})", agent_name, target.x, target.y), "#888888");
+            return ActionResult::Success;
+        }
+
+        // 计算方向
+        let direction = match crate::vision::calculate_direction(&current_pos, &target) {
+            Some(d) => d,
+            None => {
+                // 已在目标位置（理论上不会到达这里）
+                return ActionResult::Success;
+            }
+        };
+
+        // 记录当前位置，用于计算移动后与目标的距离
+        let old_distance = current_pos.manhattan_distance(&target);
+
+        // 复用现有的移动逻辑
+        let result = self.handle_move(agent_id, direction);
+
+        // 更新叙事描述
+        if let ActionResult::Success = result {
+            let new_pos = self.agents.get(agent_id).unwrap().position;
+            let new_distance = new_pos.manhattan_distance(&target);
+
+            self.record_event(agent_id, &agent_name, "move_toward",
+                &format!("{} 向目标 ({},{}) 移动，当前距离 {} 格 → {} 格",
+                    agent_name, target.x, target.y, old_distance, new_distance), "#88AA88");
+        }
+
+        result
     }
 
     // ===== Gather =====
     pub fn handle_gather(&mut self, agent_id: &AgentId, resource: ResourceType) -> ActionResult {
         let pos = self.agents.get(agent_id).unwrap().position;
         let agent_name = self.agents.get(agent_id).unwrap().name.clone();
+
+        // 计算有效库存上限（需要先获取位置）
+        let effective_limit = self.effective_inventory_limit_for(pos);
 
         // 检查当前位置是否有资源节点
         if let Some(node) = self.resources.get_mut(&pos) {
@@ -79,16 +148,33 @@ impl World {
                 return ActionResult::Blocked("资源节点已枯竭".into());
             }
 
+            // 检查压力乘数（干旱等效果）
+            let multiplier = self.pressure_multiplier.get(resource.as_str()).copied().unwrap_or(1.0);
+
             // 真实调用 ResourceNode.gather() 扣除资源
-            let gathered = node.gather(1);
-            if gathered == 0 {
+            // 每次采集获取 2-3 个资源，提高生存效率
+            let gather_amount = 2u32;
+            let base_gathered = node.gather(gather_amount);
+            if base_gathered == 0 {
                 return ActionResult::Blocked("采集失败，资源不足".into());
             }
 
-            // Agent 库存增加
+            // 应用压力乘数计算实际采集量
+            let gathered = if multiplier < 1.0 {
+                (base_gathered as f32 * multiplier).ceil() as u32
+            } else {
+                base_gathered
+            };
+            let gathered = gathered.max(1); // 至少采集1个
+
+            // Agent 库存增加（受 Warehouse 影响的动态上限）
             let agent = self.agents.get_mut(agent_id).unwrap();
             let resource_key = resource.as_str().to_string();
             let current = *agent.inventory.get(&resource_key).unwrap_or(&0);
+            if current + gathered > (effective_limit as u32).min(99) {
+                // 库存已满
+                return ActionResult::Blocked("背包已满，无法采集更多资源".into());
+            }
             agent.inventory.insert(resource_key.clone(), current + gathered);
 
             self.record_event(agent_id, &agent_name, "gather",
@@ -102,13 +188,43 @@ impl World {
     // ===== Wait =====
     pub fn handle_wait(&mut self, agent_id: &AgentId) -> ActionResult {
         let agent = self.agents.get_mut(agent_id).unwrap();
-        if agent.health < agent.max_health {
-            agent.health = (agent.health + 5).min(agent.max_health);
-        }
         let agent_name = agent.name.clone();
-        let health = agent.health;
-        self.record_event(agent_id, &agent_name, "wait",
-            &format!("{} 正在休息，生命值 {}", agent_name, health), "#CCCCCC");
+
+        // Wait 动作改为饮食恢复：尝试消耗食物和水
+        let mut ate = false;
+        let mut drank = false;
+
+        // 消耗 1 Food → satiety +30
+        if agent.inventory.get("food").copied().unwrap_or(0) > 0 {
+            agent.inventory.insert("food".to_string(), agent.inventory["food"] - 1);
+            if agent.inventory["food"] == 0 {
+                agent.inventory.remove("food");
+            }
+            agent.satiety = (agent.satiety + 30).min(100);
+            ate = true;
+        }
+
+        // 消耗 1 Water → hydration +25
+        if agent.inventory.get("water").copied().unwrap_or(0) > 0 {
+            agent.inventory.insert("water".to_string(), agent.inventory["water"] - 1);
+            if agent.inventory["water"] == 0 {
+                agent.inventory.remove("water");
+            }
+            agent.hydration = (agent.hydration + 25).min(100);
+            drank = true;
+        }
+
+        let desc = if ate && drank {
+            format!("{} 进食并饮水，恢复体力", agent_name)
+        } else if ate {
+            format!("{} 进食恢复体力，但缺少饮水", agent_name)
+        } else if drank {
+            format!("{} 饮水恢复体力，但缺少食物", agent_name)
+        } else {
+            format!("{} 休息中，但背包没有食物和水源", agent_name)
+        };
+
+        self.record_event(agent_id, &agent_name, "wait", &desc, "#CCCCCC");
         ActionResult::Success
     }
 
@@ -205,14 +321,81 @@ impl World {
                 &format!("{} 攻击了 {}，造成 {} 点伤害", agent_name, target_name, damage), "#FF4444");
         }
 
+        // 更新攻击计数器
+        self.total_attacks += 1;
+
         ActionResult::Success
     }
 
     // ===== Talk =====
     pub fn handle_talk(&mut self, agent_id: &AgentId, message: String) -> ActionResult {
-        let agent_name = self.agents.get(agent_id).unwrap().name.clone();
-        self.record_event(agent_id, &agent_name, "talk",
-            &format!("{} 说：「{}」", agent_name, message), "#FFAA44");
+        use crate::memory::MemoryEvent;
+
+        let agent = self.agents.get(agent_id).unwrap();
+        let agent_name = agent.name.clone();
+        let agent_pos = agent.position;
+
+        // 视野范围（与 vision.rs 保持一致）
+        const VISION_RANGE: i32 = 3;
+
+        // 找到视野范围内的其他 Agent
+        let nearby_agents: Vec<AgentId> = self.agents.iter()
+            .filter(|(id, other)| {
+                *id != agent_id && {
+                    let dx = (other.position.x as i32 - agent_pos.x as i32).abs();
+                    let dy = (other.position.y as i32 - agent_pos.y as i32).abs();
+                    dx <= VISION_RANGE && dy <= VISION_RANGE
+                }
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+
+        if nearby_agents.is_empty() {
+            // 没有听众，自言自语
+            self.record_event(agent_id, &agent_name, "talk",
+                &format!("{} 自言自语：「{}」", agent_name, message), "#AAAAAA");
+            return ActionResult::Success;
+        }
+
+        // 收集附近 Agent 名字并增加信任
+        let mut affected_names = Vec::new();
+        for target_id in &nearby_agents {
+            let target_name = self.agents.get(target_id).map(|a| a.name.clone()).unwrap_or_default();
+            affected_names.push(target_name.clone());
+
+            // 双向信任增加：发起者 +2.0，接收者 +1.0
+            self.agents.get_mut(agent_id).unwrap().increase_trust(target_id, 2.0);
+            self.agents.get_mut(target_id).unwrap().increase_trust(agent_id, 1.0);
+
+            // 为接收者记录记忆
+            let target = self.agents.get_mut(target_id).unwrap();
+            target.memory.record(&MemoryEvent {
+                tick: self.tick as u32,
+                event_type: "social".to_string(),
+                content: format!("与 {} 交流：「{}」", agent_name, message),
+                emotion_tags: vec!["positive".to_string()],
+                importance: 0.5,
+            });
+        }
+
+        // 为发起者记录记忆
+        let initiator = self.agents.get_mut(agent_id).unwrap();
+        initiator.memory.record(&MemoryEvent {
+            tick: self.tick as u32,
+            event_type: "social".to_string(),
+            content: format!("与 {} 交流：「{}」", affected_names.join("、"), message),
+            emotion_tags: vec!["positive".to_string()],
+            importance: 0.5,
+        });
+
+        // 生成叙事事件
+        let event_msg = if affected_names.len() == 1 {
+            format!("{} 与 {} 交流：「{}」", agent_name, affected_names[0], message)
+        } else {
+            format!("{} 向 {} 说：「{}」", agent_name, affected_names.join("、"), message)
+        };
+
+        self.record_event(agent_id, &agent_name, "talk", &event_msg, "#FFAA44");
         ActionResult::Success
     }
 
@@ -347,6 +530,9 @@ impl World {
         // 移除待处理交易
         self.pending_trades.remove(trade_idx);
 
+        // 更新交易计数器
+        self.total_trades += 1;
+
         let proposer_name = self.agents.get(&proposer_id).map(|a| a.name.clone()).unwrap_or_default();
         let acceptor_name = self.agents.get(agent_id).map(|a| a.name.clone()).unwrap_or_default();
 
@@ -466,11 +652,13 @@ impl World {
                 let agent = self.agents.get_mut(agent_id).unwrap();
                 agent.motivation[2] = (agent.motivation[2] + 0.05).clamp(0.0, 1.0);
                 agent.motivation[5] = (agent.motivation[5] + 0.05).clamp(0.0, 1.0);
+                self.total_legacy_interacts += 1;
                 ActionResult::Success
             }
             crate::types::LegacyInteraction::Explore => {
                 let agent = self.agents.get_mut(agent_id).unwrap();
                 agent.motivation[2] = (agent.motivation[2] + 0.1).clamp(0.0, 1.0);
+                self.total_legacy_interacts += 1;
                 ActionResult::Success
             }
             crate::types::LegacyInteraction::Pickup => {
@@ -501,6 +689,7 @@ impl World {
                 let legacy = &mut self.legacies[legacy_index.unwrap()];
                 legacy.items.insert(item_name, amount - 1);
 
+                self.total_legacy_interacts += 1;
                 ActionResult::Success
             }
         }

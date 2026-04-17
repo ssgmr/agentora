@@ -1,7 +1,7 @@
 //! 视觉感知模块：圆形视野扫描，填充地形/资源/Agent/关系数据
 
 use crate::agent::{Agent, RelationType};
-use crate::types::{AgentId, Position, TerrainType, ResourceType};
+use crate::types::{AgentId, Direction, Position, TerrainType, ResourceType};
 use crate::world::World;
 use std::collections::HashMap;
 
@@ -113,5 +113,104 @@ pub fn scan_vision(world: &World, agent_id: &AgentId, radius: u32) -> VisionScan
         terrain_at,
         resources_at,
         nearby_agents,
+    }
+}
+
+/// 计算从源位置到目标位置的主要移动方向
+///
+/// 返回东/南/西/北四个方向之一，优先选择位移绝对值较大的方向
+/// 如果源位置等于目标位置，返回 None
+pub fn calculate_direction(from: &Position, to: &Position) -> Option<Direction> {
+    let dx = to.x as i32 - from.x as i32;
+    let dy = to.y as i32 - from.y as i32;
+
+    if dx == 0 && dy == 0 {
+        return None; // 已在目标位置
+    }
+
+    // 东西方向优先（取绝对值较大的）
+    if dx.abs() >= dy.abs() {
+        if dx > 0 {
+            Some(Direction::East)
+        } else {
+            Some(Direction::West)
+        }
+    } else {
+        if dy > 0 {
+            Some(Direction::South)
+        } else {
+            Some(Direction::North)
+        }
+    }
+}
+
+/// 计算方向的中文描述（用于感知摘要）
+///
+/// 返回格式如 "东北方向，距5格"、"东方向，距3格"
+/// 曼哈顿距离作为距离度量
+pub fn direction_description(from: &Position, to: &Position) -> String {
+    let dx = to.x as i32 - from.x as i32;
+    let dy = to.y as i32 - from.y as i32;
+    let distance = dx.abs() + dy.abs();
+
+    // 根据 dx/dy 的符号组合判断方向
+    let direction = match (dx.cmp(&0), dy.cmp(&0)) {
+        (std::cmp::Ordering::Greater, std::cmp::Ordering::Less) => "东北",
+        (std::cmp::Ordering::Greater, std::cmp::Ordering::Greater) => "东南",
+        (std::cmp::Ordering::Greater, std::cmp::Ordering::Equal) => "东",
+        (std::cmp::Ordering::Less, std::cmp::Ordering::Less) => "西北",
+        (std::cmp::Ordering::Less, std::cmp::Ordering::Greater) => "西南",
+        (std::cmp::Ordering::Less, std::cmp::Ordering::Equal) => "西",
+        (std::cmp::Ordering::Equal, std::cmp::Ordering::Greater) => "南",
+        (std::cmp::Ordering::Equal, std::cmp::Ordering::Less) => "北",
+        (std::cmp::Ordering::Equal, std::cmp::Ordering::Equal) => "原地",
+    };
+
+    format!("{}方向，距{}格", direction, distance)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_calculate_direction_cardinal() {
+        let center = Position::new(10, 10);
+
+        // 四个基本方向
+        assert_eq!(calculate_direction(&center, &Position::new(12, 10)), Some(Direction::East));
+        assert_eq!(calculate_direction(&center, &Position::new(8, 10)), Some(Direction::West));
+        assert_eq!(calculate_direction(&center, &Position::new(10, 12)), Some(Direction::South));
+        assert_eq!(calculate_direction(&center, &Position::new(10, 8)), Some(Direction::North));
+    }
+
+    #[test]
+    fn test_calculate_direction_diagonal() {
+        let center = Position::new(10, 10);
+
+        // 对角线方向：优先选择 |dx| >= |dy| 的方向（东西优先）
+        assert_eq!(calculate_direction(&center, &Position::new(12, 8)), Some(Direction::East));  // dx=2, dy=-2
+        assert_eq!(calculate_direction(&center, &Position::new(8, 12)), Some(Direction::West));   // dx=-2, dy=2
+        assert_eq!(calculate_direction(&center, &Position::new(11, 13)), Some(Direction::South)); // dx=1, dy=3, 南北优先
+        assert_eq!(calculate_direction(&center, &Position::new(9, 7)), Some(Direction::North));   // dx=-1, dy=-3, 南北优先
+    }
+
+    #[test]
+    fn test_calculate_direction_same_position() {
+        let pos = Position::new(10, 10);
+        assert_eq!(calculate_direction(&pos, &pos), None);
+    }
+
+    #[test]
+    fn test_direction_description() {
+        let center = Position::new(10, 10);
+
+        assert_eq!(direction_description(&center, &Position::new(12, 8)), "东北方向，距4格");
+        assert_eq!(direction_description(&center, &Position::new(12, 12)), "东南方向，距4格");
+        assert_eq!(direction_description(&center, &Position::new(8, 8)), "西北方向，距4格");
+        assert_eq!(direction_description(&center, &Position::new(8, 12)), "西南方向，距4格");
+        assert_eq!(direction_description(&center, &Position::new(15, 10)), "东方向，距5格");
+        assert_eq!(direction_description(&center, &Position::new(10, 5)), "北方向，距5格");
+        assert_eq!(direction_description(&center, &center), "原地方向，距0格");
     }
 }

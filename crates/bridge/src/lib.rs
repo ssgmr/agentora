@@ -93,6 +93,39 @@ pub enum AgentDelta {
         id2: String,
         reason: String,
     },
+
+    // ===== Tier 2.5 新增：生存+建筑+压力+里程碑 =====
+    /// 营地治愈
+    HealedByCamp {
+        agent_id: String,
+        agent_name: String,
+        hp_restored: u32,
+    },
+    /// 生存状态警告
+    SurvivalWarning {
+        agent_id: String,
+        agent_name: String,
+        satiety: u32,
+        hydration: u32,
+        hp: u32,
+    },
+    /// 里程碑达成
+    MilestoneReached {
+        name: String,
+        display_name: String,
+        tick: u64,
+    },
+    /// 压力事件开始
+    PressureStarted {
+        pressure_type: String,
+        description: String,
+        duration: u32,
+    },
+    /// 压力事件结束
+    PressureEnded {
+        pressure_type: String,
+        description: String,
+    },
 }
 
 // ===== 模拟配置 =====
@@ -379,6 +412,39 @@ impl SimulationBridge {
                 dict.set("id2", &id2.to_variant());
                 dict.set("reason", &reason.to_variant());
             }
+
+            // Tier 2.5 新增
+            AgentDelta::HealedByCamp { agent_id, agent_name, hp_restored } => {
+                dict.set("type", &"healed_by_camp".to_variant());
+                dict.set("agent_id", &agent_id.to_variant());
+                dict.set("agent_name", &agent_name.to_variant());
+                dict.set("hp_restored", &(Variant::from(*hp_restored as i64)));
+            }
+            AgentDelta::SurvivalWarning { agent_id, agent_name, satiety, hydration, hp } => {
+                dict.set("type", &"survival_warning".to_variant());
+                dict.set("agent_id", &agent_id.to_variant());
+                dict.set("agent_name", &agent_name.to_variant());
+                dict.set("satiety", &(Variant::from(*satiety as i64)));
+                dict.set("hydration", &(Variant::from(*hydration as i64)));
+                dict.set("hp", &(Variant::from(*hp as i64)));
+            }
+            AgentDelta::MilestoneReached { name, display_name, tick } => {
+                dict.set("type", &"milestone_reached".to_variant());
+                dict.set("name", &name.to_variant());
+                dict.set("display_name", &display_name.to_variant());
+                dict.set("tick", &(Variant::from(*tick as i64)));
+            }
+            AgentDelta::PressureStarted { pressure_type, description, duration } => {
+                dict.set("type", &"pressure_started".to_variant());
+                dict.set("pressure_type", &pressure_type.to_variant());
+                dict.set("description", &description.to_variant());
+                dict.set("duration", &(Variant::from(*duration as i64)));
+            }
+            AgentDelta::PressureEnded { pressure_type, description } => {
+                dict.set("type", &"pressure_ended".to_variant());
+                dict.set("pressure_type", &pressure_type.to_variant());
+                dict.set("description", &description.to_variant());
+            }
         }
         dict.to_variant()
     }
@@ -390,6 +456,8 @@ impl SimulationBridge {
         dict.set("name", &agent.name.clone().to_variant());
         dict.set("health", &(Variant::from(agent.health as i64)));
         dict.set("max_health", &(Variant::from(agent.max_health as i64)));
+        dict.set("satiety", &(Variant::from(agent.satiety as i64)));
+        dict.set("hydration", &(Variant::from(agent.hydration as i64)));
         dict.set("is_alive", &agent.is_alive.to_variant());
         dict.set("age", &(Variant::from(agent.age as i64)));
         dict.set("current_action", &agent.current_action.clone().to_variant());
@@ -400,6 +468,12 @@ impl SimulationBridge {
             motivation_arr.push(v);
         }
         dict.set("motivation", &motivation_arr.to_variant());
+        // 背包摘要
+        let mut inv_dict: Dictionary<GString, Variant> = Dictionary::new();
+        for (k, v) in &agent.inventory_summary {
+            inv_dict.set(k, &(Variant::from(*v as i64)));
+        }
+        dict.set("inventory_summary", &inv_dict.to_variant());
         dict.to_variant()
     }
 
@@ -864,10 +938,13 @@ async fn run_agent_loop(
                     };
                     (resource, *v)
                 }).collect(),
+                agent_satiety: agent.satiety,
+                agent_hydration: agent.hydration,
                 terrain_at: vision.terrain_at,
                 existing_agents: w.agents.keys().cloned().collect(),
                 resources_at: vision.resources_at,
                 nearby_agents: vision.nearby_agents,
+                active_pressures: w.pressure_pool.iter().map(|p| p.description.clone()).collect(),
             };
 
             (agent, ws)
@@ -964,6 +1041,7 @@ async fn run_apply_loop(
                 // 根据 ActionType 自动标注 emotion_tags 和 importance
                 let (emotion_tags, importance) = match action.action_type {
                     agentora_core::types::ActionType::Move { .. } => (vec!["neutral".to_string()], 0.2),
+                    agentora_core::types::ActionType::MoveToward { .. } => (vec!["purposeful".to_string()], 0.3),  // 导航移动，有目的性
                     agentora_core::types::ActionType::Gather { .. } => (vec!["satisfied".to_string()], 0.4),
                     agentora_core::types::ActionType::Wait => (vec!["resting".to_string()], 0.1),
                     agentora_core::types::ActionType::Attack { .. } => (vec!["aggressive".to_string(), "angry".to_string()], 0.8),

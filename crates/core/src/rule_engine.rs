@@ -12,10 +12,14 @@ pub struct WorldState {
     pub map_size: u32,
     pub agent_position: Position,
     pub agent_inventory: HashMap<ResourceType, u32>,
+    pub agent_satiety: u32,
+    pub agent_hydration: u32,
     pub terrain_at: HashMap<Position, TerrainType>,
     pub existing_agents: HashSet<AgentId>,
     pub resources_at: HashMap<Position, (ResourceType, u32)>,
     pub nearby_agents: Vec<NearbyAgentInfo>,
+    /// 活跃压力事件描述（用于 Prompt 注入）
+    pub active_pressures: Vec<String>,
 }
 
 impl Default for WorldState {
@@ -24,10 +28,13 @@ impl Default for WorldState {
             map_size: 256,
             agent_position: Position::new(0, 0),
             agent_inventory: HashMap::new(),
+            agent_satiety: 100,
+            agent_hydration: 100,
             terrain_at: HashMap::new(),
             existing_agents: HashSet::new(),
             resources_at: HashMap::new(),
             nearby_agents: Vec::new(),
+            active_pressures: Vec::new(),
         }
     }
 }
@@ -50,6 +57,23 @@ impl RuleEngine {
             if self.check_move_valid(direction, world_state) {
                 candidates.push(ActionType::Move { direction });
             }
+        }
+
+        // MoveToward 动作：为视野内最近的资源生成导航候选
+        if !world_state.resources_at.is_empty() {
+            let mut move_toward_candidates: Vec<ActionType> = Vec::new();
+
+            // 按距离排序，只取最近的3个资源
+            let mut resources: Vec<_> = world_state.resources_at.iter().collect();
+            resources.sort_by_key(|(pos, _)| pos.manhattan_distance(&world_state.agent_position));
+
+            for (pos, _) in resources.iter().take(3) {
+                if self.is_valid_move_toward_target(pos, world_state) {
+                    move_toward_candidates.push(ActionType::MoveToward { target: **pos });
+                }
+            }
+
+            candidates.extend(move_toward_candidates);
         }
 
         // 采集动作：当前位置有资源
@@ -85,7 +109,7 @@ impl RuleEngine {
         // 社交动作：附近有其他 Agent
         for agent_id in &world_state.existing_agents {
             if agent_id.as_str() != "self" {
-                candidates.push(ActionType::Talk { message: "hello".to_string() });
+                candidates.push(ActionType::Talk { message: "你好，有空聊聊吗？".to_string() });
                 candidates.push(ActionType::Attack { target_id: agent_id.clone() });
                 candidates.push(ActionType::TradeOffer {
                     offer: HashMap::new(),
@@ -164,11 +188,49 @@ impl RuleEngine {
         true
     }
 
+    /// 验证 MoveToward 目标位置有效性
+    ///
+    /// 验证条件：
+    /// 1. 目标在地图有效范围内
+    /// 2. 目标在视野范围内（曼哈顿距离 ≤ 5）
+    /// 3. 目标地形可通行
+    pub fn is_valid_move_toward_target(&self, target: &Position, world_state: &WorldState) -> bool {
+        // 验证1: 目标在地图有效范围内
+        if target.x >= world_state.map_size || target.y >= world_state.map_size {
+            return false;
+        }
+
+        // 验证2: 目标在视野范围内（曼哈顿距离 ≤ 5）
+        let dx = (target.x as i32 - world_state.agent_position.x as i32).abs();
+        let dy = (target.y as i32 - world_state.agent_position.y as i32).abs();
+        let vision_radius = 5i32; // 与 scan_vision 保持一致
+        if dx + dy > vision_radius {
+            return false;
+        }
+
+        // 验证3: 目标地形可通行
+        if let Some(terrain) = world_state.terrain_at.get(target) {
+            if !terrain.is_passable() {
+                return false;
+            }
+        }
+
+        // 如果已在目标位置，不需要移动
+        if target == &world_state.agent_position {
+            return false;
+        }
+
+        true
+    }
+
     /// 校验动作参数合法性
     pub fn validate_action(&self, candidate: &ActionCandidate, world_state: &WorldState) -> bool {
         match &candidate.action_type {
             ActionType::Move { direction } => {
                 self.check_move_valid(*direction, world_state)
+            }
+            ActionType::MoveToward { target } => {
+                self.is_valid_move_toward_target(target, world_state)
             }
             ActionType::Gather { resource } => {
                 // 检查当前位置是否有该资源
@@ -312,6 +374,48 @@ impl RuleEngine {
 
         let mot = motivation.to_array();
 
+        // 生存优先：satiety/hydration 低时优先满足饮食需求
+        // 阈值设为 50，提前储备资源（100 tick ≈ 3分钟生存时间）
+        if world_state.agent_satiety <= 50 || world_state.agent_hydration <= 50 {
+            // 极端：satiety=0 或 hydration=0 时覆盖其他动机
+            if world_state.agent_satiety == 0 || world_state.agent_hydration == 0 {
+                return self.survival_action(world_state);
+            }
+            // 饥饿/口渴但背包有资源 → Wait 消耗
+            let has_food = world_state.agent_inventory.get(&ResourceType::Food).copied().unwrap_or(0) > 0;
+            let has_water = world_state.agent_inventory.get(&ResourceType::Water).copied().unwrap_or(0) > 0;
+            if (world_state.agent_satiety <= 50 && has_food) || (world_state.agent_hydration <= 50 && has_water) {
+                return crate::types::Action {
+                    reasoning: "生存需求紧迫，原地饮食恢复".to_string(),
+                    action_type: ActionType::Wait,
+                    target: None,
+                    params: HashMap::new(),
+                    build_type: None,
+                    direction: None,
+                    motivation_delta: [0.15, 0.0, 0.0, 0.0, 0.0, 0.0],
+                };
+            }
+            // 背包没有 → 寻找资源
+            return self.survival_action(world_state);
+        }
+
+        // 水分检查（更严格的阈值）
+        if world_state.agent_hydration <= 50 {
+            let has_water = world_state.agent_inventory.get(&ResourceType::Water).copied().unwrap_or(0) > 0;
+            if has_water {
+                return crate::types::Action {
+                    reasoning: "口渴，饮水恢复".to_string(),
+                    action_type: ActionType::Wait,
+                    target: None,
+                    params: HashMap::new(),
+                    build_type: None,
+                    direction: None,
+                    motivation_delta: [0.15, 0.0, 0.0, 0.0, 0.0, 0.0],
+                };
+            }
+            return self.survival_action(world_state);
+        }
+
         // 1. 找出最高动机维度，平局用位置哈希打破
         let mut max_idx = 0;
         let mut max_val = mot[0];
@@ -378,8 +482,9 @@ impl RuleEngine {
                         [0.0, 0.12, 0.0, 0.06, 0.0, 0.0],
                     )
                 } else {
+                    let message = self.generate_social_message(world_state);
                     (
-                        ActionType::Talk { message: "问候".to_string() },
+                        ActionType::Talk { message },
                         None,
                         "社交动机最高，尝试交流".to_string(),
                         [0.0, 0.12, 0.0, 0.06, 0.0, 0.0],
@@ -402,8 +507,9 @@ impl RuleEngine {
                         [0.0, 0.06, 0.0, 0.12, 0.0, 0.0],
                     )
                 } else {
+                    let message = self.generate_express_message(world_state);
                     (
-                        ActionType::Talk { message: "分享".to_string() },
+                        ActionType::Talk { message },
                         None,
                         "表达动机最高，分享想法".to_string(),
                         [0.0, 0.06, 0.0, 0.12, 0.0, 0.0],
@@ -468,6 +574,127 @@ impl RuleEngine {
             params: action.params.into_iter().map(|(k, v)| (k, serde_json::Value::String(v))).collect(),
             motivation_delta: action.motivation_delta,
             source: CandidateSource::RuleEngine,
+        }
+    }
+
+    /// 生存动作：优先前往资源或采集
+    fn survival_action(&self, world_state: &WorldState) -> crate::types::Action {
+        use crate::types::{ActionType, Direction};
+
+        // 优先找食物或水源
+        let need_resource = if world_state.agent_satiety <= 30 {
+            Some(ResourceType::Food)
+        } else if world_state.agent_hydration <= 30 {
+            Some(ResourceType::Water)
+        } else {
+            None
+        };
+
+        if let Some(resource) = need_resource {
+            // 检查当前位置是否有需要的资源
+            if let Some((rt, _amount)) = world_state.resources_at.get(&world_state.agent_position) {
+                if *rt == resource {
+                    return crate::types::Action {
+                        reasoning: format!("生存优先，采集 {:?}", resource),
+                        action_type: ActionType::Gather { resource },
+                        target: None,
+                        params: HashMap::new(),
+                        build_type: None,
+                        direction: None,
+                        motivation_delta: [0.15, 0.0, 0.05, 0.0, 0.0, 0.0],
+                    };
+                }
+            }
+
+            // 向最近资源移动
+            let target_resource_positions: HashMap<Position, (ResourceType, u32)> = world_state.resources_at.iter()
+                .filter(|(_, (rt, _))| *rt == resource)
+                .map(|(pos, info)| (*pos, info.clone()))
+                .collect();
+
+            if let Some(nearest_pos) = self.find_nearest_resource(&world_state.agent_position, &target_resource_positions) {
+                if let Some(direction) = self.direction_toward(&world_state.agent_position, &nearest_pos) {
+                    return crate::types::Action {
+                        reasoning: format!("生存优先，向 {:?} 资源移动", resource),
+                        action_type: ActionType::Move { direction },
+                        target: None,
+                        params: HashMap::new(),
+                        build_type: None,
+                        direction: None,
+                        motivation_delta: [0.15, 0.0, 0.05, 0.0, 0.0, 0.0],
+                    };
+                }
+            }
+
+            // 找不到资源，探索
+            return crate::types::Action {
+                reasoning: format!("生存优先，探索寻找 {:?}", resource),
+                action_type: ActionType::Explore { target_region: 0 },
+                target: None,
+                params: HashMap::new(),
+                build_type: None,
+                direction: None,
+                motivation_delta: [0.15, 0.0, 0.05, 0.0, 0.0, 0.0],
+            };
+        }
+
+        // 兜底
+        crate::types::Action {
+            reasoning: "生存需要，原地休息".to_string(),
+            action_type: ActionType::Wait,
+            target: None,
+            params: HashMap::new(),
+            build_type: None,
+            direction: None,
+            motivation_delta: [0.1, 0.0, 0.0, 0.0, 0.0, 0.0],
+        }
+    }
+
+    /// 生成社交消息（维度 1：社会与关系）
+    fn generate_social_message(&self, world_state: &WorldState) -> String {
+        let food = world_state.agent_inventory.get(&ResourceType::Food).copied().unwrap_or(0);
+        let water = world_state.agent_inventory.get(&ResourceType::Water).copied().unwrap_or(0);
+        let nearby_count = world_state.nearby_agents.len();
+
+        // 社交消息：根据上下文生成
+        if world_state.agent_satiety <= 50 {
+            "同行们，有人能分享食物吗？".to_string()
+        } else if world_state.agent_hydration <= 50 {
+            "快渴死了，哪有水源？".to_string()
+        } else if food > 5 && water > 5 {
+            "我有富余的资源，有人需要吗？".to_string()
+        } else if nearby_count > 2 {
+            "人多好办事，一起探索吧！".to_string()
+        } else if nearby_count == 1 {
+            if let Some(agent) = world_state.nearby_agents.first() {
+                format!("{}，我们聊会儿？", agent.name)
+            } else {
+                "你好，交个朋友？".to_string()
+            }
+        } else {
+            "有人吗？想找个伙伴一起行动。".to_string()
+        }
+    }
+
+    /// 生成表达消息（维度 3：表达与创造）
+    fn generate_express_message(&self, world_state: &WorldState) -> String {
+        let food = world_state.agent_inventory.get(&ResourceType::Food).copied().unwrap_or(0);
+        let water = world_state.agent_inventory.get(&ResourceType::Water).copied().unwrap_or(0);
+        let wood = world_state.agent_inventory.get(&ResourceType::Wood).copied().unwrap_or(0);
+        let stone = world_state.agent_inventory.get(&ResourceType::Stone).copied().unwrap_or(0);
+
+        // 表达消息：分享发现、想法、计划
+        if wood >= 10 || stone >= 10 {
+            "发现了很多建材，准备建造点什么！".to_string()
+        } else if food >= 8 {
+            format!("今日收获不错，采集到{}个食物", food)
+        } else if world_state.agent_satiety >= 90 && world_state.agent_hydration >= 90 {
+            "精力充沛，准备探索更远的地方".to_string()
+        } else if !world_state.resources_at.is_empty() {
+            let pos = world_state.agent_position;
+            format!("在({},{})附近发现了资源点", pos.x, pos.y)
+        } else {
+            "这片土地很广阔，还有很多地方没探索".to_string()
         }
     }
 }
