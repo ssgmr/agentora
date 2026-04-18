@@ -45,8 +45,9 @@ func _init_name_label() -> void:
 			name_label.name = "AgentNameLabel"
 			name_label.text = "Agent 名称"
 			name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-			name_label.layout_mode = 2
-			name_label.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+			# 直接设置锚点布局（顶部居中，不受父容器约束）
+			name_label.set_anchors_preset(Control.PRESET_TOP_WIDE)
+			name_label.offset_bottom = 24
 			agent_detail.add_child(name_label)
 			agent_detail.move_child(name_label, 0)
 			print("[Main] 动态创建 NameLabel")
@@ -101,12 +102,16 @@ func _on_world_updated(snapshot: Dictionary) -> void:
 		for agent_data in agents.values():
 			if agent_data.get("is_alive", false):
 				selected_agent_id = agent_data.get("id", "")
+				# 触发 agent_selected 信号，让 MotivationRadar 等组件响应
+				var bridge = get_node_or_null("SimulationBridge")
+				if bridge:
+					bridge.select_agent(selected_agent_id)
 				break
 
 	# 每次世界更新都刷新已选中 Agent 的状态
-	var bridge = get_node_or_null("SimulationBridge")
-	if bridge and not selected_agent_id.is_empty():
-		var agent_data = bridge.get_agent_data(selected_agent_id)
+	var bridge2 = get_node_or_null("SimulationBridge")
+	if bridge2 and not selected_agent_id.is_empty():
+		var agent_data = bridge2.get_agent_data(selected_agent_id)
 		if not agent_data.is_empty():
 			_update_agent_detail(agent_data)
 

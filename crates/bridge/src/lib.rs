@@ -9,6 +9,161 @@ use godot::classes::{Node, INode};
 use std::sync::mpsc::{self, Sender, Receiver};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use std::sync::Once;
+
+// 日志初始化器（只执行一次）
+static LOG_INIT: Once = Once::new();
+static mut LOG_GUARD: Option<tracing_appender::non_blocking::WorkerGuard> = None;
+
+fn init_logging() {
+    godot::global::print(&[Variant::from("[Logger] init_logging called")]);
+    LOG_INIT.call_once(|| {
+        if let Err(e) = try_init_logging() {
+            eprintln!("[Logger] 初始化失败: {}", e);
+        }
+    });
+}
+
+fn try_init_logging() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    use tracing_subscriber::{fmt, EnvFilter, Layer, prelude::*};
+
+    // 加载日志配置
+    let log_cfg = LogConfig::load("../config/log.toml");
+
+    // 日志目录：从配置文件读取，相对于当前工作目录
+    let log_dir = std::path::Path::new(&log_cfg.log_dir);
+    std::fs::create_dir_all(log_dir)?;
+
+    // 构建 EnvFilter
+    let mut filter_str = log_cfg.file_level.clone();
+    for (target, level) in &log_cfg.targets {
+        filter_str.push_str(&format!(",{}={}", target, level));
+    }
+
+    let console_filter = EnvFilter::try_new(if log_cfg.console_enabled {
+        &log_cfg.console_level
+    } else {
+        "off"
+    }).unwrap_or_else(|_| EnvFilter::new("info"));
+    let file_filter = EnvFilter::try_new(if log_cfg.file_enabled {
+        &filter_str
+    } else {
+        "off"
+    }).unwrap_or_else(|_| EnvFilter::new("debug"));
+
+    let rotation = match log_cfg.rotation.as_str() {
+        "hourly" => tracing_appender::rolling::Rotation::HOURLY,
+        "never" => tracing_appender::rolling::Rotation::NEVER,
+        _ => tracing_appender::rolling::Rotation::DAILY,
+    };
+    let file_appender = tracing_appender::rolling::RollingFileAppender::new(
+        rotation,
+        log_dir,
+        "agentora.log",
+    );
+    let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+
+    let console_layer = fmt::layer()
+        .with_target(false)
+        .with_ansi(false)
+        .with_writer(std::io::stderr)
+        .with_filter(console_filter);
+    let file_layer = fmt::layer()
+        .with_target(true)
+        .with_ansi(false)
+        .with_thread_ids(true)
+        .with_line_number(true)
+        .with_writer(non_blocking)
+        .with_filter(file_filter);
+
+    let subscriber = tracing_subscriber::registry()
+        .with(console_layer)
+        .with(file_layer);
+
+    tracing::subscriber::set_global_default(subscriber)?;
+
+    // 保持 guard 存活
+    unsafe { LOG_GUARD = Some(guard); }
+
+    godot::global::print(&[Variant::from(format!(
+        "[Logger] 日志已初始化 [{}] → {}",
+        log_cfg.file_level, log_cfg.log_dir
+    ))]);
+
+    Ok(())
+}
+
+/// 日志配置
+#[derive(Debug, Clone)]
+struct LogConfig {
+    console_enabled: bool,
+    console_level: String,
+    file_enabled: bool,
+    file_level: String,
+    log_dir: String,
+    rotation: String,
+    targets: std::collections::HashMap<String, String>,
+}
+
+impl LogConfig {
+    fn load(path: &str) -> Self {
+        let defaults = Self {
+            console_enabled: true,
+            console_level: "info".to_string(),
+            file_enabled: true,
+            file_level: "debug".to_string(),
+            log_dir: "../logs".to_string(),
+            rotation: "daily".to_string(),
+            targets: std::collections::HashMap::new(),
+        };
+
+        match std::fs::read_to_string(path) {
+            Ok(content) => {
+                match toml::from_str::<toml::Value>(&content) {
+                    Ok(table) => {
+                        let mut cfg = defaults;
+                        if let Some(log) = table.get("log") {
+                            if let Some(v) = log.get("console_enabled").and_then(|v| v.as_bool()) {
+                                cfg.console_enabled = v;
+                            }
+                            if let Some(v) = log.get("console_level").and_then(|v| v.as_str()) {
+                                cfg.console_level = v.to_string();
+                            }
+                            if let Some(v) = log.get("file_enabled").and_then(|v| v.as_bool()) {
+                                cfg.file_enabled = v;
+                            }
+                            if let Some(v) = log.get("file_level").and_then(|v| v.as_str()) {
+                                cfg.file_level = v.to_string();
+                            }
+                            if let Some(v) = log.get("log_dir").and_then(|v| v.as_str()) {
+                                cfg.log_dir = v.to_string();
+                            }
+                            if let Some(v) = log.get("rotation").and_then(|v| v.as_str()) {
+                                cfg.rotation = v.to_string();
+                            }
+                            if let Some(targets) = log.get("targets").and_then(|v| v.as_table()) {
+                                for (k, v) in targets {
+                                    if let Some(level) = v.as_str() {
+                                        cfg.targets.insert(k.clone(), level.to_string());
+                                    }
+                                }
+                            }
+                        }
+                        cfg
+                    }
+                    Err(e) => {
+                        eprintln!("[Logger] log.toml 解析失败 ({}), 使用默认配置", e);
+                        defaults
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("[Logger] log.toml 未找到 ({}), 使用默认配置", e);
+                defaults
+            }
+        }
+    }
+}
 
 // 核心引擎类型
 use agentora_core::{World, WorldSeed, Agent, Position, WorldSnapshot, AgentId, Action};
@@ -176,18 +331,18 @@ impl SimConfig {
                                 cfg.player_decision_interval_secs = v as u64;
                             }
                         }
-                        println!("[SimConfig] 配置加载成功 [agents={} npc={} npc_interval={}s player_interval={}s]",
+                        tracing::info!("[SimConfig] 配置加载成功 [agents={} npc={} npc_interval={}s player_interval={}s]",
                             cfg.initial_agent_count, cfg.npc_count, cfg.npc_decision_interval_secs, cfg.player_decision_interval_secs);
                         cfg
                     }
                     Err(e) => {
-                        println!("[SimConfig] sim.toml 解析失败 ({}), 使用默认配置", e);
+                        tracing::warn!("[SimConfig] sim.toml 解析失败 ({}), 使用默认配置", e);
                         Self::default()
                     }
                 }
             }
             Err(e) => {
-                println!("[SimConfig] sim.toml 未找到 ({}), 使用默认配置", e);
+                tracing::warn!("[SimConfig] sim.toml 未找到 ({}), 使用默认配置", e);
                 Self::default()
             }
         }
@@ -260,6 +415,8 @@ impl INode for SimulationBridge {
     }
 
     fn ready(&mut self) {
+        init_logging();
+        tracing::info!("SimulationBridge: 初始化完成");
         godot::global::print(&[Variant::from("SimulationBridge: 初始化完成")]);
         self.start_simulation();
     }
@@ -315,7 +472,31 @@ impl INode for SimulationBridge {
                     agents_dict.set(agent.id.as_str(), &agent_data);
                 }
                 snapshot_dict.set("agents", &agents_dict.to_variant());
+
+                // 发送 map_changes（资源和建筑信息）
+                let mut map_changes_array: Array<Variant> = Array::new();
+                for change in &snapshot.map_changes {
+                    let mut change_dict: Dictionary<GString, Variant> = Dictionary::new();
+                    change_dict.set("x", &(Variant::from(change.x as i64)));
+                    change_dict.set("y", &(Variant::from(change.y as i64)));
+                    change_dict.set("terrain", &change.terrain.to_variant());
+                    if let Some(structure) = &change.structure {
+                        change_dict.set("structure", &structure.to_variant());
+                    }
+                    if let Some(resource_type) = &change.resource_type {
+                        change_dict.set("resource_type", &resource_type.to_variant());
+                    }
+                    if let Some(resource_amount) = &change.resource_amount {
+                        change_dict.set("resource_amount", &(Variant::from(*resource_amount as i64)));
+                    }
+                    map_changes_array.push(&change_dict.to_variant());
+                }
+                snapshot_dict.set("map_changes", &map_changes_array.to_variant());
+
+                let mc_count = snapshot.map_changes.len();
+                godot::global::print(&[format!("[SimulationBridge] physics_process: 发送 snapshot 含 {} 个 map_changes", mc_count).to_variant()]);
                 self.base_mut().emit_signal("world_updated", &[snapshot_dict.to_variant()]);
+                godot::global::print(&[Variant::from("[SimulationBridge] world_updated 信号已发出")]);
             }
         }
     }
@@ -614,6 +795,8 @@ impl SimulationBridge {
                 dict.set("name", &agent.name.clone().to_variant());
                 dict.set("health", &(Variant::from(agent.health as i64)));
                 dict.set("max_health", &(Variant::from(agent.max_health as i64)));
+                dict.set("satiety", &(Variant::from(agent.satiety as i64)));
+                dict.set("hydration", &(Variant::from(agent.hydration as i64)));
                 dict.set("is_alive", &agent.is_alive.to_variant());
                 dict.set("age", &(Variant::from(agent.age as i64)));
                 dict.set("current_action", &agent.current_action.clone().to_variant());
@@ -628,7 +811,7 @@ impl SimulationBridge {
                 for (k, v) in &agent.inventory_summary {
                     inv_dict.set(k.as_str(), &Variant::from(*v as i64));
                 }
-                dict.set("inventory", &inv_dict.to_variant());
+                dict.set("inventory_summary", &inv_dict.to_variant());
             }
         }
         dict.to_variant()
@@ -664,26 +847,14 @@ async fn run_simulation_async(
     // 加载模拟配置（相对于项目根目录，Godot 工作目录为 client/）
     let sim_config = SimConfig::load("../config/sim.toml");
 
-    let seed = WorldSeed {
-        map_size: [256, 256],
-        terrain_ratio: std::collections::HashMap::from([
-            ("plains".to_string(), 0.5),
-            ("forest".to_string(), 0.25),
-            ("mountain".to_string(), 0.1),
-            ("water".to_string(), 0.1),
-            ("desert".to_string(), 0.05),
-        ]),
-        resource_density: 0.15,
-        region_size: 16,
-        initial_agents: sim_config.initial_agent_count as u32,
-        motivation_templates: std::collections::HashMap::from([
-            ("gatherer".to_string(), [0.8, 0.4, 0.3, 0.2, 0.3, 0.2]),
-            ("trader".to_string(), [0.5, 0.8, 0.4, 0.3, 0.7, 0.3]),
-        ]),
-        spawn_strategy: "scattered".to_string(),
-        seed_peers: vec![],
-        pressure_config: agentora_core::seed::PressureConfig::default(),
-    };
+    // 从配置文件加载世界种子
+    let mut seed = WorldSeed::load("../worldseeds/default.toml")
+        .unwrap_or_else(|e| {
+            tracing::error!("加载世界种子失败: {}，使用默认配置", e);
+            WorldSeed::default()
+        });
+    // 覆盖 Agent 数量（从 sim.toml 读取）
+    seed.initial_agents = sim_config.initial_agent_count as u32;
 
     let world = World::new(&seed);
 
@@ -737,8 +908,17 @@ async fn run_simulation_async(
     }
 
     let all_agent_count = agent_ids.len() + npc_ids.len();
-    println!("[SimulationBridge] 世界已创建，{} 个 Agent（{} LLM + {} NPC）",
+    tracing::info!("世界已创建，{} 个 Agent（{} LLM + {} NPC）",
         all_agent_count, agent_ids.len(), npc_ids.len());
+
+    // 立即发送初始 snapshot，让 Godot 能渲染资源、建筑等初始状态
+    {
+        let w = world_arc.lock().await;
+        let initial_snapshot = w.snapshot();
+        let map_changes_count = initial_snapshot.map_changes.len();
+        let _ = snapshot_tx.send(initial_snapshot);
+        tracing::info!("已发送初始 snapshot（含 {} 个 map_changes）", map_changes_count);
+    }
 
     // Apply 循环：串行应用动作并发 delta + narrative
     let delta_tx_clone = delta_tx.clone();
@@ -761,11 +941,11 @@ async fn run_simulation_async(
             match cmd {
                 SimCommand::Pause => {
                     is_paused = !is_paused;
-                    println!("[模拟线程] 暂停状态 = {}", is_paused);
+                    tracing::info!("模拟暂停状态 = {}", is_paused);
                 }
                 SimCommand::Start => {
                     is_paused = false;
-                    println!("[模拟线程] 恢复运行");
+                    tracing::info!("模拟恢复运行");
                 }
                 SimCommand::SetTickInterval { seconds } => {
                     let mut world = world_arc.lock().await;
@@ -778,7 +958,7 @@ async fn run_simulation_async(
                         let current = agent.motivation.get(dimension);
                         let new_val = (current + (value - current) * 0.5).clamp(0.0, 1.0);
                         agent.motivation.set(dimension, new_val);
-                        println!("[模拟线程] 调整 {:?} 动机[{}]={}", aid, dimension, value);
+                        tracing::info!("调整 {:?} 动机[{}]={}", aid, dimension, value);
                     }
                 }
                 SimCommand::InjectPreference { agent_id, dimension, boost, duration_ticks } => {
@@ -786,7 +966,7 @@ async fn run_simulation_async(
                     let mut world = world_arc.lock().await;
                     if let Some(agent) = world.agents.get_mut(&aid) {
                         agent.inject_preference(dimension, boost, duration_ticks);
-                        println!("[模拟线程] 注入偏好 {:?} dim={} boost={} duration={}",
+                        tracing::info!("注入偏好 {:?} dim={} boost={} duration={}",
                             aid, dimension, boost, duration_ticks);
                     }
                 }
@@ -887,7 +1067,7 @@ async fn run_agent_loop(
     is_npc: bool,
     interval_secs: u32,
 ) {
-    println!("[AgentLoop] Agent {:?} 启动 (is_npc={}, interval={}s)", agent_id, is_npc, interval_secs);
+    tracing::info!("[AgentLoop] Agent {:?} 启动 (is_npc={}, interval={}s)", agent_id, is_npc, interval_secs);
 
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(interval_secs as u64));
     // 跳过第一次立即触发
@@ -906,7 +1086,7 @@ async fn run_agent_loop(
         };
 
         if !should_continue {
-            println!("[AgentLoop] Agent {:?} 已死亡或不存在，退出循环", agent_id);
+            tracing::warn!("[AgentLoop] Agent {:?} 已死亡或不存在，退出循环", agent_id);
             break;
         }
 
@@ -964,7 +1144,7 @@ async fn run_agent_loop(
             if summary.is_empty() { None } else { Some(summary) }
         };
 
-        println!("[AgentLoop] Agent {:?} ({}) 开始决策{}", agent_id.as_str(), agent_clone.name,
+        tracing::debug!("[AgentLoop] Agent {:?} ({}) 开始决策{}", agent_id.as_str(), agent_clone.name,
             if is_npc { " (NPC 规则决策)" } else { "" });
 
         let action = if is_npc {
@@ -989,10 +1169,10 @@ async fn run_agent_loop(
             let elapsed = start.elapsed().as_secs_f32();
 
             if result.error_info.is_some() {
-                println!("[AgentLoop] Agent {:?} ({}) 决策完成 (耗时 {:.1}s, 兜底): {:?} | 原因: {:?}",
+                tracing::warn!("[AgentLoop] Agent {:?} ({}) 决策完成 (耗时 {:.1}s, 兜底): {:?} | 原因: {:?}",
                     agent_id.as_str(), agent_clone.name, elapsed, result.selected_action.action_type, result.error_info);
             } else {
-                println!("[AgentLoop] Agent {:?} ({}) 决策完成 (耗时 {:.1}s): {:?}",
+                tracing::info!("[AgentLoop] Agent {:?} ({}) 决策完成 (耗时 {:.1}s): {:?}",
                     agent_id.as_str(), agent_clone.name, elapsed, result.selected_action.action_type);
             }
 
@@ -1009,9 +1189,9 @@ async fn run_agent_loop(
 
         // 发送动作到 Apply 循环（如果通道满了，丢弃该动作）
         if let Err(e) = action_tx.try_send((agent_id.clone(), action)) {
-            println!("[AgentLoop] Agent {:?} 动作发送失败: {:?}", agent_id, e);
+            tracing::warn!("[AgentLoop] Agent {:?} 动作发送失败: {:?}", agent_id, e);
         } else {
-            println!("[AgentLoop] Agent {:?} ({}) 动作已发送", agent_id.as_str(), agent_clone.name);
+            tracing::debug!("[AgentLoop] Agent {:?} ({}) 动作已发送", agent_id.as_str(), agent_clone.name);
         }
     }
 }
@@ -1023,9 +1203,9 @@ async fn run_apply_loop(
     delta_tx: Sender<AgentDelta>,
     narrative_tx: Sender<NarrativeEvent>,
 ) {
-    println!("[ApplyLoop] 启动");
+    tracing::info!("[ApplyLoop] 启动");
     while let Some((agent_id, action)) = action_rx.recv().await {
-        println!("[ApplyLoop] 收到 Agent {:?} 的动作: {:?}", agent_id, action.action_type);
+        tracing::debug!("[ApplyLoop] 收到 Agent {:?} 的动作: {:?}", agent_id, action.action_type);
         let (delta, events, extra_deltas) = {
             let mut w = world.lock().await;
 
@@ -1082,7 +1262,7 @@ async fn run_apply_loop(
             let delta = match w.agents.get(&agent_id) {
                 Some(agent) if agent.is_alive => {
                     let mot = agent.motivation.to_array();
-                    println!("[ApplyLoop] Agent {:?} ({}) 应用成功 -> ({}, {})",
+                    tracing::debug!("[ApplyLoop] Agent {:?} ({}) 应用成功 -> ({}, {})",
                         agent_id, agent.name, agent.position.x, agent.position.y);
                     AgentDelta::AgentMoved {
                         id: agent.id.as_str().to_string(),
@@ -1097,7 +1277,7 @@ async fn run_apply_loop(
                 }
                 Some(agent) => {
                     // Agent 死亡
-                    println!("[ApplyLoop] Agent {:?} ({}) 死亡", agent_id, agent.name);
+                    tracing::warn!("[ApplyLoop] Agent {:?} ({}) 死亡", agent_id, agent.name);
                     AgentDelta::AgentDied {
                         id: agent.id.as_str().to_string(),
                         name: agent.name.clone(),
@@ -1106,7 +1286,7 @@ async fn run_apply_loop(
                     }
                 }
                 None => {
-                    println!("[ApplyLoop] Agent {:?} 不存在，跳过", agent_id);
+                    tracing::warn!("[ApplyLoop] Agent {:?} 不存在，跳过", agent_id);
                     AgentDelta::AgentDied {
                         id: agent_id.as_str().to_string(),
                         name: String::new(),
@@ -1168,19 +1348,19 @@ async fn run_apply_loop(
 
         // 发送叙事事件
         for event in events {
-            println!("[Narrative] tick={} {}: {}", event.tick, event.event_type, event.description);
+            tracing::info!("[Narrative] tick={} {}: {}", event.tick, event.event_type, event.description);
             let _ = narrative_tx.send(event);
         }
 
         // 在锁外发送 delta，避免阻塞
         if let Err(e) = delta_tx.send(delta) {
-            println!("[ApplyLoop] delta 发送失败: {:?}", e);
+            tracing::error!("[ApplyLoop] delta 发送失败: {:?}", e);
         }
 
         // Tier 2: 发送额外 delta 事件
         for extra_delta in extra_deltas {
             if let Err(e) = delta_tx.send(extra_delta) {
-                println!("[ApplyLoop] extra delta 发送失败: {:?}", e);
+                tracing::error!("[ApplyLoop] extra delta 发送失败: {:?}", e);
             }
         }
     }
@@ -1204,13 +1384,13 @@ async fn run_snapshot_loop(
 
         match snapshot_opt {
             Ok(snapshot) => {
-                println!("[SimulationBridge] snapshot 生成成功，tick={}", snapshot.tick);
+                tracing::info!("[SimulationBridge] snapshot 生成成功，tick={}", snapshot.tick);
                 if snapshot_tx.send(snapshot).is_err() {
                     break;
                 }
             }
             Err(e) => {
-                eprintln!("[SimulationBridge] snapshot() panic: {:?}", e);
+                tracing::error!("[SimulationBridge] snapshot() panic: {:?}", e);
                 break;
             }
         }

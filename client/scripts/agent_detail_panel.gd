@@ -122,7 +122,7 @@ func _on_agent_selected(agent_id: String) -> void:
 	_update_display()
 
 
-func _on_world_updated(snapshot: Dictionary) -> void:
+func _on_world_updated(_snapshot: Dictionary) -> void:
 	_update_display()
 
 

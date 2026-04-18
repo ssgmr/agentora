@@ -550,7 +550,7 @@ impl RuleEngine {
             _ => unreachable!(),
         };
 
-        println!("[RuleEngine] 规则决策: 维度{} = {:.2}, 动作={:?}", max_idx, max_val, action_type);
+        tracing::debug!("[RuleEngine] 规则决策: 维度{} = {:.2}, 动作={:?}", max_idx, max_val, action_type);
 
         crate::types::Action {
             reasoning,

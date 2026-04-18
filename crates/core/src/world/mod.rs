@@ -207,9 +207,11 @@ impl World {
         let mut rng = rand::thread_rng();
         let (width, height) = map.size();
 
-        let resource_count = (width * height * seed.resource_density as u32) as usize;
+        let resource_count = ((width * height) as f32 * seed.resource_density) as usize;
+        tracing::debug!("generate_resources: map={width}x{height}, density={}, target={}", seed.resource_density, resource_count);
         let resource_types = [ResourceType::Iron, ResourceType::Food, ResourceType::Wood, ResourceType::Water, ResourceType::Stone];
 
+        let mut placed = 0u32;
         for _ in 0..resource_count {
             let x = rng.gen_range(0..width);
             let y = rng.gen_range(0..height);
@@ -220,8 +222,10 @@ impl World {
                 let resource_type = resource_types[rng.gen_range(0..resource_types.len())];
                 let node = resource::ResourceNode::new(pos, resource_type, rng.gen_range(50..200));
                 resources.insert(pos, node);
+                placed += 1;
             }
         }
+        tracing::debug!("generate_resources 完成: 放置了 {} 个资源节点", placed);
     }
 
     /// 生成初始 Agent
@@ -230,7 +234,7 @@ impl World {
         let mut rng = rand::thread_rng();
         let (width, height) = map_size;
 
-        let templates: Vec<&[f32; 6]> = seed.motivation_templates.values().collect();
+        let templates: Vec<&[f32; 6]> = seed.motivation_templates.values().map(|t| &t.v).collect();
         let template_names: Vec<&str> = seed.motivation_templates.keys().map(|s| s.as_str()).collect();
 
         for i in 0..seed.initial_agents {
@@ -263,7 +267,7 @@ impl World {
     }
 
     /// 随机选择地形
-    fn random_terrain(rng: &mut impl rand::Rng, ratios: &std::collections::HashMap<String, f32>) -> TerrainType {
+    fn random_terrain(rng: &mut impl rand::Rng, ratios: &std::collections::BTreeMap<String, f32>) -> TerrainType {
         let total: f32 = ratios.values().sum();
         let roll = rng.gen::<f32>() * total;
         let mut accumulated = 0.0;

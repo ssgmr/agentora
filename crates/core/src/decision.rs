@@ -186,16 +186,16 @@ impl DecisionPipeline {
 
         // 阶段 1: 硬约束过滤 - 生成合法候选动作
         let filtered_actions = self.rule_engine.filter_hard_constraints(world_state);
-        println!("[Decision] Agent {} 硬约束过滤后剩余 {} 个候选动作", agent_id.as_str(), filtered_actions.len());
+        tracing::debug!("Agent {} 硬约束过滤后剩余 {} 个候选动作", agent_id.as_str(), filtered_actions.len());
 
         // 阶段 2: 上下文构建 (Prompt 组装)
         let prompt = self.build_prompt(agent_id, motivation, spark, world_state, memory_summary);
-        println!("[Decision] Agent {} Prompt 长度：{} chars", agent_id.as_str(), prompt.len());
+        tracing::trace!("Agent {} Prompt 长度：{} chars", agent_id.as_str(), prompt.len());
 
         // 阶段 3: LLM 调用
         match self.call_llm(&prompt).await {
             Ok(llm_candidates) => {
-                println!("[Decision] Agent {} LLM 返回 {} 个候选动作", agent_id.as_str(), llm_candidates.len());
+                tracing::debug!("Agent {} LLM 返回 {} 个候选动作", agent_id.as_str(), llm_candidates.len());
 
                 // 阶段 4: 规则校验
                 let validated: Vec<ActionCandidate> = llm_candidates
@@ -203,10 +203,10 @@ impl DecisionPipeline {
                     .filter_map(|c| {
                         let is_valid = self.rule_engine.validate_action(&c, world_state);
                         if !is_valid {
-                            println!("[Decision] Agent {} 动作校验失败：{:?}", agent_id.as_str(), c.action_type);
+                            tracing::warn!("Agent {} 动作校验失败：{:?}", agent_id.as_str(), c.action_type);
                             // Gather 不合法时，转换为 Explore（向附近移动寻找资源）
                             if let ActionType::Gather { resource } = &c.action_type {
-                                println!("[Decision] Agent {} Gather {:?} 当前位置无资源，转换为 Explore 兜底", agent_id.as_str(), resource);
+                                tracing::debug!("Agent {} Gather {:?} 当前位置无资源，转换为 Explore 兜底", agent_id.as_str(), resource);
                                 return Some(ActionCandidate {
                                     reasoning: format!("LLM建议采集{:?}但当前位置无资源，改为探索寻找", resource),
                                     action_type: ActionType::Explore { target_region: 0 },
@@ -222,13 +222,13 @@ impl DecisionPipeline {
                     })
                     .collect();
 
-                println!("[Decision] Agent {} 规则校验后剩余 {} 个候选动作", agent_id.as_str(), validated.len());
+                tracing::debug!("Agent {} 规则校验后剩余 {} 个候选动作", agent_id.as_str(), validated.len());
 
                 // 阶段 5: 动机加权选择
                 if validated.is_empty() {
                     // 无候选通过校验，使用规则引擎兜底
                     let fallback = self.rule_engine.fallback_action(motivation, world_state);
-                    println!("[Decision] Agent {} LLM 候选均未通过校验，使用规则引擎兜底: {:?}", agent_id.as_str(), fallback.action_type);
+                    tracing::warn!("Agent {} LLM 候选均未通过校验，使用规则引擎兜底: {:?}", agent_id.as_str(), fallback.action_type);
                     DecisionResult {
                         selected_action: fallback,
                         all_candidates: vec![],
@@ -237,7 +237,7 @@ impl DecisionPipeline {
                 } else if validated.len() == 1 {
                     // 唯一候选直接选择
                     let selected = validated.first().unwrap().clone();
-                    println!("[Decision] Agent {} 唯一候选直接选择：{:?}", agent_id.as_str(), selected.action_type);
+                    tracing::trace!("Agent {} 唯一候选直接选择：{:?}", agent_id.as_str(), selected.action_type);
                     DecisionResult {
                         selected_action: selected,
                         all_candidates: validated,
@@ -246,7 +246,7 @@ impl DecisionPipeline {
                 } else {
                     // 多候选加权选择
                     let selected = self.select_with_motivation(&validated, motivation);
-                    println!("[Decision] Agent {} 动机加权选择：{:?}", agent_id.as_str(), selected.action_type);
+                    tracing::debug!("Agent {} 动机加权选择：{:?}", agent_id.as_str(), selected.action_type);
                     DecisionResult {
                         selected_action: selected,
                         all_candidates: validated,
@@ -256,9 +256,9 @@ impl DecisionPipeline {
             }
             Err(e) => {
                 // LLM 调用失败，降级到规则引擎
-                println!("[Decision] Agent {} LLM 调用失败，降级到规则引擎: {}", agent_id.as_str(), e);
+                tracing::warn!("Agent {} LLM 调用失败，降级到规则引擎: {}", agent_id.as_str(), e);
                 let fallback = self.rule_engine.fallback_action(motivation, world_state);
-                println!("[Decision] Agent {} 规则引擎兜底: {:?}", agent_id.as_str(), fallback.action_type);
+                tracing::warn!("Agent {} 规则引擎兜底: {:?}", agent_id.as_str(), fallback.action_type);
                 DecisionResult {
                     selected_action: fallback,
                     all_candidates: vec![],
@@ -475,15 +475,15 @@ impl DecisionPipeline {
             let generate_fut = provider.generate(request);
             let response = match tokio::time::timeout(std::time::Duration::from_secs(60), generate_fut).await {
                 Ok(Ok(resp)) => {
-                    println!("[Decision] LLM 调用成功，raw_text 前200字符: {:.200}", resp.raw_text);
+                    tracing::debug!("LLM 调用成功，raw_text: {}", resp.raw_text);
                     resp
                 }
                 Ok(Err(e)) => {
-                    println!("[Decision] LLM 调用失败: {}", e);
+                    tracing::error!("LLM 调用失败: {}", e);
                     return Err(format!("LLM 调用失败：{}", e));
                 }
                 Err(_) => {
-                    println!("[Decision] LLM 调用超时（60秒）");
+                    tracing::warn!("LLM 调用超时（60秒）");
                     return Err("LLM 调用超时（60秒）".to_string());
                 }
             };
@@ -491,18 +491,18 @@ impl DecisionPipeline {
             // 使用 parser 解析 JSON
             match parse_action_json(&response.raw_text) {
                 Ok(json_value) => {
-                    println!("[Decision] JSON 解析成功: {}", json_value);
+                    tracing::trace!("JSON 解析成功: {}", json_value);
                     // 将 JSON 转换为 ActionCandidate
                     match self.json_to_candidate(json_value) {
                         Ok(candidate) => Ok(vec![candidate]),
                         Err(e) => {
-                            println!("[Decision] 转换候选动作失败: {}", e);
+                            tracing::warn!("转换候选动作失败: {}", e);
                             Err(format!("转换候选动作失败：{}", e))
                         }
                     }
                 }
                 Err(e) => {
-                    println!("[Decision] JSON 解析失败: {}，原始响应: {}", e, response.raw_text);
+                    tracing::warn!("JSON 解析失败: {}，原始响应: {}", e, response.raw_text);
                     Err(format!("JSON 解析失败：{}", e))
                 }
             }
@@ -672,7 +672,7 @@ impl DecisionPipeline {
                 Some(ActionType::AllyReject { ally_id: AgentId::new(ally_id) })
             }
             _ => {
-                println!("[Decision] 未知 action_type: {}，使用 Wait 兜底", type_str);
+                tracing::warn!("未知 action_type: {}，使用 Wait 兜底", type_str);
                 Some(ActionType::Wait)
             }
         }
@@ -715,7 +715,7 @@ impl DecisionPipeline {
             }
         }
 
-        println!("[Decision] MoveToward 目标位置解析失败，使用默认值");
+        tracing::debug!("MoveToward 目标位置解析失败，使用默认值");
         None
     }
 

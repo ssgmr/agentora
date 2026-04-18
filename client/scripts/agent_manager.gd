@@ -153,7 +153,7 @@ func _create_agent_node(agent_id: String, data: Dictionary) -> Node2D:
 	var bg = ColorRect.new()
 	bg.name = "Bg"
 	bg.custom_minimum_size = Vector2(AGENT_SIZE + 4, AGENT_SIZE + 4)
-	bg.position = Vector2(-(AGENT_SIZE + 4) / 2, -(AGENT_SIZE + 4) / 2)
+	bg.position = Vector2(-(AGENT_SIZE + 4) / 2.0, -(AGENT_SIZE + 4) / 2.0)
 	bg.color = Color(0, 0, 0, 0.3)
 	container.add_child(bg)
 
@@ -168,7 +168,7 @@ func _create_agent_node(agent_id: String, data: Dictionary) -> Node2D:
 	# 创建标签（带阴影）
 	var label = Label.new()
 	label.name = "Label"
-	label.position = Vector2(-30, -AGENT_SIZE / 2 - 14)
+	label.position = Vector2(-30, -AGENT_SIZE / 2.0 - 14)
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.add_theme_font_size_override("font_size", LABEL_FONT_SIZE)
 	label.add_theme_color_override("font_shadow_color", Color.BLACK)

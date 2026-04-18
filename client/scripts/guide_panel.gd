@@ -105,7 +105,7 @@ func _setup_advanced_sliders() -> void:
 	_advanced_container.visible = false
 	add_child(_advanced_container)
 
-	# 创建6个滑块（0%-50%范围）
+	# 创建6个滑块（0%-100%范围，与动机值一致）
 	for i in range(6):
 		var hbox = HBoxContainer.new()
 		hbox.add_theme_constant_override("separation", 2)
@@ -118,9 +118,9 @@ func _setup_advanced_sliders() -> void:
 
 		var slider = HSlider.new()
 		slider.min_value = 0.0
-		slider.max_value = 0.5
+		slider.max_value = 1.0
 		slider.step = 0.01
-		slider.value = 0.0
+		slider.value = 0.5
 		slider.custom_minimum_size = Vector2(80, 0)
 		slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		slider.value_changed.connect(_on_slider_changed.bind(i))
@@ -128,7 +128,7 @@ func _setup_advanced_sliders() -> void:
 		_sliders.append(slider)
 
 		var value_label = Label.new()
-		value_label.text = "0%"
+		value_label.text = "50%"
 		value_label.custom_minimum_size = Vector2(28, 0)
 		value_label.add_theme_font_size_override("font_size", 10)
 		hbox.add_child(value_label)
@@ -169,7 +169,7 @@ func _toggle_advanced() -> void:
 
 func _on_slider_changed(dimension: int, value: float) -> void:
 	if dimension < _value_labels.size():
-		_value_labels[dimension].text = "%d%%" % int(clamp(value, 0.0, 0.5) * 100)
+		_value_labels[dimension].text = "%d%%" % int(clamp(value, 0.0, 1.0) * 100)
 
 	if not _selected_agent_id.is_empty():
 		var bridge = get_node_or_null("../../../../SimulationBridge")
@@ -190,7 +190,7 @@ func _on_agent_selected(agent_id: String) -> void:
 
 		for i in range(6):
 			var v = clamp(float(motivation[i]), 0.0, 1.0)
-			_sliders[i].value = minf(v, 0.5)
+			_sliders[i].value = v
 			if i < _value_labels.size():
 				_value_labels[i].text = "%d%%" % int(v * 100)
 
@@ -216,9 +216,9 @@ func _toggle_pause() -> void:
 
 func _reset_motivations() -> void:
 	for i in range(6):
-		_sliders[i].value = 0.0
+		_sliders[i].value = 0.5
 		if i < _value_labels.size():
-			_value_labels[i].text = "0%"
+			_value_labels[i].text = "50%"
 
 	if not _selected_agent_id.is_empty():
 		var bridge = get_node_or_null("../../../../SimulationBridge")

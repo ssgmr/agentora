@@ -1,0 +1,29 @@
+# Agentora 日志配置
+
+[log]
+# 日志目录（相对于 Godot 工作目录，即 client/）
+# 默认 "../logs" = 项目根目录下的 logs/
+log_dir = "../logs"
+
+# 全局日志级别：trace / debug / info / warn / error
+level = "debug"
+
+# 控制台日志开关
+console_enabled = true
+# 控制台日志级别（可与全局不同）
+console_level = "info"
+
+# 文件日志开关
+file_enabled = true
+# 文件日志级别（通常比控制台更详细）
+file_level = "debug"
+
+# 日志轮转周期：daily / hourly / never
+rotation = "daily"
+
+# 单文件最大大小（MB），仅在 rotation=never 时生效
+max_file_size_mb = 100
+
+# 按模块名设置不同级别（覆盖全局）
+# 例如：agentora_bridge=debug, agentora_core::decision=trace
+[log.targets]

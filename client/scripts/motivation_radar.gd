@@ -102,9 +102,9 @@ func draw_dimension_labels(center: Vector2, eff_size: float) -> void:
 			offset_x = 5
 		else:  # 顶部或底部
 			h_align = HORIZONTAL_ALIGNMENT_CENTER
-			offset_x = -text_width / 2
+			offset_x = -floori(text_width / 2.0)
 
-		draw_string(font, label_pos + Vector2(offset_x, font_size / 3), _dimension_names[i], h_align, -1, font_size, label_color)
+		draw_string(font, label_pos + Vector2(offset_x, float(font_size) / 3.0), _dimension_names[i], h_align, -1, font_size, label_color)
 
 
 func draw_circle_outline(center: Vector2, radius: float, color: Color) -> void:

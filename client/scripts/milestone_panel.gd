@@ -87,7 +87,7 @@ func _on_world_updated(snapshot: Dictionary) -> void:
 func _update_milestone_display(name_str: String, display_name: String, tick: int) -> void:
 	var label: Label = _milestone_labels.get(name_str)
 	if label:
-		var data = MILESTONES.get(name_str, {"icon": "✓"})
+		var _data = MILESTONES.get(name_str, {"icon": "✓"})
 		label.text = "%s [color=green]✓ 已达成[/color] (tick %d)" % [display_name, tick]
 		# 高亮颜色
 		label.add_theme_color_override("font_color", Color(0.4, 0.9, 0.4))

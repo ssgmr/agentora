@@ -9,6 +9,8 @@ tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-appender = "0.2"
 thiserror.workspace = true
 anyhow.workspace = true
 godot.workspace = true

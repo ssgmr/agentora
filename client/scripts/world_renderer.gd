@@ -52,12 +52,11 @@ const STRUCTURE_TEXTURE_MAP = {
 var _tile_size: int = 16
 var _map_size: int = 256
 var _map_data: Dictionary = {}
-var _visible_rect: Rect2 = Rect2(0, 0, 1280, 720)
 var _needs_redraw: bool = true
+var _debug_print_done: bool = false
 
 # 建筑效果动画状态
 var _effect_time: float = 0.0
-var _active_effects: Dictionary = {}  # pos_key -> effect_type
 
 
 func _ready() -> void:
@@ -83,12 +82,16 @@ func _ready() -> void:
 	add_child(_structure_sprites)
 
 	# 连接信号
-	var bridge = get_node_or_null("../../SimulationBridge")
+	var bridge = get_node_or_null("../SimulationBridge")
 	if bridge:
+		print("[WorldRenderer] 找到 SimulationBridge 节点: %s" % bridge.get_path())
 		bridge.world_updated.connect(_on_world_updated)
+		print("[WorldRenderer] world_updated 信号已连接")
 		# 连接 delta 信号（Tier 2）
 		if bridge.has_signal("agent_delta"):
 			bridge.agent_delta.connect(_on_delta_received)
+	else:
+		push_error("[WorldRenderer] 未找到 SimulationBridge 节点！")
 
 	# 生成地图数据
 	_generate_map_data()
@@ -209,12 +212,19 @@ func _draw() -> void:
 	# 绘制资源
 	_draw_resources(start_x, start_y, end_x, end_y)
 
+	# 一次性打印绘制状态
+	if _resources.size() > 0 and _debug_print_done == false:
+		_debug_print_done = true
+		print("[WorldRenderer] 资源总数: %d, 首项: %s" % [_resources.size(), _resources.keys()[0]])
+
 	# 绘制建筑结构
 	_draw_structures(start_x, start_y, end_x, end_y)
 
 
 # 绘制资源
+var _debug_draw_count: int = 0
 func _draw_resources(start_x: int, start_y: int, end_x: int, end_y: int) -> void:
+	_debug_draw_count = 0
 	for pos_key in _resources:
 		var parts = pos_key.split("_")
 		if parts.size() < 2:
@@ -245,7 +255,7 @@ func _draw_resources(start_x: int, start_y: int, end_x: int, end_y: int) -> void
 			var color: Color = RESOURCE_COLORS.get(res_type, Color.MAGENTA)
 			# 绘制一个小的资源指示器（8x8像素，居中于格子）
 			var indicator_size = 8
-			var offset = (_tile_size - indicator_size) / 2
+			var offset = (_tile_size - indicator_size) / 2.0
 			draw_rect(Rect2(pos_x + offset, pos_y + offset, indicator_size, indicator_size), color)
 
 			# 根据资源量调整透明度（模拟丰富度）
@@ -278,7 +288,7 @@ func _draw_structures(start_x: int, start_y: int, end_x: int, end_y: int) -> voi
 
 # 绘制建筑效果（Camp治疗光环、Fence阻挡等）
 func _draw_structure_effects(x: int, y: int, struct_type: String) -> void:
-	var center = Vector2(x * _tile_size + _tile_size / 2, y * _tile_size + _tile_size / 2)
+	var center = Vector2(x * _tile_size + _tile_size / 2.0, y * _tile_size + _tile_size / 2.0)
 
 	match struct_type:
 		"Camp":
@@ -321,20 +331,27 @@ func _process(_delta: float) -> void:
 func _on_world_updated(snapshot: Dictionary) -> void:
 	# 从 snapshot 加载建筑和资源信息（兜底同步）
 	if snapshot.has("map_changes"):
+		var resource_count = 0
+		var structure_count = 0
 		for change in snapshot.map_changes:
 			var key = "%d_%d" % [change.x, change.y]
 
 			# 处理建筑
 			if change.has("structure") and change.structure != null and change.structure != "":
 				_structures[key] = {"type": _normalize_structure_type(change.structure)}
+				structure_count += 1
 
 			# 处理资源
 			if change.has("resource_type") and change.resource_type != null and change.resource_type != "":
 				var amount = change.get("resource_amount", 0)
 				_resources[key] = {"type": change.resource_type.to_lower(), "amount": amount}
+				resource_count += 1
 			elif change.has("resource_amount") and change.get("resource_amount", 0) <= 0:
 				# 资源耗尽，移除
 				_resources.erase(key)
+
+		print("[WorldRenderer] Snapshot 处理: %d 个资源, %d 个建筑 (总计 %d 个 map_changes)" % [resource_count, structure_count, snapshot.map_changes.size()])
+		print("[WorldRenderer] _resources 字典大小: %d" % _resources.size())
 
 	_needs_redraw = true
 	queue_redraw()

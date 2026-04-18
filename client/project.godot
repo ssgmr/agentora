@@ -11,13 +11,10 @@ config_version=5
 [application]
 
 config/name="Agentora"
-config/description="端侧多模态大模型AI智能体驱动的去中心化数字文明模拟器"
+config/description="端侧大模型AI智能体驱动的去中心化数字文明模拟器"
 run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.6", "Forward Plus")
 config/icon="res://icon.svg"
-
-[autoload]
-; AutoScreenshot="*res://scripts/auto_screenshot.gd"
 
 [display]
 
@@ -29,3 +26,12 @@ window/size/window_height_override=720
 [rendering]
 
 anti_aliasing/quality/msaa_3d=2
+
+[autoload]
+
+
+
+
+
+
+

@@ -44,7 +44,7 @@ impl WorldGenerator {
     }
 
     /// 随机选择地形
-    fn random_terrain(rng: &mut impl rand::Rng, ratios: &std::collections::HashMap<String, f32>) -> TerrainType {
+    fn random_terrain(rng: &mut impl rand::Rng, ratios: &std::collections::BTreeMap<String, f32>) -> TerrainType {
         let total: f32 = ratios.values().sum();
         let roll = rng.gen::<f32>() * total;
         let mut accumulated = 0.0;
@@ -97,7 +97,7 @@ impl WorldGenerator {
         use rand::Rng;
         let mut rng = rand::thread_rng();
 
-        let resource_count = (width * height * seed.resource_density as u32) as usize;
+        let resource_count = ((width * height) as f32 * seed.resource_density) as usize;
         let resource_types = [ResourceType::Iron, ResourceType::Food, ResourceType::Wood, ResourceType::Water, ResourceType::Stone];
 
         for _ in 0..resource_count {
@@ -106,11 +106,29 @@ impl WorldGenerator {
             let pos = Position::new(x, y);
 
             // 只在可通行地形放置资源
-            if world.map.get_terrain(pos).is_passable() {
-                let resource_type = resource_types[rng.gen_range(0..resource_types.len())];
-                let node = ResourceNode::new(pos, resource_type, rng.gen_range(50..200));
-                world.resources.insert(pos, node);
+            let terrain = world.map.get_terrain(pos);
+            if !terrain.is_passable() {
+                continue;
             }
+
+            let resource_type = if rng.gen::<f32>() < 0.7 {
+                // 70% 按地形匹配
+                match terrain {
+                    TerrainType::Forest => ResourceType::Wood,
+                    TerrainType::Mountain => {
+                        if rng.gen::<f32>() < 0.5 { ResourceType::Iron } else { ResourceType::Stone }
+                    }
+                    TerrainType::Plains => ResourceType::Food,
+                    TerrainType::Water => ResourceType::Water,
+                    TerrainType::Desert => ResourceType::Stone,
+                }
+            } else {
+                // 30% 随机分布
+                resource_types[rng.gen_range(0..resource_types.len())]
+            };
+
+            let node = ResourceNode::new(pos, resource_type, rng.gen_range(50..200));
+            world.resources.insert(pos, node);
         }
     }
 
@@ -121,7 +139,7 @@ impl WorldGenerator {
 
         let (width, height) = world.map.size();
 
-        let templates: Vec<&[f32; 6]> = seed.motivation_templates.values().collect();
+        let templates: Vec<&[f32; 6]> = seed.motivation_templates.values().map(|t| &t.v).collect();
         let template_names: Vec<&str> = seed.motivation_templates.keys().map(|s| s.as_str()).collect();
 
         for i in 0..seed.initial_agents {

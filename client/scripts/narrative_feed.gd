@@ -100,7 +100,7 @@ func _on_narrative_event(event: Variant) -> void:
 
 func add_event(event: Dictionary) -> void:
 	var tick: int = event.get("tick", 0)
-	var agent_name: String = event.get("agent_name", "Unknown")
+	var _agent_name: String = event.get("agent_name", "Unknown")
 	var event_type: String = event.get("event_type", "unknown")
 	var description: String = event.get("description", "")
 
@@ -120,7 +120,7 @@ func add_event(event: Dictionary) -> void:
 	# 自动滚动到底部
 	if auto_scroll:
 		await get_tree().process_frame
-		_scroll_container.scroll_vertical = _scroll_container.get_v_scroll_bar().max_value
+		_scroll_container.scroll_vertical = int(_scroll_container.get_v_scroll_bar().max_value)
 
 	# 限制最大事件数
 	_limit_events()

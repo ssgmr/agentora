@@ -151,8 +151,8 @@ AutoScreenshot="*res://scripts/auto_screenshot.gd"
 4. 用 `Read` 工具查看 `screenshot_godot.png`
 
 **重要：**
-- 验证时不要用 headless 模式，Vulkan 渲染需要窗口
-- 验证完成后注释 `[autoload]` 下的 AutoScreenshot 配置，避免每次运行都截图退出
+- 验证时不要用 **headless 模式**，Vulkan 渲染需要窗口
+- 验证完成后注释 `[autoload]` 下的 AutoScreenshot 配置(使用;注释)，避免每次运行都截图退出
 - 截图路径必须使用项目根目录的绝对路径（如 `/Users/geminrong/work/code/python/agentora/screenshot_godot.png`），不能用 `user://`（无法从外部读取）
 - 首次运行，GDExtension 需要在 Godot 编辑器中打开一次，让它扫描并注册 .gdextension 文件。直接 --path . 运行时可能还没有正确注册类。
 
@@ -162,6 +162,13 @@ AutoScreenshot="*res://scripts/auto_screenshot.gd"
 - **VBoxContainer子节点**：需要正确设置 `size_flags_vertical`（0=不扩展, 3=填充扩展）避免内容溢出
 - **NarrativeFeed vs RightPanel**：NarrativeFeed的 `anchor_right` 应设为 `0.0`（不覆盖右侧），或设置 `offset_right = 930.0` 避开RightPanel区域
 - **@onready时序问题**：某些节点路径在 `_ready()` 的@onready阶段可能还未就绪，改用 `get_node_or_null()` 延迟获取
+- **SimulationBridge 节点路径**（场景树根节点为 Main）：
+  - `SimulationBridge` 是 Main 的直接子节点，不是 WorldView 的子节点
+  - 场景树结构：`Main → [SimulationBridge, WorldView, Camera2D, UI]`
+  - 在 `world_renderer.gd`（挂载于 WorldView）中引用：`get_node("../SimulationBridge")`
+  - 在 `agent_manager.gd`（挂载于 WorldView/Agents）中引用：`get_node("../../SimulationBridge")`
+  - **反复踩坑**：WorldView 脚本中用 `../../SimulationBridge` 会找不到节点，必须用 `../SimulationBridge`（向上一级而非两级）
+- **GDScript 缩进**：严禁混用空格和制表符，GDScript 解析器会直接报错 `Mixed use of tabs and spaces for indentation`。Godot 编辑器默认使用制表符，手动编辑时注意保持一致
 
 ### OpenSpec变更管理 (`openspec/`)
 项目使用OpenSpec工作流管理功能开发：
@@ -251,6 +258,8 @@ GDExtension桥接Rust核心引擎到Godot客户端（单文件1000+行）：
 - **NPC系统** — 规则引擎快速决策（无LLM），独立决策间隔（`npc_decision_interval_secs=5`）
 - **记忆记录** — 动作自动记录到Agent记忆，带情感标签和重要性评分
 - 产物为`cdylib`动态库（macOS: `.dylib`, Linux: `.so`, Windows: `.dll`），复制到`client/bin/`
+- **线程安全**：`godot_print!` 等 godot-rust 引擎 API 只能在主线程调用，在异步 task（如 `run_sim_thread`）中调用会导致 panic `attempted to access binding from different thread`，应改用 `eprintln!`
+- **WorldSeed 加载**：Bridge 不应硬编码 WorldSeed 参数，必须从 `worldseeds/default.toml` 通过 `WorldSeed::load()` 加载，配置变更后需重新编译 bridge
 
 **动机引擎** (`crates/core/src/motivation.rs`)
 - 6维向量：生存/社交/认知/表达/权力/传承

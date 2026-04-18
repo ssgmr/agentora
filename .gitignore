@@ -211,3 +211,6 @@ __marimo__/
 /client/bin/~agentora_b_0.pdb
 /client/bin/~agentora_bridge.dll
 .DS_Store
+/godot_log_new.txt
+/godot-mcp/
+/logs/
