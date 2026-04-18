@@ -1,4 +1,4 @@
-[gd_scene load_steps=7 format=3 uid="uid://main_scene"]
+[gd_scene load_steps=9 format=3 uid="uid://main_scene"]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="main_script"]
 [ext_resource type="Script" path="res://scripts/camera_controller.gd" id="camera_controller"]
@@ -7,6 +7,8 @@
 [ext_resource type="Script" path="res://scripts/motivation_radar.gd" id="motivation_radar"]
 [ext_resource type="Script" path="res://scripts/guide_panel.gd" id="guide_panel"]
 [ext_resource type="Script" path="res://scripts/narrative_feed.gd" id="narrative_feed"]
+[ext_resource type="Script" path="res://scripts/milestone_panel.gd" id="milestone_panel"]
+[ext_resource type="Script" path="res://scripts/agent_detail_panel.gd" id="agent_detail_panel"]
 
 [node name="Main" type="Node"]
 script = ExtResource("main_script")
@@ -103,6 +105,16 @@ max_lines_visible = 6
 layout_mode = 2
 size_flags_vertical = 0
 script = ExtResource("guide_panel")
+
+[node name="AgentDetailPanel" type="VBoxContainer" parent="UI/RightPanel"]
+layout_mode = 2
+size_flags_vertical = 0
+script = ExtResource("agent_detail_panel")
+
+[node name="MilestonePanel" type="VBoxContainer" parent="UI/RightPanel"]
+layout_mode = 2
+size_flags_vertical = 0
+script = ExtResource("milestone_panel")
 
 [node name="NarrativeFeed" type="PanelContainer" parent="UI"]
 layout_mode = 2

@@ -70,6 +70,8 @@ pub fn load_agent(conn: &Connection, id: &AgentId) -> Result<Option<Agent>, rusq
             motivation: crate::motivation::MotivationVector::from_array(motivation),
             health: row.get(5)?,
             max_health: row.get(6)?,
+            satiety: 100,
+            hydration: 100,
             inventory: Default::default(),
             memory: Default::default(),
             relations: Default::default(),

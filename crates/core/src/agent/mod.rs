@@ -22,6 +22,8 @@ pub struct Agent {
     pub motivation: MotivationVector,
     pub health: u32,
     pub max_health: u32,
+    pub satiety: u32,       // 饱食度 0-100，初始100
+    pub hydration: u32,     // 水分度 0-100，初始100
     pub inventory: HashMap<String, u32>,
     pub memory: MemorySystem,
     pub relations: HashMap<AgentId, Relation>,
@@ -60,6 +62,11 @@ pub enum RelationType {
 impl Agent {
     pub fn new(id: AgentId, name: String, position: Position) -> Self {
         let id_str = id.as_str().to_string();
+        let mut inventory = HashMap::new();
+        // 初始配备：3 个食物 + 2 个水，帮助 Agent 度过早期探索阶段
+        inventory.insert("food".to_string(), 3);
+        inventory.insert("water".to_string(), 2);
+
         Self {
             id,
             name,
@@ -67,7 +74,9 @@ impl Agent {
             motivation: MotivationVector::new(),
             health: 100,
             max_health: 100,
-            inventory: HashMap::new(),
+            satiety: 100,
+            hydration: 100,
+            inventory,
             memory: MemorySystem::new(&id_str),
             relations: HashMap::new(),
             strategies: StrategyHub::new(&id_str),
@@ -103,7 +112,7 @@ impl Agent {
         self.temp_preferences.retain(|p| p.remaining_ticks > 0);
     }
 
-    /// 计算有效动机（基础 + 临时偏好加成）
+    /// 计算有效动机（基础 + 临时偏好加成 + 生存压力）
     pub fn effective_motivation(&self) -> [f32; 6] {
         let mut base = self.motivation.to_array();
         for pref in &self.temp_preferences {
@@ -111,6 +120,18 @@ impl Agent {
                 base[pref.dimension] = (base[pref.dimension] + pref.boost).clamp(0.0, 1.0);
             }
         }
+
+        // 生存压力驱动：satiety/hydration 低时增加生存维度
+        // 阈值从 30 提高到 50，让 Agent 更早开始储备资源
+        let survival_boost = if self.satiety == 0 || self.hydration == 0 {
+            0.5 // 极端饥渴：生存+0.5
+        } else if self.satiety <= 50 || self.hydration <= 50 {
+            0.3 // 饥饿/口渴：生存+0.3
+        } else {
+            0.0
+        };
+        base[0] = (base[0] + survival_boost).clamp(0.0, 1.0);
+
         base
     }
 

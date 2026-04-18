@@ -165,10 +165,13 @@ mod tests {
                 map_size: 256,
                 agent_position: agent.position,
                 agent_inventory: agent.inventory.clone(),
+                agent_satiety: 100,
+                agent_hydration: 100,
                 terrain_at: self.terrain.clone(),
                 existing_agents: other_agents.iter().map(|a| a.id.clone()).collect::<HashSet<_>>(),
                 resources_at: self.resources.iter().map(|(k, v)| (*k, (*v, 1))).collect(),
                 nearby_agents: Vec::new(),
+                active_pressures: Vec::new(),
             }
         }
     }

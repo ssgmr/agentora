@@ -1,16 +1,21 @@
 # GuidePanel - 玩家引导面板
-# 6×HSlider调整动机权重
+# 6个预设倾向按钮 + 可折叠高级滑块面板
 extends VBoxContainer
 
 var _sliders: Array[HSlider] = []
 var _value_labels: Array[Label] = []
 var _dimension_names: Array[String] = ["生存", "社交", "认知", "表达", "权力", "传承"]
 var _selected_agent_id: String = ""
+var _advanced_visible: bool = false
+var _advanced_container: VBoxContainer = null
+var _toggle_btn: Button = null
 
 
 func _ready() -> void:
-	_setup_sliders()
-	_setup_buttons()
+	_setup_preset_buttons()
+	_setup_advanced_toggle()
+	_setup_advanced_sliders()
+	_setup_control_buttons()
 
 	var bridge = get_node_or_null("../../../../SimulationBridge")
 	if bridge:
@@ -25,7 +30,6 @@ func _on_world_updated(snapshot: Dictionary) -> void:
 			for agent_data in agents.values():
 				if agent_data.get("is_alive", false):
 					_selected_agent_id = agent_data.get("id", "")
-					# 通知 bridge 同步 selected_agent_id
 					var bridge = get_node_or_null("../../../../SimulationBridge")
 					if bridge:
 						bridge.select_agent(_selected_agent_id)
@@ -38,7 +42,6 @@ func _on_world_updated(snapshot: Dictionary) -> void:
 			if not data.is_empty():
 				var motivation: Array = data.get("motivation", [])
 				if not motivation.is_empty():
-					# 临时断开信号，避免代码设置滑块时触发 adjust_motivation
 					for i in range(6):
 						_sliders[i].value_changed.disconnect(_on_slider_changed.bind(i))
 
@@ -46,95 +49,98 @@ func _on_world_updated(snapshot: Dictionary) -> void:
 						var v = clamp(float(motivation[i]), 0.0, 1.0)
 						_sliders[i].value = v
 						if i < _value_labels.size():
-							_value_labels[i].text = "%.2f" % v
+							_value_labels[i].text = "%d%%" % int(v * 100)
 
-					# 重新连接信号
 					for i in range(6):
 						_sliders[i].value_changed.connect(_on_slider_changed.bind(i))
 
 
-func _setup_sliders() -> void:
+func _setup_preset_buttons() -> void:
 	# 标题
 	var title = Label.new()
-	title.text = "动机权重"
-	title.add_theme_font_size_override("font_size", 13)
+	title.text = "引导面板"
+	title.add_theme_font_size_override("font_size", 14)
 	add_child(title)
 
-	# 创建6个滑块
+	# 6个预设按钮（2行3列）
+	var grid = GridContainer.new()
+	grid.columns = 3
+	grid.add_theme_constant_override("h_separation", 4)
+	grid.add_theme_constant_override("v_separation", 4)
+
+	var presets = [
+		{"name": "生存", "dim": 0, "tooltip": "增加生存动机30%"},
+		{"name": "社交", "dim": 1, "tooltip": "增加社交动机30%"},
+		{"name": "探索", "dim": 2, "tooltip": "增加认知动机30%"},
+		{"name": "创造", "dim": 3, "tooltip": "增加表达动机30%"},
+		{"name": "征服", "dim": 4, "tooltip": "增加权力动机30%"},
+		{"name": "传承", "dim": 5, "tooltip": "增加传承动机30%"},
+	]
+
+	for preset in presets:
+		var btn = Button.new()
+		btn.text = preset.name
+		btn.tooltip_text = preset.tooltip
+		btn.custom_minimum_size = Vector2(60, 28)
+		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		btn.pressed.connect(_inject_preset.bind(preset.dim, 0.3))
+		grid.add_child(btn)
+
+	add_child(grid)
+
+
+func _setup_advanced_toggle() -> void:
+	var sep = HSeparator.new()
+	add_child(sep)
+
+	_toggle_btn = Button.new()
+	_toggle_btn.text = "▶ 高级自定义"
+	_toggle_btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_toggle_btn.pressed.connect(_toggle_advanced)
+	add_child(_toggle_btn)
+
+
+func _setup_advanced_sliders() -> void:
+	_advanced_container = VBoxContainer.new()
+	_advanced_container.visible = false
+	add_child(_advanced_container)
+
+	# 创建6个滑块（0%-50%范围）
 	for i in range(6):
 		var hbox = HBoxContainer.new()
 		hbox.add_theme_constant_override("separation", 2)
 
-		# 维度名称标签
 		var name_label = Label.new()
 		name_label.text = _dimension_names[i]
 		name_label.custom_minimum_size = Vector2(32, 0)
 		name_label.add_theme_font_size_override("font_size", 10)
 		hbox.add_child(name_label)
 
-		# 滑块
 		var slider = HSlider.new()
 		slider.min_value = 0.0
-		slider.max_value = 1.0
+		slider.max_value = 0.5
 		slider.step = 0.01
-		slider.value = 0.5
-		slider.custom_minimum_size = Vector2(100, 0)
+		slider.value = 0.0
+		slider.custom_minimum_size = Vector2(80, 0)
 		slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		slider.value_changed.connect(_on_slider_changed.bind(i))
 		hbox.add_child(slider)
 		_sliders.append(slider)
 
-		# 当前值显示
 		var value_label = Label.new()
-		value_label.name = "ValueLabel"
-		value_label.text = "0.50"
-		value_label.custom_minimum_size = Vector2(32, 0)
-		value_label.add_theme_font_size_override("font_size", 11)
+		value_label.text = "0%"
+		value_label.custom_minimum_size = Vector2(28, 0)
+		value_label.add_theme_font_size_override("font_size", 10)
 		hbox.add_child(value_label)
 		_value_labels.append(value_label)
 
-		add_child(hbox)
+		_advanced_container.add_child(hbox)
 
 
-func _setup_buttons() -> void:
-	# 分隔线
+func _setup_control_buttons() -> void:
 	var sep = HSeparator.new()
 	add_child(sep)
 
-	# 偏好按钮标题
-	var pref_title = Label.new()
-	pref_title.text = "临时偏好"
-	pref_title.add_theme_font_size_override("font_size", 11)
-	add_child(pref_title)
-
-	# 偏好按钮容器
-	var btn_hbox = HBoxContainer.new()
-	btn_hbox.add_theme_constant_override("separation", 4)
-
-	var explore_btn = Button.new()
-	explore_btn.text = "探索"
-	explore_btn.tooltip_text = "临时增加认知动机30%"
-	explore_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	explore_btn.pressed.connect(_inject_explore_preference)
-	btn_hbox.add_child(explore_btn)
-
-	var trade_btn = Button.new()
-	trade_btn.text = "交易"
-	trade_btn.tooltip_text = "临时增加社交动机30%"
-	trade_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	trade_btn.pressed.connect(_inject_trade_preference)
-	btn_hbox.add_child(trade_btn)
-
-	var build_btn = Button.new()
-	build_btn.text = "建造"
-	build_btn.tooltip_text = "临时增加表达动机30%"
-	build_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	build_btn.pressed.connect(_inject_build_preference)
-	btn_hbox.add_child(build_btn)
-
-	add_child(btn_hbox)
-
-	# 控制按钮
 	var ctrl_hbox = HBoxContainer.new()
 	ctrl_hbox.add_theme_constant_override("separation", 4)
 
@@ -154,12 +160,17 @@ func _setup_buttons() -> void:
 	add_child(ctrl_hbox)
 
 
-func _on_slider_changed(dimension: int, value: float) -> void:
-	# 更新值显示
-	if dimension < _value_labels.size():
-		_value_labels[dimension].text = "%.2f" % clamp(value, 0.0, 1.0)
+func _toggle_advanced() -> void:
+	_advanced_visible = not _advanced_visible
+	_advanced_container.visible = _advanced_visible
+	if _toggle_btn:
+		_toggle_btn.text = ("▼ 高级自定义" if _advanced_visible else "▶ 高级自定义")
 
-	# 发送到Rust
+
+func _on_slider_changed(dimension: int, value: float) -> void:
+	if dimension < _value_labels.size():
+		_value_labels[dimension].text = "%d%%" % int(clamp(value, 0.0, 0.5) * 100)
+
 	if not _selected_agent_id.is_empty():
 		var bridge = get_node_or_null("../../../../SimulationBridge")
 		if bridge:
@@ -169,47 +180,29 @@ func _on_slider_changed(dimension: int, value: float) -> void:
 func _on_agent_selected(agent_id: String) -> void:
 	_selected_agent_id = agent_id
 
-	# 更新滑块显示当前Agent的动机值
 	var bridge = get_node_or_null("../../../../SimulationBridge")
 	if bridge:
 		var data = bridge.get_agent_data(agent_id)
 		var motivation: Array = data.get("motivation", [0.5, 0.5, 0.5, 0.5, 0.5, 0.5])
-		printerr("[GuidePanel] motivation: %s" % str(motivation))
 
-		# 临时断开信号，避免代码设置滑块时触发 adjust_motivation
 		for i in range(6):
 			_sliders[i].value_changed.disconnect(_on_slider_changed.bind(i))
 
 		for i in range(6):
 			var v = clamp(float(motivation[i]), 0.0, 1.0)
-			_sliders[i].value = v
+			_sliders[i].value = minf(v, 0.5)
 			if i < _value_labels.size():
-				_value_labels[i].text = "%.2f" % v
+				_value_labels[i].text = "%d%%" % int(v * 100)
 
-		# 重新连接信号
 		for i in range(6):
 			_sliders[i].value_changed.connect(_on_slider_changed.bind(i))
 
 
-func _inject_explore_preference() -> void:
+func _inject_preset(dimension: int, boost: float) -> void:
 	if not _selected_agent_id.is_empty():
 		var bridge = get_node_or_null("../../../../SimulationBridge")
 		if bridge:
-			bridge.inject_preference(_selected_agent_id, 2, 0.3, 10)  # 认知维度
-
-
-func _inject_trade_preference() -> void:
-	if not _selected_agent_id.is_empty():
-		var bridge = get_node_or_null("../../../../SimulationBridge")
-		if bridge:
-			bridge.inject_preference(_selected_agent_id, 1, 0.3, 10)  # 社交维度
-
-
-func _inject_build_preference() -> void:
-	if not _selected_agent_id.is_empty():
-		var bridge = get_node_or_null("../../../../SimulationBridge")
-		if bridge:
-			bridge.inject_preference(_selected_agent_id, 3, 0.3, 10)  # 表达维度
+			bridge.inject_preference(_selected_agent_id, dimension, boost, 15)
 
 
 func _toggle_pause() -> void:
@@ -223,9 +216,9 @@ func _toggle_pause() -> void:
 
 func _reset_motivations() -> void:
 	for i in range(6):
-		_sliders[i].value = 0.5
+		_sliders[i].value = 0.0
 		if i < _value_labels.size():
-			_value_labels[i].text = "0.50"
+			_value_labels[i].text = "0%"
 
 	if not _selected_agent_id.is_empty():
 		var bridge = get_node_or_null("../../../../SimulationBridge")

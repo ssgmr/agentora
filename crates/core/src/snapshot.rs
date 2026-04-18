@@ -14,6 +14,7 @@ pub struct WorldSnapshot {
     pub events: Vec<NarrativeEvent>,
     pub legacies: Vec<LegacyEvent>,
     pub pressures: Vec<PressureSnapshot>,
+    pub milestones: Vec<MilestoneSnapshot>,
 }
 
 /// Agent快照
@@ -25,6 +26,8 @@ pub struct AgentSnapshot {
     pub motivation: [f32; 6],
     pub health: u32,
     pub max_health: u32,
+    pub satiety: u32,
+    pub hydration: u32,
     pub inventory_summary: HashMap<String, u32>,
     pub current_action: String,
     pub age: u32,
@@ -71,6 +74,14 @@ pub struct PressureSnapshot {
     pub remaining_ticks: u32,
 }
 
+/// 里程碑快照
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MilestoneSnapshot {
+    pub name: String,
+    pub display_name: String,
+    pub achieved_tick: u64,
+}
+
 impl WorldSnapshot {
     /// 序列化为JSON字符串
     pub fn to_json(&self) -> String {
@@ -103,4 +114,11 @@ pub enum WorldDelta {
     TradeCompleted { from_id: String, to_id: String, items: String },
     AllianceFormed { id1: String, id2: String },
     AllianceBroken { id1: String, id2: String, reason: String },
+
+    // 新增：Tier 2.5 生存+建筑+压力+里程碑
+    HealedByCamp { agent_id: String, hp_restored: u32 },
+    SurvivalStatus { agent_id: String, satiety: u32, hydration: u32, hp: u32 },
+    MilestoneReached { name: String, display_name: String, tick: u64 },
+    PressureStarted { pressure_type: String, description: String, duration: u32 },
+    PressureEnded { pressure_type: String, description: String },
 }

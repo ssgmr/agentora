@@ -19,8 +19,13 @@ const EVENT_COLORS = {
 	"attack": "#F44336",    # 红色 - 攻击
 	"alliance": "#2196F3",  # 蓝色 - 结盟
 	"pressure": "#FFC107",  # 黄色 - 压力事件
+	"pressure_start": "#FF9800",  # 橙色 - 压力开始
+	"pressure_end": "#8BC34A",    # 浅绿 - 压力结束
+	"milestone": "#FFD700",  # 金色 - 里程碑
 	"legacy": "#9C27B0",    # 紫色 - 遗产
-	"death": "#9C27B0"
+	"death": "#9C27B0",
+	"healed": "#4CAF50",    # 绿色 - 治愈（营地效果）
+	"survival": "#E91E63",  # 粉色 - 生存警告
 }
 
 
@@ -55,6 +60,7 @@ func _ready() -> void:
 
 func _setup_styling() -> void:
 	_text_box.add_theme_color_override("default_color", Color.WHITE)
+	_text_box.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART  # 启用智能换行
 	var bg_style = StyleBoxFlat.new()
 	bg_style.bg_color = Color(0, 0, 0, 0.7)
 	bg_style.content_margin_left = 8
@@ -77,6 +83,7 @@ func _setup_ui_fallback() -> void:
 	_text_box.bbcode_enabled = true
 	_text_box.fit_content = true
 	_text_box.scroll_active = false
+	_text_box.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART  # 启用智能换行
 	_text_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_text_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_scroll_container.add_child(_text_box)
@@ -86,7 +93,7 @@ func _setup_ui_fallback() -> void:
 
 func _on_narrative_event(event: Variant) -> void:
 	print("[NarrativeFeed] 收到事件: type=%s agent=%s desc=%s" % [
-		event.get("event_type", "?"), event.get("agent_name", "?"), event.get("description", "").substr(0, min(30, len(event.get("description", ""))))
+		event.get("event_type", "?"), event.get("agent_name", "?"), event.get("description", "?")
 	])
 	add_event(event)
 
@@ -148,4 +155,83 @@ func add_legacy_event(legacy_id: String, agent_name: String) -> void:
 		"agent_name": agent_name,
 		"event_type": "legacy",
 		"description": "已死亡，留下遗迹 #%s" % legacy_id
+	})
+
+
+# 添加里程碑事件
+func add_milestone_event(name_str: String, display_name: String) -> void:
+	var milestone_icons = {
+		"FirstCamp": "🏕",
+		"FirstTrade": "🤝",
+		"FirstFence": "🚧",
+		"FirstAttack": "⚔",
+		"FirstLegacyInteract": "📜",
+		"CityState": "🏛",
+		"GoldenAge": "👑",
+	}
+	var icon = milestone_icons.get(name_str, "🏆")
+	add_event({
+		"tick": 0,
+		"agent_name": "[文明]",
+		"event_type": "milestone",
+		"description": "%s 达成：【%s】" % [icon, display_name]
+	})
+
+
+# 添加压力开始事件
+func add_pressure_start(pressure_type: String, description: String, duration: int) -> void:
+	var icons = {
+		"drought": "☀️",
+		"abundance": "🌾",
+		"plague": "☠️",
+	}
+	var icon = icons.get(pressure_type, "⚠️")
+	add_event({
+		"tick": 0,
+		"agent_name": "[世界]",
+		"event_type": "pressure_start",
+		"description": "%s %s（持续%d ticks）" % [icon, description, duration]
+	})
+
+
+# 添加压力结束事件
+func add_pressure_end(pressure_type: String, description: String) -> void:
+	var icons = {
+		"drought": "🌧️",
+		"abundance": "🍃",
+		"plague": "💚",
+	}
+	var icon = icons.get(pressure_type, "✓")
+	add_event({
+		"tick": 0,
+		"agent_name": "[世界]",
+		"event_type": "pressure_end",
+		"description": "%s %s 已结束" % [icon, description]
+	})
+
+
+# 添加治愈事件（营地效果）
+func add_healed_event(agent_name: String, hp_restored: int) -> void:
+	add_event({
+		"tick": 0,
+		"agent_name": agent_name,
+		"event_type": "healed",
+		"description": "在营地休息，恢复 %d HP" % hp_restored
+	})
+
+
+# 添加生存警告
+func add_survival_warning(agent_name: String, satiety: int, hydration: int) -> void:
+	var warnings = []
+	if satiety <= 30:
+		warnings.append("饥饿")
+	if hydration <= 30:
+		warnings.append("口渴")
+	if satiety == 0 or hydration == 0:
+		warnings.append("危急")
+	add_event({
+		"tick": 0,
+		"agent_name": agent_name,
+		"event_type": "survival",
+		"description": "⚠️ %s（饱食:%d 水分:%d）" % [" ".join(warnings), satiety, hydration]
 	})

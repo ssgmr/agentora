@@ -974,16 +974,18 @@ fn test_rule_engine_fallback_power_attack() {
 // ===== handle_wait 测试 =====
 
 #[test]
-fn test_wait_heals() {
+fn test_wait_restores_satiety() {
     let mut world = create_test_world();
     let pos = Position::new(5, 5);
-    let (agent_id, mut agent) = create_test_agent("a1", "受伤者", pos);
-    agent.health = 50;
-    agent.max_health = 100;
+    let (agent_id, mut agent) = create_test_agent("a1", "饥饿者", pos);
+    agent.satiety = 50;
+    agent.hydration = 50;
+    agent.inventory.insert("food".to_string(), 5);
+    agent.inventory.insert("water".to_string(), 5);
     world.insert_agent_at(agent_id.clone(), agent);
 
     let action = Action {
-        reasoning: "休息".into(),
+        reasoning: "休息进食".into(),
         action_type: ActionType::Wait,
         target: None,
         params: HashMap::new(),
@@ -996,7 +998,10 @@ fn test_wait_heals() {
     assert_eq!(result, ActionResult::Success);
 
     let agent = world.agents.get(&agent_id).unwrap();
-    assert_eq!(agent.health, 55); // 50 + 5
+    assert_eq!(agent.satiety, 80); // 50 + 30
+    assert_eq!(agent.hydration, 75); // 50 + 25
+    assert_eq!(agent.inventory.get("food").copied().unwrap_or(0), 4);
+    assert_eq!(agent.inventory.get("water").copied().unwrap_or(0), 4);
 }
 
 #[test]

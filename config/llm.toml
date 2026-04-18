@@ -6,7 +6,7 @@
 provider = "openai"
 api_base = "http://localhost:1234"
 api_key = ""  # 本地LLM通常不需要真实key
-model = "gemma-4-e4b-it"
+model = "gemma-4-e2b-it"
 timeout_seconds = 30
 
 # Anthropic兼容端点 (备用)
@@ -14,7 +14,7 @@ timeout_seconds = 30
 provider = "anthropic"
 api_base = "http://localhost:1234"
 api_key = ""
-model = "gemma-4-e4b-it"
+model = "gemma-4-e2b-it"
 timeout_seconds = 300
 
 # 决策配置

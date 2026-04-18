@@ -84,7 +84,7 @@ fn make_test_trade(offer: ResourceType, offer_amount: u32, want: ResourceType, w
 #[test]
 fn test_accept_trade_sufficient_resources() {
     let mut acceptor = Agent::new(AgentId::default(), "acceptor".into(), Position::new(0, 0));
-    // 给予足够资源来接受交易
+    // 给予足够资源来接受交易（初始已有 food=3，再加 10）
     acceptor.gather(ResourceType::Food, 10);
 
     let trade = make_test_trade(ResourceType::Wood, 5, ResourceType::Food, 3);
@@ -94,8 +94,8 @@ fn test_accept_trade_sufficient_resources() {
     proposer_inv.insert("wood".to_string(), 10);
 
     assert!(acceptor.accept_trade(&trade, &proposer_inv));
-    // acceptor 付出3 food, 获得5 wood
-    assert_eq!(acceptor.inventory.get("food").copied().unwrap_or(0), 7);
+    // acceptor 初始 food=3, gather +10 = 13, 付出 3 后剩余 10
+    assert_eq!(acceptor.inventory.get("food").copied().unwrap_or(0), 10);
     assert_eq!(acceptor.inventory.get("wood").copied().unwrap_or(0), 5);
 }
 
