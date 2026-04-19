@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use crate::types::PersonalityTemplate;
 
 /// WorldSeed.toml配置结构
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -29,6 +30,10 @@ pub struct WorldSeed {
 
     /// 压力池配置
     pub pressure_config: PressureConfig,
+
+    /// Agent性格配置（任务 2.3）
+    #[serde(default)]
+    pub agent_personalities: AgentPersonalities,
 }
 
 impl Default for WorldSeed {
@@ -48,6 +53,7 @@ impl Default for WorldSeed {
             spawn_strategy: "scattered".to_string(),
             seed_peers: vec![],
             pressure_config: PressureConfig::default(),
+            agent_personalities: AgentPersonalities::default(),
         }
     }
 }
@@ -91,6 +97,92 @@ impl Default for PressureConfig {
             resource_fluctuation: 0.3,
             climate_event_probability: 0.1,
             blockade_duration_range: [10, 30],
+        }
+    }
+}
+
+/// Agent性格配置（任务 2.3）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentPersonalities {
+    /// 性格模板字典
+    #[serde(default)]
+    pub templates: BTreeMap<String, PersonalityTemplate>,
+
+    /// 分配方式：random/default/指定模板名
+    #[serde(default = "default_assignment")]
+    pub assignment: String,
+
+    /// 默认性格（未配置或assignment=default时使用）
+    #[serde(default)]
+    pub default: PersonalityTemplate,
+}
+
+fn default_assignment() -> String {
+    "random".to_string()
+}
+
+impl Default for AgentPersonalities {
+    fn default() -> Self {
+        let mut templates = BTreeMap::new();
+
+        // 四种预设性格模板
+        templates.insert("explorer".to_string(), PersonalityTemplate {
+            openness: 0.8,
+            agreeableness: 0.3,
+            neuroticism: 0.4,
+            description: "一个好奇的探索者，喜欢发现新事物，倾向于独自行动".to_string(),
+        });
+
+        templates.insert("socializer".to_string(), PersonalityTemplate {
+            openness: 0.6,
+            agreeableness: 0.8,
+            neuroticism: 0.3,
+            description: "一个友善的交际者，喜欢与其他Agent交流，乐于合作".to_string(),
+        });
+
+        templates.insert("survivor".to_string(), PersonalityTemplate {
+            openness: 0.3,
+            agreeableness: 0.4,
+            neuroticism: 0.7,
+            description: "一个谨慎的生存者，注重自身安全，会优先储备资源".to_string(),
+        });
+
+        templates.insert("builder".to_string(), PersonalityTemplate {
+            openness: 0.5,
+            agreeableness: 0.6,
+            neuroticism: 0.3,
+            description: "一个创造者，喜欢建造建筑和留下遗产".to_string(),
+        });
+
+        Self {
+            templates,
+            assignment: "random".to_string(),
+            default: PersonalityTemplate::default(),
+        }
+    }
+}
+
+impl AgentPersonalities {
+    /// 根据assignment方式选择性格模板
+    pub fn select_template(&self) -> &PersonalityTemplate {
+        use rand::Rng;
+
+        match self.assignment.as_str() {
+            "default" => &self.default,
+            // 如果assignment是特定模板名，尝试找到它
+            name if self.templates.contains_key(name) => {
+                self.templates.get(name).unwrap()
+            },
+            // random 或未知值：随机选择
+            _ => {
+                if self.templates.is_empty() {
+                    return &self.default;
+                }
+                let mut rng = rand::thread_rng();
+                let keys: Vec<&String> = self.templates.keys().collect();
+                let idx = rng.gen_range(0..keys.len());
+                self.templates.get(keys[idx]).unwrap()
+            }
         }
     }
 }

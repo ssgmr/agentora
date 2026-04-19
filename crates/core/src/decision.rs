@@ -214,6 +214,16 @@ impl DecisionPipeline {
             })
         });
 
+        // 提取附近建筑信息（任务 1.4）
+        let nearby_structures: Vec<&str> = world_state.nearby_structures.iter()
+            .map(|s| s.structure_type.as_str())
+            .collect();
+
+        // 提取活跃压力事件（任务 1.4）
+        let active_pressures: Vec<&str> = world_state.active_pressures.iter()
+            .map(|s| s.as_str())
+            .collect();
+
         self.prompt_builder.build_decision_prompt(
             agent_id.as_str(),
             &perception_summary,
@@ -221,6 +231,11 @@ impl DecisionPipeline {
             strategy_hint.as_deref(),
             action_feedback,
             get_config().max_stack_size,
+            world_state.agent_personality.as_ref(), // 任务 2.6：性格描述
+            world_state.agent_satiety,
+            world_state.agent_hydration,
+            &nearby_structures,
+            &active_pressures,
         ) + &self.build_temp_preferences_prompt(world_state)
     }
 

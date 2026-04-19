@@ -11,7 +11,7 @@ pub mod actions;
 use crate::seed::WorldSeed;
 use crate::agent::{Agent, RelationType};
 use crate::agent::inventory::get_config as get_inventory_config;
-use crate::types::{AgentId, Position, ActionType, Action, TerrainType, ResourceType, StructureType};
+use crate::types::{AgentId, Position, ActionType, Action, TerrainType, ResourceType, StructureType, PersonalitySeed};
 use crate::legacy::Legacy;
 use crate::strategy::decay::{decay_all_strategies, check_deprecation, auto_delete_deprecated};
 use crate::strategy::create::{should_create_strategy, create_strategy, scan_strategy_content};
@@ -250,7 +250,20 @@ impl World {
 
             let name = format!("Agent_{}", i + 1);
 
-            let agent = Agent::new(AgentId::new(uuid::Uuid::new_v4().to_string()), name, pos);
+            let mut agent = Agent::new(AgentId::new(uuid::Uuid::new_v4().to_string()), name, pos);
+
+            // 任务 2.4：根据性格配置设置 Agent 性格
+            let template = seed.agent_personalities.select_template();
+            agent.personality = PersonalitySeed::from_template(template);
+
+            tracing::debug!(
+                "Agent {} 创建：性格 {} (open={}, agree={}, neuro={})",
+                agent.name,
+                agent.personality.description,
+                agent.personality.openness,
+                agent.personality.agreeableness,
+                agent.personality.neuroticism
+            );
 
             world.insert_agent_at(agent.id.clone(), agent);
         }
@@ -665,10 +678,37 @@ impl World {
         }
 
         if detail.starts_with("gather:") {
-            // 格式: gather:resourcexamount,remain:count
+            // 新格式: gather:resource x amount,node_remain: count,inv: old→new
             let parts = detail.strip_prefix("gather:").unwrap_or("");
+
+            // 尝试解析新格式
+            if parts.contains(",node_remain:") && parts.contains(",inv:") {
+                // 格式: resource x amount,node_remain: count,inv: old→new
+                if let Some((gather_part, rest)) = parts.split_once(",node_remain:") {
+                    let resource_amount: Vec<&str> = gather_part.split('x').collect();
+                    if resource_amount.len() == 2 {
+                        let resource = resource_amount[0].trim();
+                        if let Ok(amount) = resource_amount[1].trim().parse::<u32>() {
+                            if let Some((remain_part, inv_part)) = rest.split_once(",inv:") {
+                                if let Ok(node_remain) = remain_part.trim().parse::<u32>() {
+                                    let inv_parts: Vec<&str> = inv_part.trim().split('→').collect();
+                                    if inv_parts.len() == 2 {
+                                        if let (Ok(old_inv), Ok(new_inv)) =
+                                            (inv_parts[0].parse::<u32>(), inv_parts[1].parse::<u32>()) {
+                                            return format!(
+                                                "Gather成功：获得 {} x{}。当前位置 {} 资源剩余 x{}。背包 {} 从 x{} 增至 x{}",
+                                                resource, amount, resource, node_remain, resource, old_inv, new_inv);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 旧格式兼容: gather:resource x amount,remain: count
             if let Some((gather_part, remain_part)) = parts.split_once(",remain:") {
-                // parse resourcexamount
                 let resource_amount: Vec<&str> = gather_part.split('x').collect();
                 if resource_amount.len() == 2 {
                     let resource = resource_amount[0];
@@ -683,8 +723,28 @@ impl World {
         }
 
         if detail.starts_with("eat:") {
-            // 格式: eat:satiety=XX/100
+            // 新格式: eat:satiety+gain(before→after),food_remain=count
             let parts = detail.strip_prefix("eat:").unwrap_or("");
+
+            if parts.contains("satiety+") && parts.contains(",food_remain=") {
+                if let Some((satiety_part, remain_part)) = parts.split_once(",food_remain=") {
+                    // 解析 satiety+gain(before→after)
+                    if let Some(gain_part) = satiety_part.strip_prefix("satiety+") {
+                        let satiety_parts: Vec<&str> = gain_part.split('→').collect();
+                        if satiety_parts.len() == 2 {
+                            if let (Ok(before), Ok(after)) = (satiety_parts[0].parse::<u32>(), satiety_parts[1].parse::<u32>()) {
+                                if let Ok(food_remain) = remain_part.trim().parse::<u32>() {
+                                    return format!(
+                                        "Eat成功：消耗 food x1，饱食度+{}（从{}增至{}）。背包 food 剩余 x{}",
+                                        after - before, before, after, food_remain);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 旧格式兼容: eat:satiety=XX/100
             if let Some(satiety_str) = parts.strip_prefix("satiety=") {
                 return format!("进食成功，饱食度恢复至 {}", satiety_str);
             }
@@ -692,7 +752,28 @@ impl World {
         }
 
         if detail.starts_with("drink:") {
+            // 新格式: drink:hydration+gain(before→after),water_remain=count
             let parts = detail.strip_prefix("drink:").unwrap_or("");
+
+            if parts.contains("hydration+") && parts.contains(",water_remain=") {
+                if let Some((hydration_part, remain_part)) = parts.split_once(",water_remain=") {
+                    // 解析 hydration+gain(before→after)
+                    if let Some(gain_part) = hydration_part.strip_prefix("hydration+") {
+                        let hydration_parts: Vec<&str> = gain_part.split('→').collect();
+                        if hydration_parts.len() == 2 {
+                            if let (Ok(before), Ok(after)) = (hydration_parts[0].parse::<u32>(), hydration_parts[1].parse::<u32>()) {
+                                if let Ok(water_remain) = remain_part.trim().parse::<u32>() {
+                                    return format!(
+                                        "Drink成功：消耗 water x1，水分度+{}（从{}增至{}）。背包 water 剩余 x{}",
+                                        after - before, before, after, water_remain);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 旧格式兼容: drink:hydration=XX/100
             if let Some(hydration_str) = parts.strip_prefix("hydration=") {
                 return format!("饮水成功，水分度恢复至 {}", hydration_str);
             }

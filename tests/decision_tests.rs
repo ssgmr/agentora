@@ -294,6 +294,11 @@ fn test_prompt_truncation_under_limit() {
         Some("优先采集食物"),
         None,
         10, // stack_limit
+        None, // personality
+        80,   // agent_satiety
+        80,   // agent_hydration
+        &[],  // nearby_structures
+        &[],  // active_pressures
     );
 
     let estimated = PromptBuilder::estimate_tokens(&prompt);
@@ -315,6 +320,11 @@ fn test_prompt_memory_truncation() {
         Some("策略提示"),
         None,
         10, // stack_limit
+        None, // personality
+        80,   // agent_satiety
+        80,   // agent_hydration
+        &[],  // nearby_structures
+        &[],  // active_pressures
     );
 
     let estimated = PromptBuilder::estimate_tokens(&prompt);

@@ -98,17 +98,24 @@ impl World {
             (node.resource_type, node.is_depleted, node.current_amount)
         });
 
+        // 任务 3.4：Gather 失败反馈包含位置信息
         if node_info.is_none() {
-            return ActionResult::Blocked("脚下无资源节点".into());
+            return ActionResult::Blocked(
+                format!("当前位置({}, {}) 没有{}资源节点。请先 MoveToward 到资源位置",
+                    pos.x, pos.y, resource_key));
         }
 
         let (node_type, is_depleted, current_amount) = node_info.unwrap();
 
         if node_type != resource {
-            return ActionResult::Blocked(format!("脚下是 {:?}，不是 {:?}，无法采集", node_type, resource));
+            return ActionResult::Blocked(
+                format!("当前位置({}, {}) 是 {:?} 资源节点，不是 {:?}。请移动到正确的资源位置",
+                    pos.x, pos.y, node_type, resource));
         }
         if is_depleted {
-            return ActionResult::Blocked("资源节点已枯竭".into());
+            return ActionResult::Blocked(
+                format!("当前位置({}, {}) 的 {:?} 资源节点已枯竭。请寻找其他资源节点",
+                    pos.x, pos.y, resource));
         }
 
         // 检查压力乘数
@@ -118,7 +125,9 @@ impl World {
         let gather_amount = 2u32;
         let actual_gather = if current_amount >= gather_amount { gather_amount } else { current_amount };
         if actual_gather == 0 {
-            return ActionResult::Blocked("资源不足，无法采集".into());
+            return ActionResult::Blocked(
+                format!("当前位置({}, {}) 的 {:?} 资源存量不足（剩余0）。请寻找其他资源节点",
+                    pos.x, pos.y, resource));
         }
 
         let gathered = if multiplier < 1.0 {
@@ -135,7 +144,9 @@ impl World {
         let limit = effective_limit as u32;
 
         if current_inv + gathered > limit {
-            return ActionResult::Blocked(format!("{} 已满（当前 x{}，上限 {}）", resource_key, current_inv, limit));
+            return ActionResult::Blocked(
+                format!("{} 已满（当前 x{}，上限 {}）。请先消耗或存储",
+                    resource_key, current_inv, limit));
         }
 
         // 执行更新：先更新节点，再更新库存
@@ -146,16 +157,18 @@ impl World {
             node.current_amount
         };
 
-        // 更新库存
+        // 更新库存（任务 3.6：记录背包变化）
+        let new_inv = current_inv + gathered;
         let agent = self.agents.get_mut(agent_id).unwrap();
-        agent.inventory.insert(resource_key.clone(), current_inv + gathered);
+        agent.inventory.insert(resource_key.clone(), new_inv);
 
         // 记录事件（使用 NarrativeBuilder）
         self.record_event(agent_id, &agent_name, EventType::Gather.as_str(),
             &builder.gather(resource, gathered), EventType::Gather.color_code());
 
-        ActionResult::SuccessWithDetail(format!("gather:{}x{},remain:{}",
-            resource_key, gathered, remain_amount))
+        // 任务 3.6：Gather 成功反馈包含资源剩余和背包变化
+        ActionResult::SuccessWithDetail(format!("gather:{}x{},node_remain:{},inv:{}→{}",
+            resource_key, gathered, remain_amount, current_inv, new_inv))
     }
 
     // ===== Wait =====
@@ -175,19 +188,31 @@ impl World {
         let agent_name = agent.name.clone();
         let builder = NarrativeBuilder::new(agent_name.clone());
 
-        if agent.inventory.get("food").copied().unwrap_or(0) > 0 {
+        let food_count = agent.inventory.get("food").copied().unwrap_or(0);
+        if food_count > 0 {
+            // 记录进食前的饱食度（任务 3.6）
+            let satiety_before = agent.satiety;
             *agent.inventory.get_mut("food").unwrap() -= 1;
             if agent.inventory["food"] == 0 {
                 agent.inventory.remove("food");
             }
             agent.satiety = (agent.satiety + 30).min(100);
             let new_satiety = agent.satiety;
+            let food_remaining = agent.inventory.get("food").copied().unwrap_or(0);
 
             self.record_event(agent_id, &agent_name, EventType::Eat.as_str(),
                 &builder.eat(30), EventType::Eat.color_code());
-            ActionResult::SuccessWithDetail(format!("eat:satiety={}/100", new_satiety))
+            // 任务 3.6：Eat 成功反馈包含饱食度变化和背包剩余
+            ActionResult::SuccessWithDetail(format!("eat:satiety+{}({}→{}),food_remain={}",
+                new_satiety - satiety_before, satiety_before, new_satiety, food_remaining))
         } else {
-            ActionResult::Blocked("背包中没有食物".into())
+            // 任务 3.3：Eat 失败反馈包含背包状态
+            let inventory_str: Vec<String> = agent.inventory.iter()
+                .map(|(r, n)| format!("{} x{}", r, n))
+                .collect();
+            ActionResult::Blocked(
+                format!("背包中没有food。当前背包：{}",
+                    if inventory_str.is_empty() { "空".to_string() } else { inventory_str.join(", ") }))
         }
     }
 
@@ -197,19 +222,31 @@ impl World {
         let agent_name = agent.name.clone();
         let builder = NarrativeBuilder::new(agent_name.clone());
 
-        if agent.inventory.get("water").copied().unwrap_or(0) > 0 {
+        let water_count = agent.inventory.get("water").copied().unwrap_or(0);
+        if water_count > 0 {
+            // 记录饮水前的水分度（任务 3.6）
+            let hydration_before = agent.hydration;
             *agent.inventory.get_mut("water").unwrap() -= 1;
             if agent.inventory["water"] == 0 {
                 agent.inventory.remove("water");
             }
             agent.hydration = (agent.hydration + 25).min(100);
             let new_hydration = agent.hydration;
+            let water_remaining = agent.inventory.get("water").copied().unwrap_or(0);
 
             self.record_event(agent_id, &agent_name, EventType::Drink.as_str(),
                 &builder.drink(25), EventType::Drink.color_code());
-            ActionResult::SuccessWithDetail(format!("drink:hydration={}/100", new_hydration))
+            // 任务 3.6：Drink 成功反馈包含水分度变化和背包剩余
+            ActionResult::SuccessWithDetail(format!("drink:hydration+{}({}→{}),water_remain={}",
+                new_hydration - hydration_before, hydration_before, new_hydration, water_remaining))
         } else {
-            ActionResult::Blocked("背包中没有水源".into())
+            // 任务 3.3：Drink 失败反馈包含背包状态
+            let inventory_str: Vec<String> = agent.inventory.iter()
+                .map(|(r, n)| format!("{} x{}", r, n))
+                .collect();
+            ActionResult::Blocked(
+                format!("背包中没有water。当前背包：{}",
+                    if inventory_str.is_empty() { "空".to_string() } else { inventory_str.join(", ") }))
         }
     }
 
@@ -221,17 +258,35 @@ impl World {
         let pos = agent.position;
 
         if self.structures.contains_key(&pos) {
-            return ActionResult::Blocked("目标位置已有建筑".into());
+            return ActionResult::Blocked("目标位置已有建筑，无法在此建造".into());
         }
 
         let cost = structure.resource_cost();
-        for (resource, amount) in &cost {
-            let key = resource.as_str();
-            let current = *agent.inventory.get(key).unwrap_or(&0);
-            if current < *amount {
-                return ActionResult::Blocked(
-                    format!("资源不足，需要 {} x{}，实际有 {}", key, amount, current));
-            }
+        // 检查所有资源是否足够
+        let insufficient: Vec<(String, u32, u32)> = cost.iter()
+            .filter_map(|(resource, required)| {
+                let key = resource.as_str();
+                let current = *agent.inventory.get(key).unwrap_or(&0);
+                if current < *required {
+                    Some((key.to_string(), *required, current))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if !insufficient.is_empty() {
+            // 任务 3.2：生成详细的资源不足反馈
+            let required_str: Vec<String> = cost.iter()
+                .map(|(r, n)| format!("{} x{}", r.as_str(), n))
+                .collect();
+            let inventory_str: Vec<String> = agent.inventory.iter()
+                .map(|(r, n)| format!("{} x{}", r, n))
+                .collect();
+            return ActionResult::Blocked(
+                format!("资源不足。需要 {}，背包中只有 {}",
+                    required_str.join(" + "),
+                    if inventory_str.is_empty() { "空背包".to_string() } else { inventory_str.join(" + ") }));
         }
 
         for (resource, amount) in &cost {
@@ -248,6 +303,7 @@ impl World {
 
     // ===== Attack =====
     pub fn handle_attack(&mut self, agent_id: &AgentId, target_id: AgentId) -> ActionResult {
+        let agent_pos = self.agents.get(agent_id).unwrap().position;
         let (agent_name, target_name) = {
             let agent = self.agents.get(agent_id).unwrap();
             let target_name = self.agents.get(&target_id).map(|a| a.name.clone()).unwrap_or_default();
@@ -255,8 +311,35 @@ impl World {
         };
         let builder = NarrativeBuilder::new(agent_name.clone());
 
+        // 目标不存在检查
+        if !self.agents.contains_key(&target_id) {
+            return ActionResult::Blocked(
+                format!("Attack失败：目标Agent {} 不存在", target_id.as_str()));
+        }
+
+        // 目标死亡检查
         if !self.agents.get(&target_id).map(|a| a.is_alive).unwrap_or(false) {
-            return ActionResult::Blocked("目标不存在或已死亡".into());
+            return ActionResult::Blocked(
+                format!("Attack失败：目标Agent {} 已死亡", target_name));
+        }
+
+        // 任务 3.5：距离限制检查
+        let target_pos = self.agents.get(&target_id).unwrap().position;
+        let distance = agent_pos.manhattan_distance(&target_pos);
+        if distance > 1 {
+            return ActionResult::Blocked(
+                format!("Attack失败：目标Agent {} 距离过远（距离{}格）。Attack只能对相邻格Agent执行",
+                    target_name, distance));
+        }
+
+        // 任务 3.5：盟友关系检查
+        let is_ally = self.agents.get(agent_id)
+            .and_then(|a| a.relations.get(&target_id))
+            .map(|r| r.relation_type == RelationType::Ally)
+            .unwrap_or(false);
+        if is_ally {
+            return ActionResult::Blocked(
+                format!("Attack失败：不能攻击盟友Agent {}。若要攻击，需先解除盟约", target_name));
         }
 
         let damage = 10;

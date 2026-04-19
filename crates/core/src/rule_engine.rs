@@ -1,7 +1,7 @@
 //! 规则引擎：硬约束过滤、动作校验、LLM 不可用时的生存兜底
 
 use crate::decision::ActionCandidate;
-use crate::types::{ActionType, AgentId, Position, TerrainType, ResourceType, StructureType};
+use crate::types::{ActionType, AgentId, Position, TerrainType, ResourceType, StructureType, PersonalitySeed};
 use crate::vision::{NearbyAgentInfo, NearbyStructureInfo, NearbyLegacyInfo};
 use std::collections::{HashMap, HashSet};
 
@@ -26,6 +26,8 @@ pub struct WorldState {
     pub last_move_direction: Option<crate::types::Direction>,
     /// 临时偏好（来自引导面板等）
     pub temp_preferences: Vec<(String, f32, u32)>, // (key, boost, remaining_ticks)
+    /// Agent性格描述（用于Prompt注入，任务 2.6）
+    pub agent_personality: Option<PersonalitySeed>,
 }
 
 impl Default for WorldState {
@@ -46,6 +48,7 @@ impl Default for WorldState {
             active_pressures: Vec::new(),
             last_move_direction: None,
             temp_preferences: Vec::new(),
+            agent_personality: None,
         }
     }
 }
@@ -237,40 +240,73 @@ impl RuleEngine {
         match &candidate.action_type {
             ActionType::MoveToward { target } => {
                 if target.x >= world_state.map_size || target.y >= world_state.map_size {
-                    return (false, Some(format!("移动目标({},{}) 超出地图范围", target.x, target.y)));
+                    return (false, Some(format!(
+                        "MoveToward校验失败：目标位置({}, {}) 超出地图边界（0-{}）",
+                        target.x, target.y, world_state.map_size - 1)));
                 }
                 let dist = target.manhattan_distance(&world_state.agent_position);
                 if dist != 1 {
-                    return (false, Some(format!("移动目标({},{}) 不相邻（距离={}），只能移动到相邻格", target.x, target.y, dist)));
+                    return (false, Some(format!(
+                        "MoveToward校验失败：目标({}, {}) 不相邻（距离={}格），只能移动到相邻格",
+                        target.x, target.y, dist)));
                 }
-                // 所有地形均可通行，不再校验地形阻挡
                 (true, None)
             }
             ActionType::Gather { resource } => {
-                match world_state.resources_at.get(&world_state.agent_position) {
-                    Some((rt, _)) if rt.as_str() == resource.as_str() => (true, None),
-                    Some((rt, _)) => (false, Some(format!("当前位置没有 {:?} 资源（只有 {:?}）", resource, rt))),
-                    None => (false, Some("当前位置没有资源，无法采集".to_string())),
+                let pos = world_state.agent_position;
+                match world_state.resources_at.get(&pos) {
+                    Some((rt, amount)) if rt.as_str() == resource.as_str() => {
+                        if *amount == 0 {
+                            return (false, Some(format!(
+                                "Gather校验失败：当前位置({}, {}) 的 {:?} 资源已耗尽。请寻找其他资源节点",
+                                pos.x, pos.y, resource)));
+                        }
+                        (true, None)
+                    },
+                    Some((rt, _)) => (false, Some(format!(
+                        "Gather校验失败：当前位置({}, {}) 是 {:?} 资源节点，不是 {:?}。请移动到正确的资源位置",
+                        pos.x, pos.y, rt, resource))),
+                    None => (false, Some(format!(
+                        "Gather校验失败：当前位置({}, {}) 没有 {:?} 资源节点。请先 MoveToward 到资源位置",
+                        pos.x, pos.y, resource))),
                 }
             }
             ActionType::Build { structure } => {
                 if self.can_build(*structure, world_state) {
                     (true, None)
                 } else {
+                    // 任务 3.7：返回完整资源差异
                     let cost = structure.resource_cost();
-                    let missing: Vec<_> = cost.iter()
-                        .filter(|(r, amount)| world_state.agent_inventory.get(r).unwrap_or(&0) < amount)
-                        .map(|(r, amount)| format!("{:?}x{}", r, amount))
+                    let required_str: Vec<String> = cost.iter()
+                        .map(|(r, n)| format!("{} x{}", r.as_str(), n))
                         .collect();
-                    (false, Some(format!("缺少建造材料：{}", missing.join(", "))))
+                    let inventory_str: Vec<String> = world_state.agent_inventory.iter()
+                        .map(|(r, n)| format!("{} x{}", r.as_str(), n))
+                        .collect();
+                    (false, Some(format!(
+                        "Build校验失败：资源不足。需要 {}，背包只有 {}",
+                        required_str.join(" + "),
+                        if inventory_str.is_empty() { "空背包".to_string() } else { inventory_str.join(" + ") })))
                 }
             }
             ActionType::Attack { target_id } => {
                 if *target_id == world_state.self_id {
-                    (false, Some("不能攻击自己".to_string()))
+                    (false, Some("Attack校验失败：不能攻击自己".to_string()))
                 } else if !world_state.existing_agents.contains(target_id) {
-                    (false, Some(format!("攻击目标 {:?} 不存在", target_id)))
+                    (false, Some(format!("Attack校验失败：目标Agent {:?} 不存在", target_id)))
                 } else {
+                    // 任务 3.5：检查距离限制
+                    let target_pos = world_state.nearby_agents.iter()
+                        .find(|a| a.id == *target_id)
+                        .map(|a| a.position);
+                    if let Some(pos) = target_pos {
+                        let distance = world_state.agent_position.manhattan_distance(&pos);
+                        if distance > 1 {
+                            return (false, Some(format!(
+                                "Attack校验失败：目标Agent距离过远（距离{}格）。Attack只能对相邻格Agent执行",
+                                distance)));
+                        }
+                    }
                     (true, None)
                 }
             }
@@ -279,12 +315,15 @@ impl RuleEngine {
             }
             ActionType::TradeOffer { offer, target_id, .. } => {
                 for (resource, amount) in offer {
-                    if world_state.agent_inventory.get(resource).unwrap_or(&0) < amount {
-                        return (false, Some(format!("背包中没有足够的 {:?} 用于交易", resource)));
+                    let available = world_state.agent_inventory.get(resource).copied().unwrap_or(0);
+                    if available < *amount {
+                        return (false, Some(format!(
+                            "TradeOffer校验失败：背包资源不足。Offer需要 {} x{}，背包只有 {} x{}",
+                            resource.as_str(), amount, resource.as_str(), available)));
                     }
                 }
                 if !world_state.existing_agents.contains(target_id) {
-                    (false, Some(format!("交易目标 {:?} 不存在", target_id)))
+                    (false, Some(format!("TradeOffer校验失败：交易目标 {:?} 不存在", target_id)))
                 } else {
                     (true, None)
                 }
@@ -294,7 +333,7 @@ impl RuleEngine {
             }
             ActionType::AllyPropose { target_id } | ActionType::AllyAccept { ally_id: target_id } | ActionType::AllyReject { ally_id: target_id } => {
                 if !world_state.existing_agents.contains(target_id) {
-                    (false, Some(format!("结盟目标 {:?} 不存在", target_id)))
+                    (false, Some(format!("结盟校验失败：目标 {:?} 不存在", target_id)))
                 } else {
                     (true, None)
                 }
@@ -306,17 +345,31 @@ impl RuleEngine {
                 (true, None)
             }
             ActionType::Eat => {
-                if world_state.agent_inventory.get(&ResourceType::Food).unwrap_or(&0) > &0 {
+                let food_count = world_state.agent_inventory.get(&ResourceType::Food).copied().unwrap_or(0);
+                if food_count > 0 {
                     (true, None)
                 } else {
-                    (false, Some("背包中没有食物，无法进食".to_string()))
+                    // 任务 3.7：返回背包状态详情
+                    let inventory_str: Vec<String> = world_state.agent_inventory.iter()
+                        .map(|(r, n)| format!("{} x{}", r.as_str(), n))
+                        .collect();
+                    (false, Some(format!(
+                        "Eat校验失败：背包中没有food。当前背包：{}",
+                        if inventory_str.is_empty() { "空".to_string() } else { inventory_str.join(", ") })))
                 }
             }
             ActionType::Drink => {
-                if world_state.agent_inventory.get(&ResourceType::Water).unwrap_or(&0) > &0 {
+                let water_count = world_state.agent_inventory.get(&ResourceType::Water).copied().unwrap_or(0);
+                if water_count > 0 {
                     (true, None)
                 } else {
-                    (false, Some("背包中没有水，无法饮水".to_string()))
+                    // 任务 3.7：返回背包状态详情
+                    let inventory_str: Vec<String> = world_state.agent_inventory.iter()
+                        .map(|(r, n)| format!("{} x{}", r.as_str(), n))
+                        .collect();
+                    (false, Some(format!(
+                        "Drink校验失败：背包中没有water。当前背包：{}",
+                        if inventory_str.is_empty() { "空".to_string() } else { inventory_str.join(", ") })))
                 }
             }
             ActionType::InteractLegacy { .. } => {

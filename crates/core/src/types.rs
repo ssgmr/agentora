@@ -143,6 +143,15 @@ impl StructureType {
             }
         }
     }
+
+    /// 获取结构类型名称字符串
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            StructureType::Camp => "Camp",
+            StructureType::Fence => "Fence",
+            StructureType::Warehouse => "Warehouse",
+        }
+    }
 }
 
 /// 动作类型枚举
@@ -186,11 +195,13 @@ pub struct Action {
 }
 
 /// 人格种子（大五人格三维）
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersonalitySeed {
     pub openness: f32,       // 开放性 [0.0, 1.0]
     pub agreeableness: f32,  // 宜人性 [0.0, 1.0]
     pub neuroticism: f32,    // 神经质 [0.0, 1.0]
+    /// 性格描述文本，注入Prompt影响决策倾向（任务 2.1）
+    pub description: String,
 }
 
 impl Default for PersonalitySeed {
@@ -199,6 +210,39 @@ impl Default for PersonalitySeed {
             openness: 0.5,
             agreeableness: 0.5,
             neuroticism: 0.5,
+            description: String::new(),
+        }
+    }
+}
+
+impl PersonalitySeed {
+    /// 从性格模板创建（任务 2.1）
+    pub fn from_template(template: &PersonalityTemplate) -> Self {
+        Self {
+            openness: template.openness,
+            agreeableness: template.agreeableness,
+            neuroticism: template.neuroticism,
+            description: template.description.clone(),
+        }
+    }
+}
+
+/// 性格模板配置（任务 2.2）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersonalityTemplate {
+    pub openness: f32,
+    pub agreeableness: f32,
+    pub neuroticism: f32,
+    pub description: String,
+}
+
+impl Default for PersonalityTemplate {
+    fn default() -> Self {
+        Self {
+            openness: 0.5,
+            agreeableness: 0.5,
+            neuroticism: 0.5,
+            description: "一个普通的世界居民".to_string(),
         }
     }
 }

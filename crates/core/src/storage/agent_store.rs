@@ -46,6 +46,7 @@ pub fn load_agent(conn: &Connection, id: &AgentId) -> Result<Option<Agent>, rusq
             openness: f32::from_le_bytes(personality_bytes[0..4].try_into().unwrap()),
             agreeableness: f32::from_le_bytes(personality_bytes[4..8].try_into().unwrap()),
             neuroticism: f32::from_le_bytes(personality_bytes[8..12].try_into().unwrap()),
+            description: String::new(), // 从数据库加载时使用空字符串（旧数据兼容）
         };
 
         Ok(Agent {

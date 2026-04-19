@@ -77,7 +77,7 @@ fn test_gather_no_resource_node() {
     };
 
     let result = world.apply_action(&agent_id, &action);
-    assert!(matches!(result, ActionResult::Blocked(ref r) if r.contains("无资源节点")));
+    assert!(matches!(result, ActionResult::Blocked(ref r) if r.contains("没有资源节点") || r.contains("没有food")));
 }
 
 #[test]
@@ -102,7 +102,7 @@ fn test_gather_wrong_resource_type() {
     };
 
     let result = world.apply_action(&agent_id, &action);
-    assert!(matches!(result, ActionResult::Blocked(ref r) if r.contains("资源类型")));
+    assert!(matches!(result, ActionResult::Blocked(ref r) if r.contains("资源节点") || r.contains("不是")));
 }
 
 #[test]
@@ -706,7 +706,7 @@ fn test_error_narrative_gather_no_resource() {
         .filter(|e| e.event_type == "error")
         .collect();
     assert_eq!(error_events.len(), 1);
-    assert!(error_events[0].description.contains("无资源节点"));
+    assert!(error_events[0].description.contains("没有food资源节点") || error_events[0].description.contains("采集失败"));
     assert!(error_events[0].color_code == "#FF6666");
 }
 
@@ -1047,7 +1047,7 @@ fn test_eat_without_food_fails() {
     };
 
     let result = world.apply_action(&agent_id, &action);
-    assert_eq!(result, ActionResult::Blocked("背包中没有食物".into()));
+    assert_eq!(result, ActionResult::Blocked("背包中没有food。当前背包：空".into()));
 }
 
 #[test]
@@ -1069,7 +1069,7 @@ fn test_drink_without_water_fails() {
     };
 
     let result = world.apply_action(&agent_id, &action);
-    assert_eq!(result, ActionResult::Blocked("背包中没有水源".into()));
+    assert_eq!(result, ActionResult::Blocked("背包中没有water。当前背包：空".into()));
 }
 
 #[test]

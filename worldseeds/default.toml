@@ -32,3 +32,36 @@ resource_fluctuation = 0.3
 climate_event_probability = 0.1
 # 区域封锁持续时间范围 (tick)
 blockade_duration_range = [10, 30]
+
+# Agent性格配置（任务 4.1）
+[agent_personalities]
+# 性格分配方式：random / default / explorer / socializer / survivor / builder
+assignment = "random"
+
+# 默认性格（未配置或assignment=default时使用）
+default = { openness = 0.5, agreeableness = 0.5, neuroticism = 0.5, description = "一个普通的世界居民" }
+
+# 性格模板定义
+[agent_personalities.templates.explorer]
+openness = 0.8
+agreeableness = 0.3
+neuroticism = 0.4
+description = "一个好奇的探索者，喜欢发现新事物，倾向于独自行动"
+
+[agent_personalities.templates.socializer]
+openness = 0.6
+agreeableness = 0.8
+neuroticism = 0.3
+description = "一个友善的交际者，喜欢与其他Agent交流，乐于合作"
+
+[agent_personalities.templates.survivor]
+openness = 0.3
+agreeableness = 0.4
+neuroticism = 0.7
+description = "一个谨慎的生存者，注重自身安全，会优先储备资源"
+
+[agent_personalities.templates.builder]
+openness = 0.5
+agreeableness = 0.6
+neuroticism = 0.3
+description = "一个创造者，喜欢建造建筑和留下遗产"

@@ -9,7 +9,7 @@ Godot 客户端接收并渲染 Tier 2 新增的世界变化：建筑、资源变
 ### Requirement: 建筑贴图资源
 
 **WHEN** Godot 需要渲染 Structure
-**THEN** 使用 `client/assets/textures/` 下的 PNG 贴图：
+**THEN** 使用 `client/assets/textures/` 下的 PNG 贎图：
 - `structure_storage.png`
 - `structure_campfire.png`
 - `structure_fortress.png`
@@ -30,6 +30,23 @@ Godot 客户端接收并渲染 Tier 2 新增的世界变化：建筑、资源变
 
 **WHEN** 收到 `ResourceChanged` Delta
 **THEN** 更新资源节点视觉表现（数量减少 → 图标变小/变暗）
+
+### Requirement: Resource 数量标签绘制
+
+**WHEN** 世界地图渲染可见区域内的资源点
+**AND** 资源点储量 > 0
+**THEN** 系统使用 draw_string() 在资源图标右上角绘制数量文本
+**AND** 使用 ThemeDB.fallback_font 作为字体
+**AND** 字号 10，颜色白色
+**AND** 文本右对齐，宽度 20
+
+**WHEN** 收到 ResourceChanged delta 且 amount = 0
+**THEN** 系统从 _resources 字典移除该资源点
+**AND** 后续渲染不显示该资源图标和数量标签
+
+**WHEN** 收到 ResourceChanged delta 且 amount > 0
+**THEN** 系统更新 _resources 字典中对应资源点的 amount 值
+**AND** queue_redraw() 触发重绘，更新数量标签显示
 
 ### Requirement: 交易/联盟叙事
 

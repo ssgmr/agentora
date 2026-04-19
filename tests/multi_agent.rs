@@ -200,6 +200,7 @@ mod tests {
                 active_pressures: Vec::new(),
                 last_move_direction: None,
                 temp_preferences: Vec::new(),
+                agent_personality: None,
             }
         }
     }

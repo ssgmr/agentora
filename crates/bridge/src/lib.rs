@@ -8,6 +8,7 @@ use godot::init::ExtensionLibrary;
 use godot::classes::{Node, INode};
 use std::sync::mpsc::{self, Sender, Receiver};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Mutex;
 use std::sync::Once;
 
@@ -886,6 +887,9 @@ async fn run_simulation_async(
     let world_arc = Arc::new(Mutex::new(world));
     let pipeline_arc = Arc::new(pipeline);
 
+    // 共享暂停状态（Arc<AtomicBool> 跨 task 共享）
+    let is_paused = Arc::new(AtomicBool::new(false));
+
     // 初始化 Agent 并 spawn 同步决策+执行 task
     let agent_ids: Vec<AgentId>;
     {
@@ -902,8 +906,9 @@ async fn run_simulation_async(
         let aid = agent_id.clone();
         let interval = sim_config.player_decision_interval_secs;
         let vision_r = sim_config.vision_radius;
+        let pause_state = is_paused.clone();
         let handle = tokio::spawn(async move {
-            run_agent_loop(w, aid, p, delta, narrative, false, interval as u32, vision_r).await;
+            run_agent_loop(w, aid, p, delta, narrative, false, interval as u32, vision_r, pause_state).await;
         });
         _agent_handles.push(handle);
     }
@@ -918,8 +923,9 @@ async fn run_simulation_async(
         let aid = npc_id.clone();
         let interval = sim_config.npc_decision_interval_secs;
         let vision_r = sim_config.vision_radius;
+        let pause_state = is_paused.clone();
         let handle = tokio::spawn(async move {
-            run_agent_loop(w, aid, p, delta, narrative, true, interval as u32, vision_r).await;
+            run_agent_loop(w, aid, p, delta, narrative, true, interval as u32, vision_r, pause_state).await;
         });
         _agent_handles.push(handle);
     }
@@ -939,21 +945,30 @@ async fn run_simulation_async(
 
     // 定期 snapshot 兜底循环
     let w_snap = world_arc.clone();
+    let pause_snap = is_paused.clone();
     let _snap_handle = tokio::spawn(async move {
-        run_snapshot_loop(snapshot_tx, w_snap).await;
+        run_snapshot_loop(snapshot_tx, w_snap, pause_snap).await;
     });
 
-    // 命令处理循环（无限循环，不会退出）
-    let mut is_paused = false;
+    // 世界时间推进循环（tick loop）
+    let w_tick = world_arc.clone();
+    let pause_tick = is_paused.clone();
+    let tick_interval_secs = 1u64; // 默认 1 秒推进一次
+    let _tick_handle = tokio::spawn(async move {
+        run_tick_loop(w_tick, pause_tick, tick_interval_secs).await;
+    });
+
+    // 命令处理循环（使用 Arc<AtomicBool> 共享暂停状态）
     loop {
         while let Ok(cmd) = cmd_rx.try_recv() {
             match cmd {
                 SimCommand::Pause => {
-                    is_paused = !is_paused;
-                    tracing::info!("模拟暂停状态 = {}", is_paused);
+                    let current = is_paused.load(Ordering::SeqCst);
+                    is_paused.store(!current, Ordering::SeqCst);
+                    tracing::info!("模拟暂停状态 = {}", !current);
                 }
                 SimCommand::Start => {
-                    is_paused = false;
+                    is_paused.store(false, Ordering::SeqCst);
                     tracing::info!("模拟恢复运行");
                 }
                 SimCommand::SetTickInterval { seconds } => {
@@ -965,16 +980,24 @@ async fn run_simulation_async(
                     let mut world = world_arc.lock().await;
                     if let Some(agent) = world.agents.get_mut(&aid) {
                         agent.inject_preference(&key, boost, duration_ticks);
-                        tracing::info!("注入偏好 {:?} key={} boost={} duration={}",
-                            aid, key, boost, duration_ticks);
+                        tracing::info!(
+                            "✅ 注入偏好成功: {:?} key={} boost={} duration={} ticks, 当前偏好数={}",
+                            aid, key, boost, duration_ticks, agent.temp_preferences.len()
+                        );
+                        for pref in &agent.temp_preferences {
+                            tracing::debug!(
+                                "  偏好: key={} boost={} remaining={}",
+                                pref.key, pref.boost, pref.remaining_ticks
+                            );
+                        }
+                    } else {
+                        tracing::warn!(
+                            "❌ 注入偏好失败: Agent {:?} 不存在，当前 Agent 列表: {:?}",
+                            aid, world.agents.keys().collect::<Vec<_>>()
+                        );
                     }
                 }
             }
-        }
-
-        if is_paused {
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            continue;
         }
 
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -1054,6 +1077,7 @@ async fn run_agent_loop(
     is_npc: bool,
     interval_secs: u32,
     vision_radius: u32,
+    is_paused: Arc<AtomicBool>,
 ) {
     tracing::info!("[AgentLoop] Agent {:?} 启动 (is_npc={}, interval={}s, vision_radius={})", agent_id, is_npc, interval_secs, vision_radius);
 
@@ -1061,6 +1085,14 @@ async fn run_agent_loop(
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     loop {
+        interval.tick().await;
+
+        // 暂停检查：跳过决策
+        if is_paused.load(Ordering::SeqCst) {
+            tracing::trace!("[AgentLoop] Agent {:?} 暂停中，跳过决策", agent_id);
+            continue;
+        }
+
         // 检查 Agent 是否存活
         let should_continue = {
             let w = world.lock().await;
@@ -1119,6 +1151,7 @@ async fn run_agent_loop(
                 temp_preferences: agent.temp_preferences.iter()
                     .map(|p| (p.key.clone(), p.boost, p.remaining_ticks))
                     .collect(),
+                agent_personality: Some(agent.personality.clone()),
             };
 
             (agent, ws)
@@ -1345,16 +1378,63 @@ async fn run_agent_loop(
     }
 }
 
+/// 世界时间推进循环（tick loop）
+/// 定期调用 world.tick()，推进世界时间、临时偏好衰减、压力事件触发等
+async fn run_tick_loop(
+    world: Arc<Mutex<World>>,
+    is_paused: Arc<AtomicBool>,
+    tick_interval_secs: u64,
+) {
+    tracing::info!("[TickLoop] 启动，间隔={}秒", tick_interval_secs);
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(tick_interval_secs));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+    loop {
+        interval.tick().await;
+
+        // 暂停时跳过 tick
+        if is_paused.load(Ordering::SeqCst) {
+            tracing::trace!("[TickLoop] 暂停中，跳过 world.tick()");
+            continue;
+        }
+
+        // 调用 world.advance_tick() 推进世界时间
+        let tick_result = {
+            let mut w = world.lock().await;
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                w.advance_tick();
+                w.tick
+            }))
+        };
+
+        match tick_result {
+            Ok(tick) => {
+                tracing::debug!("[TickLoop] world.tick = {}", tick);
+            }
+            Err(e) => {
+                tracing::error!("[TickLoop] world.tick() panic: {:?}", e);
+            }
+        }
+    }
+}
+
 /// 定期 snapshot 兜底循环
 async fn run_snapshot_loop(
     snapshot_tx: Sender<WorldSnapshot>,
     world: Arc<Mutex<World>>,
+    is_paused: Arc<AtomicBool>,
 ) {
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
     interval.tick().await; // 跳过第一次
 
     loop {
         interval.tick().await;
+
+        // 暂停时跳过 snapshot 发送
+        if is_paused.load(Ordering::SeqCst) {
+            tracing::trace!("[SnapshotLoop] 暂停中，跳过 snapshot 发送");
+            continue;
+        }
 
         let snapshot_opt = {
             let w = world.lock().await;

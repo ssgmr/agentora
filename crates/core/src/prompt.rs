@@ -1,6 +1,278 @@
 //! Prompt 构建器
 
 use agentora_ai::config::MemoryConfig;
+use std::collections::HashMap;
+use crate::types::PersonalitySeed;
+
+// ===== 规则数值表结构体（任务 1.1）=====
+
+/// 生存消耗规则
+#[derive(Debug, Clone)]
+pub struct SurvivalRules {
+    /// 饱食度每tick下降
+    pub satiety_decay_per_tick: u32,
+    /// 水分度每tick下降
+    pub hydration_decay_per_tick: u32,
+    /// HP归零后死亡
+    pub death_on_hp_zero: bool,
+}
+
+impl Default for SurvivalRules {
+    fn default() -> Self {
+        Self {
+            satiety_decay_per_tick: 1,
+            hydration_decay_per_tick: 1,
+            death_on_hp_zero: true,
+        }
+    }
+}
+
+/// 资源恢复规则
+#[derive(Debug, Clone)]
+pub struct RecoveryRules {
+    /// Eat恢复饱食度
+    pub eat_satiety_gain: u32,
+    /// Drink恢复水分度
+    pub drink_hydration_gain: u32,
+    /// Eat需要食物数量
+    pub eat_requires_food: u32,
+    /// Drink需要水数量
+    pub drink_requires_water: u32,
+}
+
+impl Default for RecoveryRules {
+    fn default() -> Self {
+        Self {
+            eat_satiety_gain: 30,
+            drink_hydration_gain: 25,
+            eat_requires_food: 1,
+            drink_requires_water: 1,
+        }
+    }
+}
+
+/// 采集规则
+#[derive(Debug, Clone)]
+pub struct GatherRules {
+    /// 每次采集获得数量
+    pub gather_amount: u32,
+    /// 资源枯竭阈值
+    pub depleted_threshold: u32,
+}
+
+impl Default for GatherRules {
+    fn default() -> Self {
+        Self {
+            gather_amount: 2,
+            depleted_threshold: 0,
+        }
+    }
+}
+
+/// 库存规则
+#[derive(Debug, Clone)]
+pub struct InventoryRules {
+    /// 默认背包堆叠上限
+    pub default_stack_limit: u32,
+    /// 仓库附近堆叠上限
+    pub warehouse_stack_limit: u32,
+}
+
+impl Default for InventoryRules {
+    fn default() -> Self {
+        Self {
+            default_stack_limit: 20,
+            warehouse_stack_limit: 40,
+        }
+    }
+}
+
+/// 建筑规则
+#[derive(Debug, Clone)]
+pub struct StructureRules {
+    /// Camp建造消耗
+    pub camp_cost: HashMap<String, u32>,
+    /// Fence建造消耗
+    pub fence_cost: HashMap<String, u32>,
+    /// Warehouse建造消耗
+    pub warehouse_cost: HashMap<String, u32>,
+    /// Camp每tick恢复HP
+    pub camp_heal_per_tick: u32,
+    /// Camp覆盖范围（曼哈顿距离）
+    pub camp_range: u32,
+}
+
+impl Default for StructureRules {
+    fn default() -> Self {
+        Self {
+            camp_cost: HashMap::from([
+                ("wood".to_string(), 5),
+                ("stone".to_string(), 2),
+            ]),
+            fence_cost: HashMap::from([
+                ("wood".to_string(), 2),
+            ]),
+            warehouse_cost: HashMap::from([
+                ("wood".to_string(), 10),
+                ("stone".to_string(), 5),
+            ]),
+            camp_heal_per_tick: 2,
+            camp_range: 1,
+        }
+    }
+}
+
+/// 压力事件规则
+#[derive(Debug, Clone)]
+pub struct PressureRules {
+    /// 干旱时水资源产出比例
+    pub drought_water_reduction: f32,
+    /// 丰饶时食物产出倍数
+    pub abundance_food_multiplier: f32,
+    /// 瘟疫HP损失
+    pub plague_hp_loss: u32,
+    /// 压力事件触发间隔范围
+    pub trigger_interval: (u32, u32),
+}
+
+impl Default for PressureRules {
+    fn default() -> Self {
+        Self {
+            drought_water_reduction: 0.5,
+            abundance_food_multiplier: 2.0,
+            plague_hp_loss: 20,
+            trigger_interval: (40, 80),
+        }
+    }
+}
+
+/// 规则数值表（任务 1.1）
+#[derive(Debug, Clone, Default)]
+pub struct RulesManual {
+    pub survival: SurvivalRules,
+    pub recovery: RecoveryRules,
+    pub gather: GatherRules,
+    pub inventory: InventoryRules,
+    pub structure: StructureRules,
+    pub pressure: PressureRules,
+}
+
+impl RulesManual {
+    /// 创建默认规则手册
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 构建规则说明书文本段落（任务 1.2）
+    pub fn build_rules_section(&self, agent_satiety: u32, agent_hydration: u32, nearby_structures: &[&str], active_pressures: &[&str]) -> String {
+        let mut section = String::new();
+
+        // 核心规则（始终注入）
+        section.push_str("【世界规则数值表】\n");
+
+        // 生存消耗
+        section.push_str(&format!(
+            "- 饱食度每tick下降{}，水分度每tick下降{}\n",
+            self.survival.satiety_decay_per_tick,
+            self.survival.hydration_decay_per_tick
+        ));
+        section.push_str("- 饱食度或水分度归零时，HP每tick扣减1\n");
+
+        // Eat/Drink规则
+        section.push_str(&format!(
+            "- Eat：消耗{}个food，饱食度+{}（不超过100）\n",
+            self.recovery.eat_requires_food,
+            self.recovery.eat_satiety_gain
+        ));
+        section.push_str(&format!(
+            "- Drink：消耗{}个water，水分度+{}（不超过100）\n",
+            self.recovery.drink_requires_water,
+            self.recovery.drink_hydration_gain
+        ));
+
+        // Gather规则
+        section.push_str(&format!(
+            "- Gather：每次采集获得{}个资源（需要站在资源节点上）\n",
+            self.gather.gather_amount
+        ));
+
+        // 库存规则
+        section.push_str(&format!(
+            "- 背包每种资源上限{}（Warehouse附近可达{}）\n",
+            self.inventory.default_stack_limit,
+            self.inventory.warehouse_stack_limit
+        ));
+
+        // 建筑消耗
+        let camp_cost = self.structure.camp_cost.iter()
+            .map(|(r, n)| format!("{}x{}", r, n))
+            .collect::<Vec<_>>()
+            .join("+");
+        let fence_cost = self.structure.fence_cost.iter()
+            .map(|(r, n)| format!("{}x{}", r, n))
+            .collect::<Vec<_>>()
+            .join("+");
+        let warehouse_cost = self.structure.warehouse_cost.iter()
+            .map(|(r, n)| format!("{}x{}", r, n))
+            .collect::<Vec<_>>()
+            .join("+");
+        section.push_str(&format!(
+            "- Build消耗：Camp={}，Fence={}，Warehouse={}\n",
+            camp_cost, fence_cost, warehouse_cost
+        ));
+
+        // Camp效果
+        section.push_str(&format!(
+            "- Camp效果：范围内每tick恢复{}HP（曼哈顿距离≤{}）\n",
+            self.structure.camp_heal_per_tick,
+            self.structure.camp_range
+        ));
+
+        // 扩展规则按需注入（任务 1.3）
+        // 生存紧迫提示
+        if agent_satiety <= 50 {
+            section.push_str("\n【生存紧迫提示】饱食度偏低，建议优先进食恢复\n");
+        }
+        if agent_hydration <= 50 {
+            section.push_str("\n【生存紧迫提示】水分度偏低，建议优先饮水恢复\n");
+        }
+
+        // 建筑效果说明
+        if nearby_structures.iter().any(|s| s.contains("Camp")) {
+            section.push_str(&format!(
+                "\n【建筑效果】当前位置附近有Camp，范围内每tick恢复{}HP\n",
+                self.structure.camp_heal_per_tick
+            ));
+        }
+        if nearby_structures.iter().any(|s| s.contains("Warehouse")) {
+            section.push_str(&format!(
+                "\n【建筑效果】当前位置附近有Warehouse，库存上限从{}提升到{}\n",
+                self.inventory.default_stack_limit,
+                self.inventory.warehouse_stack_limit
+            ));
+        }
+
+        // 压力事件影响
+        if !active_pressures.is_empty() {
+            section.push_str("\n【压力事件】");
+            for p in active_pressures {
+                if p.contains("干旱") {
+                    section.push_str(&format!("干旱：水资源产出{}% ", (self.pressure.drought_water_reduction * 100.0) as u32));
+                } else if p.contains("丰饶") {
+                    section.push_str(&format!("丰饶：食物产出翻倍{}x ", self.pressure.abundance_food_multiplier));
+                } else if p.contains("瘟疫") {
+                    section.push_str(&format!("瘟疫：随机Agent损失{}HP ", self.pressure.plague_hp_loss));
+                } else {
+                    section.push_str(&format!("{} ", p));
+                }
+            }
+            section.push_str("\n");
+        }
+
+        section.push_str("\n");
+        section
+    }
+}
 
 /// Prompt 构建器
 /// 组装状态值 + 感知摘要 + 记忆 + 策略参考
@@ -36,6 +308,15 @@ impl PromptBuilder {
         Self { max_tokens: 2500 }
     }
 
+    /// 构建性格描述段落（任务 2.5）
+    pub fn build_personality_section(&self, agent_name: &str, personality: &PersonalitySeed) -> String {
+        if personality.description.is_empty() {
+            format!("你是 {}，一个自主决策的 AI Agent。\n", agent_name)
+        } else {
+            format!("你是 {}，{}。\n", agent_name, personality.description)
+        }
+    }
+
     /// 估算字符串的 token 数（公共方法，供测试使用）
     /// 中文按 1.5 char/token（经验值），英文按 4 char/token
     pub fn estimate_tokens(text: &str) -> usize {
@@ -59,6 +340,8 @@ impl PromptBuilder {
     /// 2. 记忆摘要
     /// 3. 感知摘要
     /// System Prompt 和输出格式始终保留
+    ///
+    /// 任务 1.4、2.6：注入规则说明书和性格描述
     pub fn build_decision_prompt(
         &self,
         agent_name: &str,
@@ -67,25 +350,45 @@ impl PromptBuilder {
         strategy_hint: Option<&str>,
         action_feedback: Option<&str>,
         stack_limit: u32,
+        personality: Option<&PersonalitySeed>,
+        agent_satiety: u32,
+        agent_hydration: u32,
+        nearby_structures: &[&str],
+        active_pressures: &[&str],
     ) -> String {
         let warehouse_limit = stack_limit * 2;
+
+        // 构建性格描述（任务 2.6）
+        let personality_section = personality
+            .map(|p| self.build_personality_section(agent_name, p))
+            .unwrap_or_else(|| format!("你是 {}，一个自主决策的 AI Agent。\n", agent_name));
+
+        // 构建规则说明书（任务 1.4）
+        let rules_manual = RulesManual::new();
+        let rules_section = rules_manual.build_rules_section(
+            agent_satiety,
+            agent_hydration,
+            nearby_structures,
+            active_pressures,
+        );
+
         let parts = PromptParts {
             system: format!(
-                "你是 {agent_name}，一个自主决策的 AI Agent，在一个共享世界中生存。\n\
+                "{}\
                 \n\
-                世界规则：\n\
-                - 饱食度和水分度会随时间自然下降，归零时 HP 会持续扣减\n\
+                {}\
+                世界常识：\n\
                 - 当饱食度或水分度偏低时，你需要主动进食或饮水\n\
                 - 世界中有各种资源（木材、石材、铁矿、食物、水源），可以采集\n\
                 - 你可以用资源建造建筑、与其他 Agent 交易或战斗\n\
                 - 你应该根据当前状态和环境，自主决定做什么\n\
                 \n\
                 背包规则：\n\
-                - 每种资源堆叠上限 {stack_limit}（仓库建筑附近可达 {warehouse_limit}）\n\
+                - 每种资源堆叠上限 {}（仓库建筑附近可达 {}）\n\
                 - 背包中的食物(food)和水(water)可以直接用于 Eat/Drink 动作\n\
                 \n\
                 采集规则（Gather 动作）：\n\
-                - 每次采集固定获得 2 个资源（如果资源节点存量不足则取实际剩余量）\n\
+                - 每次采集固定获得 {} 个资源（如果资源节点存量不足则取实际剩余量）\n\
                 - 采集的是你**脚下所在格**的资源，必须先 MoveToward 到达资源格才能采集\n\
                 - 采集后资源节点的存量会减少， depleted 后无法继续采集\n\
                 - target 字段填写资源类型，如 \"food\" 或 \"wood\"\n\
@@ -96,6 +399,11 @@ impl PromptBuilder {
                 - 如果采集成功，你会看到采集数量和剩余量；如果失败，会有具体原因\n\
                 \n\
                 ",
+                personality_section,
+                rules_section,
+                stack_limit,
+                warehouse_limit,
+                rules_manual.gather.gather_amount,
             ),
             perception: format!("感知环境:\n{}\n\n", perception_summary),
             memory: if memory_summary.is_empty() {
@@ -213,28 +521,27 @@ impl PromptBuilder {
         s.push_str("请做出一个决策。输出格式为 JSON:\n");
         s.push_str("{\n");
         s.push_str("  \"reasoning\": \"决策理由\",\n");
-        s.push_str("  \"action_type\": \"MoveToward|Gather|Eat|Drink|TradeOffer|Talk|Attack|Build|AllyPropose|Explore|Wait\",\n");
+        s.push_str("  \"action_type\": \"MoveToward|Gather|Eat|Drink|Build|Talk|Attack|TradeOffer|TradeAccept|TradeReject|AllyPropose|AllyAccept|AllyReject|Explore|InteractLegacy|Wait\",\n");
         s.push_str("  \"target\": \"简短描述，如 \\\"Wood x134\\\" 或 Agent 名字\",\n");
         s.push_str("  \"params\": {\"direction\": \"north\"}  // MoveToward 时填写方向\n");
         s.push_str("}\n\n");
-        s.push_str("坐标系规则（重要！）：\n");
-        s.push_str("- X增大 = 向东，X减小 = 向西\n");
-        s.push_str("- Y增大 = 向南（屏幕下方），Y减小 = 向北（屏幕上方）\n");
-        s.push_str("- 例如：从 (121, 113) 到 (121, 117)，Y从113→117增大了，所以是向南，不是向北！\n");
-        s.push_str("- 相邻格信息中的方向标注是准确的，请直接参考它（如\"南(121,117): Forest\"）\n\n");
+        s.push_str("坐标系规则：X增大=东，Y增大=南。相邻格方向标注准确可直接参考。\n\n");
         s.push_str("动作说明：\n");
-        s.push_str("- MoveToward: 向相邻的一格移动。params 格式：{\"direction\": \"north\"}，支持 north/south/east/west 或 北/南/东/西\n");
-        s.push_str("  target 字段：简短描述目标，如 \\\"Wood x134\\\" 或 \\\"Water x50\\\" 或 \\\"Forest\\\"\n");
-        s.push_str("  示例：\"action_type\": \"MoveToward\", \"target\": \"Wood\", \"params\": {\"direction\": \"east\"}\n");
-        s.push_str("- Gather: 采集当前位置的资源（需要资源就在脚下），params 格式：{\"resource\": \"wood\"}\n");
-        s.push_str("- Eat: 消耗背包中的1个食物，恢复饱食度(+30)。需要 背包 中有 food\n");
-        s.push_str("- Drink: 消耗背包中的1个水，恢复水分度(+25)。需要 背包 中有 water\n");
-        s.push_str("- Talk: 与附近 Agent 对话，target 字段填 Agent 名字\n");
-        s.push_str("- Explore: 探索周边，params 格式：{\"target_region\": 区域编号}\n");
-        s.push_str("- Wait: 等待一回合，不执行任何动作\n");
-        s.push_str("决策策略：\n");
-        s.push_str("- 到达资源位置后，可以使用 Gather 采集它\n");
-        s.push_str("- 采集流程：MoveToward 靠近资源 → 到达后用 Gather 采集\n");
+        s.push_str("- MoveToward: 移动到相邻格，params: {\"direction\": \"north/south/east/west\"}\n");
+        s.push_str("- Gather: 采集脚下资源，params: {\"resource\": \"wood/food/water/iron/stone\"}\n");
+        s.push_str("- Eat: 消耗1 food，饱食度+30\n");
+        s.push_str("- Drink: 消耗1 water，水分度+25\n");
+        s.push_str("- Build: 建造建筑，params: {\"structure\": \"Camp/Fence/Warehouse\"}\n");
+        s.push_str("- Talk: 与3格内Agent对话，target填Agent名，信任+2(发起方)/+1(接收方)\n");
+        s.push_str("- Attack: 攻击1格内Agent，伤害10HP，不能攻击盟友，target填Agent名\n");
+        s.push_str("- TradeOffer: 发起交易，params: {\"offer\": {\"wood\":5}, \"want\": {\"food\":3}, \"target_id\": Agent名}\n");
+        s.push_str("- TradeAccept/TradeReject: 接受/拒绝待处理的交易\n");
+        s.push_str("- AllyPropose: 提议结盟(需信任>0.5)，target填Agent名\n");
+        s.push_str("- AllyAccept/AllyReject: 接受/拒绝结盟提议\n");
+        s.push_str("- Explore: 探索周边，随机移动1-3步\n");
+        s.push_str("- InteractLegacy: 与脚下遗产交互，params: {\"legacy_id\": 遗产ID, \"interaction\": \"Worship/Explore/Pickup\"}\n");
+        s.push_str("- Wait: 原地等待\n\n");
+        s.push_str("关系系统：trust值[-100,100]，trust>30为盟友，trust<-20为敌人。死亡Agent在脚下产生遗产，50tick后物品开始衰减。\n");
         s
     }
 
@@ -249,6 +556,32 @@ impl PromptBuilder {
     /// 获取最大 token 数
     pub fn get_max_tokens(&self) -> usize {
         self.max_tokens
+    }
+
+    /// 向后兼容的旧方法签名（不注入规则和性格）
+    #[deprecated(note = "请使用 build_decision_prompt_full 传入完整参数")]
+    pub fn build_decision_prompt_legacy(
+        &self,
+        agent_name: &str,
+        perception_summary: &str,
+        memory_summary: &str,
+        strategy_hint: Option<&str>,
+        action_feedback: Option<&str>,
+        stack_limit: u32,
+    ) -> String {
+        self.build_decision_prompt(
+            agent_name,
+            perception_summary,
+            memory_summary,
+            strategy_hint,
+            action_feedback,
+            stack_limit,
+            None,
+            100,
+            100,
+            &[],
+            &[],
+        )
     }
 }
 
