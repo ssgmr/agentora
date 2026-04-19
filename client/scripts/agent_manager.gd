@@ -14,6 +14,10 @@ var _agent_nodes: Dictionary = {}
 var _selected_agent_id: String = ""
 var _pending_deltas: Array = []
 
+# Agent 闪烁效果系统
+var _flash_agents: Dictionary = {}  # agent_id -> {"duration": float}
+var _effect_time: float = 0.0
+
 
 func _ready() -> void:
 	print("[AgentManager] Agent 管理器初始化（增量渲染模式）")
@@ -38,12 +42,18 @@ func _ready() -> void:
 
 
 func _physics_process(_delta: float) -> void:
+	# 累加效果时间
+	_effect_time += _delta
+
 	# 每帧最多处理 MAX_DELTA_PER_FRAME 个 delta，剩余留给下一帧
 	var processed = 0
 	while _pending_deltas.size() > 0 and processed < MAX_DELTA_PER_FRAME:
 		var delta_data = _pending_deltas.pop_front()
 		_process_delta(delta_data)
 		processed += 1
+
+	# 更新 Agent 闪烁效果
+	_update_flash_effects(_delta)
 
 
 func _on_agent_delta(delta_data: Dictionary) -> void:
@@ -57,6 +67,8 @@ func _process_delta(delta_data: Dictionary) -> void:
 		"agent_moved":
 			var agent_id = delta_data.get("id", "")
 			_update_or_create_agent(agent_id, delta_data)
+			# 检查是否触发闪烁（采集动作）
+			_check_and_trigger_flash(agent_id)
 
 		"agent_died":
 			var agent_id = delta_data.get("id", "")
@@ -65,6 +77,23 @@ func _process_delta(delta_data: Dictionary) -> void:
 		"agent_spawned":
 			var agent_id = delta_data.get("id", "")
 			_create_agent_node(agent_id, delta_data)
+
+
+func _check_and_trigger_flash(agent_id: String) -> void:
+	"""检查 Agent 动作并触发闪烁效果"""
+	var bridge = get_node_or_null("../../SimulationBridge")
+	if not bridge:
+		return
+
+	# 获取 Agent 详细数据
+	var agent_data = bridge.get_agent_data(agent_id)
+	if agent_data.is_empty():
+		return
+
+	# 检查当前动作是否包含 Gather
+	var current_action = agent_data.get("current_action", "")
+	if current_action.contains("Gather"):
+		flash_agent(agent_id)
 
 
 func _update_or_create_agent(agent_id: String, data: Dictionary) -> void:
@@ -80,11 +109,12 @@ func _update_or_create_agent(agent_id: String, data: Dictionary) -> void:
 		var pos: Vector2 = data.get("position", Vector2.ZERO)
 		agent_node.position = pos * 16  # 转换为像素坐标
 
-		# 更新健康值（通过 modulate 调整透明度）
-		var sprite: Sprite2D = agent_node.get_node_or_null("Sprite")
-		if sprite:
-			var health_ratio: float = float(data.get("health", 100)) / float(data.get("max_health", 100))
-			sprite.modulate.a = health_ratio
+		# 更新健康值（通过 modulate 调整透明度）- 但闪烁期间跳过
+		if not _flash_agents.has(agent_id):
+			var sprite: Sprite2D = agent_node.get_node_or_null("Sprite")
+			if sprite:
+				var health_ratio: float = float(data.get("health", 100)) / float(data.get("max_health", 100))
+				sprite.modulate.a = health_ratio
 
 		# 更新 Alive 状态
 		var is_alive: bool = data.get("is_alive", true)
@@ -233,3 +263,31 @@ func _input(event: InputEvent) -> void:
 				if bridge:
 					bridge.select_agent(agent_id)
 				break
+
+
+# ===== Agent 闪烁效果系统 =====
+
+func flash_agent(agent_id: String, duration: float = 0.3) -> void:
+	"""触发 Agent 闪烁效果"""
+	_flash_agents[agent_id] = {"duration": duration}
+
+
+func _update_flash_effects(delta: float) -> void:
+	"""更新所有 Agent 的闪烁效果"""
+	for agent_id in _flash_agents.keys():
+		var flash_data = _flash_agents[agent_id]
+		flash_data["duration"] -= delta
+
+		if flash_data["duration"] <= 0:
+			# 闪烁结束，恢复正常
+			_flash_agents.erase(agent_id)
+			if _agent_nodes.has(agent_id):
+				var sprite: Sprite2D = _agent_nodes[agent_id].get_node_or_null("Sprite")
+				if sprite:
+					sprite.modulate.a = 1.0
+		else:
+			# 闪烁中：透明度脉动（0.4~1.0）
+			if _agent_nodes.has(agent_id):
+				var sprite: Sprite2D = _agent_nodes[agent_id].get_node_or_null("Sprite")
+				if sprite:
+					sprite.modulate.a = sin(_effect_time * 8.0) * 0.3 + 0.7

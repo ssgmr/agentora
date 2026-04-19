@@ -472,7 +472,7 @@ impl World {
         // 记录旧位置
         let old_position = self.agents.get(agent_id).map(|a| a.position);
 
-        // 记录当前动作
+        // 记录当前动作的思考内容（reasoning，用于 UI 显示 Agent 的决策思路）
         self.current_actions.insert(agent_id.clone(), action.reasoning.clone());
 
         // 路由到具体 handler
@@ -506,8 +506,8 @@ impl World {
         let feedback = self.generate_action_feedback(&result, &action.action_type, old_position);
         self.agents.get_mut(agent_id).unwrap().last_action_result = Some(feedback);
 
-        // 记录上一次动作类型
-        self.agents.get_mut(agent_id).unwrap().last_action_type = Some(format!("{:?}", action.action_type));
+        // 记录上一次动作类型（简短描述）
+        self.agents.get_mut(agent_id).unwrap().last_action_type = Some(Self::action_type_to_short_desc(&action.action_type));
 
         // 经验值积累
         let xp_reward = match &action.action_type {
@@ -590,6 +590,37 @@ impl World {
             ActionResult::AgentDead => format!("{} 失败：Agent 已死亡", self.action_type_name(action_type)),
             ActionResult::InvalidAgent => format!("{} 失败：Agent 不存在", self.action_type_name(action_type)),
             ActionResult::NotImplemented => format!("{} 失败：未实现", self.action_type_name(action_type)),
+        }
+    }
+
+    /// 将动作类型转换为简短描述（用于 UI 显示）
+    fn action_type_to_short_desc(action_type: &ActionType) -> String {
+        match action_type {
+            ActionType::MoveToward { target } => {
+                format!("移动→({},{})", target.x, target.y)
+            }
+            ActionType::Gather { resource } => format!("采集 {}", resource.as_str()),
+            ActionType::Eat => "进食".to_string(),
+            ActionType::Drink => "饮水".to_string(),
+            ActionType::Build { structure } => {
+                let struct_name = match structure {
+                    crate::types::StructureType::Camp => "营地",
+                    crate::types::StructureType::Fence => "围栏",
+                    crate::types::StructureType::Warehouse => "仓库",
+                };
+                format!("建造 {}", struct_name)
+            }
+            ActionType::Attack { target_id } => format!("攻击 {}", target_id.as_str()),
+            ActionType::Talk { .. } => "对话".to_string(),
+            ActionType::Explore { .. } => "探索".to_string(),
+            ActionType::TradeOffer { .. } => "交易".to_string(),
+            ActionType::TradeAccept { .. } => "接受交易".to_string(),
+            ActionType::TradeReject { .. } => "拒绝交易".to_string(),
+            ActionType::AllyPropose { .. } => "结盟".to_string(),
+            ActionType::AllyAccept { .. } => "接受结盟".to_string(),
+            ActionType::AllyReject { .. } => "拒绝结盟".to_string(),
+            ActionType::InteractLegacy { .. } => "互动遗产".to_string(),
+            ActionType::Wait => "等待".to_string(),
         }
     }
 
@@ -769,10 +800,16 @@ impl World {
             .values()
             .filter(|a| a.is_alive)
             .map(|agent| {
-                let current_action = self.current_actions.get(&agent.id)
+                // reasoning：从 current_actions 获取（存储的是 action.reasoning）
+                let reasoning = self.current_actions.get(&agent.id)
                     .map(|s| s.as_str())
-                    .unwrap_or("等待")
+                    .unwrap_or("")
                     .to_string();
+
+                // current_action：从 agent.last_action_type 获取（已存储简短描述）
+                let current_action = agent.last_action_type.clone()
+                    .unwrap_or_else(|| if reasoning.is_empty() { "等待".to_string() } else { "思考中...".to_string() });
+
                 let action_result = agent.last_action_result.as_deref().unwrap_or("").to_string();
 
                 AgentSnapshot {
@@ -788,6 +825,7 @@ impl World {
                         .collect(),
                     current_action,
                     action_result,
+                    reasoning,
                     age: agent.age,
                     is_alive: agent.is_alive,
                     level: agent.level,

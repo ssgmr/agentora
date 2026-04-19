@@ -810,6 +810,7 @@ impl SimulationBridge {
                 dict.set("level", &(Variant::from(agent.level as i64)));
                 dict.set("current_action", &agent.current_action.clone().to_variant());
                 dict.set("action_result", &agent.action_result.clone().to_variant());
+                dict.set("reasoning", &agent.reasoning.clone().to_variant());
                 let pos = Vector2::new(agent.position.0 as f32, agent.position.1 as f32);
                 dict.set("position", &pos.to_variant());
                 let mut inv_dict: Dictionary<GString, Variant> = Dictionary::new();

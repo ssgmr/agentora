@@ -58,6 +58,9 @@ var _debug_print_done: bool = false
 # 建筑效果动画状态
 var _effect_time: float = 0.0
 
+# 默认字体（用于资源数量标签）
+var _default_font: Font = null
+
 
 func _ready() -> void:
 	print("[WorldRenderer] 世界渲染器初始化")
@@ -75,6 +78,13 @@ func _ready() -> void:
 
 	# 加载资源纹理
 	_load_resource_textures()
+
+	# 加载默认字体
+	_default_font = ThemeDB.fallback_font
+	if _default_font:
+		print("[WorldRenderer] 默认字体加载成功")
+	else:
+		push_warning("[WorldRenderer] 无法加载默认字体，资源数量标签将无法显示")
 
 	# 创建建筑 Sprite 容器
 	_structure_sprites = Node2D.new()
@@ -262,6 +272,12 @@ func _draw_resources(start_x: int, start_y: int, end_x: int, end_y: int) -> void
 			var alpha = clampf(float(amount) / 100.0, 0.3, 1.0)
 			var overlay_color = Color(color.r, color.g, color.b, alpha * 0.5)
 			draw_rect(Rect2(pos_x + offset - 2, pos_y + offset - 2, indicator_size + 4, indicator_size + 4), overlay_color)
+
+		# 绘制资源数量标签（右上角）
+		if amount > 0 and _default_font:
+			var label_pos = Vector2(pos_x + _tile_size - 2, pos_y + 2)
+			draw_string(_default_font, label_pos, str(amount),
+				HORIZONTAL_ALIGNMENT_RIGHT, 20, 10, Color.WHITE)
 
 
 func _draw_structures(start_x: int, start_y: int, end_x: int, end_y: int) -> void:

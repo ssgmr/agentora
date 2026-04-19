@@ -28,8 +28,9 @@ pub struct AgentSnapshot {
     pub satiety: u32,
     pub hydration: u32,
     pub inventory_summary: HashMap<String, u32>,
-    pub current_action: String,
+    pub current_action: String,        // 动作类型简短描述（如"移动→(134,126)"）
     pub action_result: String,
+    pub reasoning: String,             // Agent 的完整思考内容
     pub age: u32,
     pub is_alive: bool,
     pub level: u32,
