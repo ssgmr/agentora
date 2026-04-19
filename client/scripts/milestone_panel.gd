@@ -39,7 +39,7 @@ func _ready() -> void:
 	_setup_ui()
 
 	# 连接信号
-	var bridge = get_node_or_null("../../../SimulationBridge")
+	var bridge = get_node_or_null("../../../../SimulationBridge")
 	if bridge:
 		bridge.world_updated.connect(_on_world_updated)
 

@@ -60,6 +60,25 @@ impl Direction {
             Direction::West => (-1, 0),
         }
     }
+
+    /// 获取方向的中文名称
+    pub fn as_chinese(&self) -> &'static str {
+        match self {
+            Direction::North => "北",
+            Direction::South => "南",
+            Direction::East => "东",
+            Direction::West => "西",
+        }
+    }
+
+    /// 根据位移判断方向（假设每次只移动一格）
+    pub fn from_delta(dx: i32, dy: i32) -> Option<Self> {
+        if dx == 0 && dy == -1 { Some(Direction::North) }
+        else if dx == 0 && dy == 1 { Some(Direction::South) }
+        else if dx == 1 && dy == 0 { Some(Direction::East) }
+        else if dx == -1 && dy == 0 { Some(Direction::West) }
+        else { None }
+    }
 }
 
 /// 资源类型枚举

@@ -1,5 +1,6 @@
 //! 决策管道：上下文构建 → LLM 生成 → 规则校验 → 执行
 
+use crate::agent::inventory::get_config;
 use crate::types::{ActionType, AgentId, Position};
 use crate::types::ResourceType;
 use crate::rule_engine::{RuleEngine, WorldState};
@@ -219,6 +220,7 @@ impl DecisionPipeline {
             memory_summary,
             strategy_hint.as_deref(),
             action_feedback,
+            get_config().max_stack_size,
         ) + &self.build_temp_preferences_prompt(world_state)
     }
 
@@ -269,14 +271,26 @@ impl DecisionPipeline {
         // 背包信息
         if !world_state.agent_inventory.is_empty() {
             let total: u32 = world_state.agent_inventory.values().sum();
-            summary.push_str(&format!("背包（每种资源上限99，仓库附近可达198，当前合计{}）：", total));
+            let effective_limit = get_config().max_stack_size;
+            let full_items: Vec<&ResourceType> = world_state.agent_inventory.iter()
+                .filter(|(_, count)| **count >= effective_limit as u32)
+                .map(|(r, _)| r)
+                .collect();
+            let limit_note = if full_items.is_empty() {
+                format!("每种资源上限{}，仓库附近可达{}", effective_limit, effective_limit * 2)
+            } else {
+                let names: Vec<&str> = full_items.iter().map(|r| r.as_str()).collect();
+                format!("每种资源上限{}，仓库附近可达{}，{} 已满（堆叠达上限）", effective_limit, effective_limit * 2, names.join("、"))
+            };
+            summary.push_str(&format!("背包（{}，当前合计{}）：", limit_note, total));
             let items: Vec<String> = world_state.agent_inventory.iter()
                 .map(|(r, count)| format!("{} x{}", r.as_str(), count))
                 .collect();
             summary.push_str(&items.join(", "));
             summary.push('\n');
         } else {
-            summary.push_str("背包（每种资源上限99，仓库附近可达198，当前空）：\n");
+            let effective_limit = get_config().max_stack_size;
+            summary.push_str(&format!("背包（每种资源上限{}，仓库附近可达{}，当前空）：\n", effective_limit, effective_limit * 2));
         }
 
         // 活跃压力事件
@@ -555,21 +569,25 @@ impl DecisionPipeline {
         // 解析 action_type
         let action_type = self.parse_action_type(action_type_str, &json, agent_pos)
             .ok_or_else(|| {
-                // 为 MoveToward 不相邻的情况提供详细的失败原因
-                if action_type_str.starts_with("MoveToward") || action_type_str.contains("移动到") || action_type_str.contains("前往") {
-                    if let Some(target_obj) = json["params"]["target"].as_object()
-                        .or_else(|| json["target"].as_object())
+                // 为 MoveToward 解析失败提供详细的失败原因
+                if action_type_str == "MoveToward" || action_type_str == "Move" || action_type_str.contains("移动") || action_type_str.contains("前往") {
+                    // 检查 direction 字段是否存在但值无效
+                    if let Some(dir_str) = json["params"]["direction"].as_str()
+                        .or_else(|| json["direction"].as_str())
                     {
-                        if let (Some(x), Some(y)) = (
-                            target_obj.get("x").and_then(|v| v.as_u64()),
-                            target_obj.get("y").and_then(|v| v.as_u64()),
-                        ) {
-                            let pos = Position::new(x as u32, y as u32);
-                            let dist = pos.manhattan_distance(&agent_pos);
-                            return format!("MoveToward 目标 ({},{}) 不相邻（距离 {}），请从相邻格中选择坐标或使用方向（north/south/east/west）", pos.x, pos.y, dist);
+                        let valid_dirs = ["north", "south", "east", "west", "北", "南", "东", "西"];
+                        if !valid_dirs.contains(&dir_str.trim().to_lowercase().as_str()) {
+                            return format!("MoveToward 方向 '{}' 不合法，只支持 north/south/east/west（或 北/南/东/西）", dir_str);
                         }
                     }
-                    format!("MoveToward 目标解析失败")
+                    // 检查是否有 direction 字段但值为斜向
+                    if let Some(dir_str) = json["params"]["direction"].as_str() {
+                        let diagonal_dirs = ["northeast", "northwest", "southeast", "southwest", "东北", "西北", "东南", "西南"];
+                        if diagonal_dirs.contains(&dir_str.trim().to_lowercase().as_str()) {
+                            return format!("MoveToward 不支持斜向移动 '{}', 请选择单一方向（north/south/east/west）逐步移动", dir_str);
+                        }
+                    }
+                    format!("MoveToward 缺少有效的 direction 参数，请提供 north/south/east/west")
                 } else {
                     format!("未知的动作类型：{}", action_type_str)
                 }

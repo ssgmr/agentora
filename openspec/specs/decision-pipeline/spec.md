@@ -2,45 +2,33 @@
 
 ## Purpose
 
-定义 Agent 的五阶段决策管道：硬约束过滤 → 上下文构建 → LLM 生成 → 规则校验 → 动机加权选择。
+定义 Agent 的决策管道：上下文构建 → LLM 生成 → 规则校验 → 选择最终动作。
 
 ## Requirements
 
-### Requirement: 五阶段决策管道
+### Requirement: 决策管道阶段
 
-系统 SHALL 对每个 Agent 每 tick 执行五阶段决策管道：硬约束过滤 → 上下文构建 → LLM 生成 → 规则校验 → 动机加权选择。
+系统 SHALL 对每个 Agent 每 tick 执行简化的决策管道：上下文构建 → LLM 生成 → 规则校验 → 选择最终动作。
 
 #### Scenario: 完整决策流程
 
 - **WHEN** 一个 tick 开始
-- **THEN** 系统 SHALL 按顺序执行：1) 硬约束过滤 2) 上下文构建 3)LLM 生成 4) 规则校验 5) 动机加权选择
-- **AND** 每阶段 SHALL 将结果传递给下一阶段
-- **AND** 任一阶段失败 SHALL 降级到规则引擎兜底
+- **THEN** 系统 SHALL 按顺序执行：1) 上下文构建 2) LLM 生成 3) 规则校验 4) 选择最终动作
+- **AND** 规则校验失败时，SHALL 不执行动作，记录错误反馈供 LLM 下回合修正
+- **AND** LLM 不可用时，SHALL 降级到规则引擎兜底
 
-### Requirement: 硬约束过滤器
+#### Scenario: LLM 输出为最终动作
 
-系统 SHALL 在 LLM 生成前过滤掉物理上不可能的动作：超出移动范围、资源不足、目标不存在等。
+- **WHEN** LLM 返回合法动作并通过规则校验
+- **THEN** 该动作 SHALL 直接成为最终执行动作
+- **AND** 系统 SHALL 不再执行加权或随机选择
+- **AND** 系统 SHALL 不再计算点积或 softmax
 
-#### Scenario: 资源不足过滤
+#### Scenario: 多候选简化选择
 
-- **WHEN** Agent 尝试建造但材料不足
-- **THEN** 建造动作 SHALL 被硬约束过滤排除
-- **AND** 建造动作 SHALL 不在候选列表中
-
-#### Scenario: 移动范围过滤
-
-- **WHEN** Agent 尝试移动到距离>1 格的目标
-- **THEN** 该移动动作 SHALL 被过滤排除
-
-#### Scenario: 目标不存在过滤
-
-- **WHEN** Agent 尝试与不存在的 Agent 交互
-- **THEN** 该交互动作 SHALL 被过滤排除
-
-#### Scenario: 地形通行性过滤
-
-- **WHEN** Agent 尝试移动到不可通行地形（水域/山脉）
-- **THEN** 该移动动作 SHALL 被过滤排除
+- **WHEN** LLM 返回多个候选动作（未来扩展）
+- **THEN** 系统 SHALL 按顺序选择第一个通过校验的候选
+- **AND** 或 SHALL 按 LLM 提供的 confidence 分数选择最高分
 
 ### Requirement: 上下文构建器
 
@@ -49,16 +37,18 @@
 #### Scenario: Prompt 组成结构
 
 - **WHEN** 构建决策 Prompt
-- **THEN** Prompt SHALL 包含：动机向量 + Spark + 记忆摘要 + 感知摘要 + 策略提示
-- **AND** 各部分 SHALL 使用围栏标签包裹（`<chronicle-context>`, `<current-spark>`, `<strategy-context>`）
+- **THEN** Prompt SHALL 包含：System Prompt（角色设定）+ 当前状态 + 感知摘要 + 记忆摘要 + 策略参考
+- **AND** 各部分 SHALL 使用围栏标签包裹（`<chronicle-context>`, `<strategy-context>`）
 - **AND** Prompt SHALL 包含 satiety/hydration 数值及状态标签（"饥饿中"/"口渴中"/"正常"）
-- **AND** Prompt SHALL 包含当前所有活跃压力事件描述
+- **AND** Prompt SHALL 不再包含动机向量表格
+- **AND** Prompt SHALL 不再包含 Spark 信息
+- **AND** Prompt SHALL 不再包含 satisfaction 数组
 
 #### Scenario: Prompt 大小控制
 
-- **WHEN** 记忆内容过长导致总 token>2500
-- **THEN** 系统 SHALL 执行截断：先截断策略提示，再截断记忆摘要
-- **AND** 动机向量和 Spark SHALL 始终保留
+- **WHEN** 记忆内容过长导致总 token > 2500
+- **THEN** 系统 SHALL 执行截断：先截断策略提示，再截断记忆摘要，最后截断感知摘要
+- **AND** 角色设定和当前状态 SHALL 始终保留
 
 #### Scenario: 视野范围限定
 
@@ -81,13 +71,14 @@
 
 ### Requirement: LLM 候选生成
 
-系统 SHALL 将构建的 Prompt 发送给 LLM，请求生成结构化 JSON 格式的候选动作列表。
+系统 SHALL 将构建的 Prompt 发送给 LLM，请求生成结构化 JSON 格式的动作。
 
 #### Scenario: 成功生成候选
 
 - **WHEN** LLM 正常返回 JSON
-- **THEN** 系统 SHALL 解析为候选动作列表
-- **AND** 每个候选 SHALL 包含：reasoning, action_type, target, params, motivation_delta
+- **THEN** 系统 SHALL 解析为单个动作
+- **AND** 动作 SHALL 包含：reasoning, action_type, target, params
+- **AND** 动作 SHALL 不再包含 motivation_delta 字段
 
 #### Scenario: JSON 解析失败降级
 
@@ -105,19 +96,24 @@
 
 ### Requirement: 规则校验器
 
-系统 SHALL 对 LLM 生成的候选动作执行规则校验：类型合法性、参数范围、动作前置条件满足。
+系统 SHALL 对 LLM 生成的候选动作执行规则校验。校验通过后直接执行，不再进入动机加权选择阶段。
 
 #### Scenario: 合法动作通过
 
 - **WHEN** 候选动作类型已知且参数合法
 - **THEN** 动作 SHALL 通过规则校验
-- **AND** 动作 SHALL 进入动机加权选择阶段
+- **AND** 动作 SHALL 直接成为最终执行动作
 
 #### Scenario: 未知动作类型拒绝
 
 - **WHEN** 候选动作的 action_type 字段不在已知动作枚举中
 - **THEN** 系统 SHALL 拒绝该候选
-- **AND** 该候选 SHALL 不进入动机加权选择
+
+#### Scenario: 无候选通过校验
+
+- **WHEN** 所有候选均未通过规则校验
+- **THEN** 系统 SHALL 执行规则引擎的默认安全动作
+- **AND** 默认动作优先级：向最近资源移动 > 原地等待
 
 #### Scenario: 交易参数不合法
 
@@ -128,50 +124,6 @@
 
 - **WHEN** 攻击动作的目标不存在或距离>1 格
 - **THEN** 系统 SHALL 拒绝该候选
-
-### Requirement: 动机加权选择器
-
-系统 SHALL 从通过校验的候选动作中，基于动机向量加权选择最终执行动作。
-
-#### Scenario: 唯一候选直接选择
-
-- **WHEN** 仅有一个候选通过校验
-- **THEN** 该候选 SHALL 成为最终动作
-- **AND** 不执行加权计算
-
-#### Scenario: 多候选加权选择
-
-- **WHEN** 有 N 个候选（N>1）通过校验
-- **THEN** 系统 SHALL 计算每个候选的得分：`score = dot_product(candidate.motivation_delta, agent.motivation)`
-- **AND** 系统 SHALL 使用 softmax+temperature 选择最终动作
-- **AND** temperature SHALL=0.1（保留少量随机性）
-
-#### Scenario: 无候选通过校验
-
-- **WHEN** 所有候选均未通过规则校验
-- **THEN** 系统 SHALL 执行规则引擎的默认安全动作
-- **AND** 默认动作优先级：向最近资源移动 > 原地等待
-
-### Requirement: ActionCandidate 结构体
-
-系统 SHALL 定义统一的 ActionCandidate 结构体，承载 LLM 生成和规则引擎兜底的候选动作。
-
-#### Scenario: 候选动作结构
-
-- **WHEN** 定义 ActionCandidate
-- **THEN** 结构体 SHALL 包含：
-  - reasoning: String（决策理由）
-  - action_type: ActionType（动作类型）
-  - target: Option<String>（目标）
-  - params: HashMap<String, Value>（参数）
-  - motivation_delta: [f32; 6]（自评动机变化）
-  - source: CandidateSource（来源：LLM 或 RuleEngine）
-
-#### Scenario: 候选来源标记
-
-- **WHEN** 创建候选动作
-- **THEN** 系统 SHALL 标记来源（LLM / RuleEngine）
-- **AND** 来源信息 SHALL 用于统计和调试
 
 ### Requirement: 规则引擎完整校验
 
@@ -194,3 +146,37 @@
 - **WHEN** 校验交互动作
 - **THEN** 系统 SHALL 检查目标 Agent/资源是否存在
 - **AND** 目标不存在 SHALL 拒绝该动作
+
+### Requirement: ActionCandidate 结构体
+
+系统 SHALL 简化 ActionCandidate 结构体，移除 motivation_delta 和 source 字段。
+
+#### Scenario: 候选动作结构
+
+- **WHEN** 定义 ActionCandidate
+- **THEN** 结构体 SHALL 包含：
+  - reasoning: String（决策理由）
+  - action_type: ActionType（动作类型）
+  - target: Option<String>（目标）
+  - params: HashMap<String, Value>（参数）
+- **AND** 结构体 SHALL 不再包含 motivation_delta
+- **AND** 结构体 SHALL 不再包含 source
+
+### Requirement: LLM 失败兜底
+
+系统 SHALL 在 LLM Provider 不可用（未配置/超时/失败）时，使用规则引擎提供合理的默认动作。
+
+#### Scenario: LLM 不可用时的生存兜底
+
+- **WHEN** LLM Provider 不可用
+- **AND** Agent 的 satiety 或 hydration 低于 30
+- **THEN** 系统 SHALL 优先选择进食/饮水动作
+- **AND** 若背包没有食物/水源，SHALL 选择向最近资源移动
+- **AND** 若无资源可寻，SHALL 选择 Wait
+
+#### Scenario: LLM 不可用时的默认兜底
+
+- **WHEN** LLM Provider 不可用
+- **AND** Agent 状态正常
+- **THEN** 系统 SHALL 选择 Wait 作为默认动作
+- **AND** 系统 SHALL 记录降级事件到日志

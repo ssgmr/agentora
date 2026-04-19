@@ -7,6 +7,7 @@ pub mod decision;
 pub mod rule_engine;
 pub mod prompt;
 pub mod seed;
+pub mod narrative;
 
 pub mod agent;
 pub mod memory;
@@ -24,4 +25,4 @@ pub use agent::Agent;
 pub use world::World;
 pub use seed::WorldSeed;
 pub use snapshot::WorldSnapshot;
-pub use agentora_ai::config::MemoryConfig;
+pub use narrative::{NarrativeBuilder, EventType, action_type_display};

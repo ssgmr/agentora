@@ -9,7 +9,7 @@ var selected_agent_id: String = ""
 @onready var agent_count_label: Label = $UI/TopBar/AgentCount
 @onready var world_tick_label: Label = $UI/RightPanel/WorldInfo/TickLabel
 @onready var world_agent_count_label: Label = $UI/RightPanel/WorldInfo/AgentCount
-@onready var status_label: Label = $UI/RightPanel/AgentDetail/VBoxContent/StatusLabel
+@onready var status_label: Label = $UI/RightPanel/ScrollContainer/ContentVBox/AgentDetail/VBoxContent/StatusLabel
 @onready var speed_control: OptionButton = $UI/TopBar/SpeedControl
 
 
@@ -36,7 +36,7 @@ func _ready() -> void:
 
 
 func _init_name_label() -> void:
-	var agent_detail = get_node_or_null("UI/RightPanel/AgentDetail/VBoxContent")
+	var agent_detail = get_node_or_null("UI/RightPanel/ScrollContainer/ContentVBox/AgentDetail/VBoxContent")
 	if agent_detail:
 		# NameLabel 可能在场景加载时被跳过，动态创建
 		name_label = agent_detail.get_node_or_null("AgentNameLabel")

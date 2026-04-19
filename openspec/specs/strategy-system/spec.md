@@ -38,7 +38,7 @@ STRATEGY.md YAML Frontmatter 必填字段：
 - **WHEN** 创建或更新STRATEGY.md
 - **THEN** 文件 SHALL 以YAML frontmatter开头（---包裹）
 - **AND** frontmatter SHALL 包含必填字段: spark_type, success_rate, use_count, last_used_tick
-- **AND** frontmatter MAY 包含可选字段: created_tick, deprecated, motivation_delta, conditions
+- **AND** frontmatter MAY 包含可选字段: created_tick, deprecated, conditions
 
 #### Scenario: 策略内容结构
 
@@ -82,9 +82,8 @@ STRATEGY.md YAML Frontmatter 必填字段：
 
 - **WHEN** Agent执行决策后Echo反馈为"成功"
 - **AND** 决策涉及≥3个候选动作筛选
-- **AND** 动机对齐度 > 0.7（决策与动机向量高度对齐）
 - **THEN** 系统 SHALL 自动创建策略
-- **AND** 策略名 SHALL 使用本次Spark类型
+- **AND** 策略名 SHALL 使用本次Spark类型（保留 spark_type 字段，因为策略按状态模式分类仍有意义）
 
 #### Scenario: 探索发现触发创建
 
@@ -145,6 +144,14 @@ STRATEGY.md YAML Frontmatter 必填字段：
 - **WHEN** 策略被使用后Echo反馈为"成功"
 - **THEN** 系统 SHALL 更新: `success_rate = (success_rate * use_count + 1.0) / (use_count + 1)`
 - **AND** `use_count += 1`
+- **AND** 系统 SHALL 不再修改 Agent 的动机向量
+- **AND** 系统 SHALL 不再调用 motivation_link 模块
+
+#### Scenario: 策略执行失败
+
+- **WHEN** 策略执行失败
+- **THEN** 系统 SHALL 更新 success_rate
+- **AND** 系统 SHALL 不再反向调整动机向量
 
 #### Scenario: 策略废弃标记
 
@@ -174,16 +181,12 @@ STRATEGY.md YAML Frontmatter 必填字段：
 - **AND** 仅加载success_rate最高的策略（Tier 2）
 - **AND** 其他策略仅在Tier 1列表显示metadata
 
-#### Scenario: 策略内容注入Prompt
+#### Scenario: 策略内容注入 Prompt
 
 - **WHEN** 策略匹配成功
 - **THEN** 系统 SHALL 将策略内容注入Prompt，用`<strategy-context>`标签包裹
-
-#### Scenario: 策略与候选动作对齐
-
-- **WHEN** LLM生成候选动作后
-- **THEN** 系统 SHALL 计算候选与策略推荐的对齐度
-- **AND** 对齐度高的候选 SHALL 在动机加权时获得额外+0.1 boost
+- **AND** 不再计算候选与策略的动机对齐度
+- **AND** 不再基于动机对齐度给予额外 boost
 
 ### Requirement: 策略工具接口
 
@@ -209,28 +212,6 @@ STRATEGY.md YAML Frontmatter 必填字段：
 - **WHEN** action="delete"且name有效
 - **THEN** 系统 SHALL 删除策略目录
 - **AND** 仅允许删除use_count < 3或deprecated=true的策略
-
-### Requirement: 策略与动机向量联动
-
-系统 SHALL 使策略库与动机向量引擎联动，策略执行结果影响动机权重。
-
-#### Scenario: 策略成功强化动机
-
-- **WHEN** 策略执行成功（Echo正反馈）
-- **THEN** 系统 SHALL 按策略frontmatter的motivation_delta调整动机向量
-- **AND** 调整幅度 SHALL 乘以策略success_rate作为权重
-
-#### Scenario: 策略失败弱化动机
-
-- **WHEN** 策略执行失败
-- **THEN** 系统 SHALL 反向调整动机向量（motivation_delta取负）
-- **AND** 调整幅度 SHALL 乘以0.5（失败影响较小）
-
-#### Scenario: 策略创建时记录动机变化
-
-- **WHEN** 创建策略
-- **THEN** 系统 SHALL 从本次决策的Action.motivation_delta提取并记录到frontmatter
-- **AND** motivation_delta SHALL 归一化到[-0.2, +0.2]范围
 
 ## P2P同步边界
 

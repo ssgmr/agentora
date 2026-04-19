@@ -469,7 +469,7 @@ impl World {
             return ActionResult::AgentDead;
         }
 
-        // 记录旧位置（用于维护 agent_positions 反向索引）
+        // 记录旧位置
         let old_position = self.agents.get(agent_id).map(|a| a.position);
 
         // 记录当前动作
@@ -497,65 +497,28 @@ impl World {
             }
         };
 
-        // 统一处理结果：失败时生成错误叙事
+        // 失败时生成错误叙事
         if let ActionResult::Blocked(ref reason) = result {
             self.record_error_narrative(agent_id, &action.action_type, reason);
         }
 
-        // 记录上一次执行的动作类型（用于决策重复性惩罚）
-        let agent = self.agents.get_mut(agent_id).unwrap();
-        agent.last_action_type = Some(format!("{:?}", action.action_type));
+        // ===== 统一生成反馈 =====
+        let feedback = self.generate_action_feedback(&result, &action.action_type, old_position);
+        self.agents.get_mut(agent_id).unwrap().last_action_result = Some(feedback);
 
-        // 记录动作执行结果反馈（传递给 LLM）
-        // 注意：handler 可能已设置了特殊的 last_action_result（如已在目标位置），需要保留
-        // 更可靠的方式：检查 Agent 是否实际移动了
-        let agent_after = self.agents.get(agent_id).unwrap();
-        let actually_moved = old_position.map_or(false, |old| old != agent_after.position);
+        // 记录上一次动作类型
+        self.agents.get_mut(agent_id).unwrap().last_action_type = Some(format!("{:?}", action.action_type));
 
-        if !actually_moved && matches!(result, ActionResult::Success) {
-            // Agent 没有实际移动但返回成功 → handler 已设置了特殊反馈（如"已在目标位置"），保留它
-            // 不做任何操作
-        } else {
-            // 正常情况：设置标准反馈
-            let result_desc = match &result {
-                ActionResult::Success => match &action.action_type {
-                    ActionType::MoveToward { target } => {
-                        let from = old_position.unwrap_or(*target);
-                        let dir_name = crate::vision::direction_description(&from, target);
-                        format!("向{}移动到 ({}, {})", dir_name, target.x, target.y)
-                    }
-                    ActionType::Gather { resource } => {
-                        let pos = old_position.unwrap_or_else(|| self.agents.get(agent_id).unwrap().position);
-                        format!("已在当前位置 ({}, {}) 采集了 {:?}", pos.x, pos.y, resource)
-                    }
-                    _ => format!("{:?} 执行成功", action.action_type),
-                },
-                ActionResult::Blocked(reason) => match &action.action_type {
-                    ActionType::MoveToward { target } => {
-                        let from = old_position.unwrap_or(*target);
-                        let dir_name = crate::vision::direction_description(&from, target);
-                        format!("向{}移动失败，未能到达 ({}, {})。原因：{}", dir_name, target.x, target.y, reason)
-                    }
-                    _ => format!("{:?} 执行失败：{}", action.action_type, reason),
-                },
-                ActionResult::OutOfBounds => format!("{:?} 执行失败：超出地图边界", action.action_type),
-                ActionResult::AgentDead => format!("{:?} 执行失败：Agent 已死亡", action.action_type),
-                ActionResult::InvalidAgent => format!("{:?} 执行失败：Agent 不存在", action.action_type),
-                ActionResult::NotImplemented => format!("{:?} 执行失败：未实现", action.action_type),
-            };
-            self.agents.get_mut(agent_id).unwrap().last_action_result = Some(result_desc);
-        }
-
-        // 经验值积累：根据动作类型给予不同XP
+        // 经验值积累
         let xp_reward = match &action.action_type {
-            ActionType::Gather { .. } => 15,       // 采集资源
-            ActionType::Build { .. } => 25,         // 建造建筑
-            ActionType::TradeOffer { .. } => 10,    // 发起交易
-            ActionType::Attack { .. } => 20,        // 攻击
-            ActionType::AllyPropose { .. } | ActionType::AllyAccept { .. } => 15,  // 结盟
-            ActionType::InteractLegacy { .. } => 20, // 遗产交互
-            ActionType::Explore { .. } => 5,        // 探索
-            ActionType::MoveToward { .. } => 1,  // 移动
+            ActionType::Gather { .. } => 15,
+            ActionType::Build { .. } => 25,
+            ActionType::TradeOffer { .. } => 10,
+            ActionType::Attack { .. } => 20,
+            ActionType::AllyPropose { .. } | ActionType::AllyAccept { .. } => 15,
+            ActionType::InteractLegacy { .. } => 20,
+            ActionType::Explore { .. } => 5,
+            ActionType::MoveToward { .. } => 1,
             ActionType::Wait => 0,
             ActionType::Eat => 3,
             ActionType::Drink => 3,
@@ -565,48 +528,38 @@ impl World {
             ActionType::AllyReject { .. } => 0,
         };
         let leveled_up = if xp_reward > 0 {
-            let agent = self.agents.get_mut(agent_id).unwrap();
-            agent.add_experience(xp_reward)
+            self.agents.get_mut(agent_id).unwrap().add_experience(xp_reward)
         } else {
             false
         };
 
-        // 升级叙事事件
         if leveled_up {
             let agent = self.agents.get(agent_id).unwrap();
-            let level = agent.level;
-            let name = agent.name.clone();
             self.tick_events.push(NarrativeEvent {
                 tick: self.tick,
                 agent_id: agent_id.as_str().to_string(),
-                agent_name: name.clone(),
+                agent_name: agent.name.clone(),
                 event_type: "level_up".to_string(),
-                description: format!("🎉 {} 升级到等级 {}！HP上限+10", name, level),
+                description: format!("{} 升级到等级 {}！HP上限+10", agent.name, agent.level),
                 color_code: "#FF6B35".to_string(),
             });
         }
 
         // 策略创建触发检查
-        let is_success = matches!(result, ActionResult::Success);
+        let is_success = matches!(result, ActionResult::SuccessWithDetail(_) | ActionResult::AlreadyAtPosition(_));
         if is_success {
             let candidate_count = action.params.get("candidate_count")
                 .and_then(|v| v.parse::<usize>().ok())
                 .unwrap_or(3);
-
             if should_create_strategy(is_success, candidate_count) {
                 let agent = self.agents.get_mut(agent_id).unwrap();
                 let spark_type = SparkType::Explore;
                 let _ = scan_strategy_content(&action.reasoning);
-                let _ = create_strategy(
-                    &agent.strategies,
-                    spark_type,
-                    self.tick as u32,
-                    &action.reasoning,
-                );
+                let _ = create_strategy(&agent.strategies, spark_type, self.tick as u32, &action.reasoning);
             }
         }
 
-        // 统一维护 agent_positions 反向索引
+        // 维护 agent_positions 反向索引
         if let (Some(old_pos), Some(agent)) = (old_position, self.agents.get(agent_id)) {
             if old_pos != agent.position {
                 if let Some(ids) = self.agent_positions.get_mut(&old_pos) {
@@ -615,12 +568,197 @@ impl World {
                         self.agent_positions.remove(&old_pos);
                     }
                 }
-                self.agent_positions.entry(agent.position)
-                    .or_default().push(agent_id.clone());
+                self.agent_positions.entry(agent.position).or_default().push(agent_id.clone());
             }
         }
 
         result
+    }
+
+    /// 统一生成动作反馈（从 ActionResult 提取信息）
+    fn generate_action_feedback(&self, result: &ActionResult, action_type: &ActionType, old_position: Option<Position>) -> String {
+        match result {
+            ActionResult::SuccessWithDetail(detail) => {
+                // 解析 detail 格式，生成人类可读的反馈
+                self.parse_success_detail(detail, action_type, old_position)
+            }
+            ActionResult::AlreadyAtPosition(msg) => msg.clone(),
+            ActionResult::Blocked(reason) => {
+                format!("{} 失败：{}", self.action_type_name(action_type), reason)
+            }
+            ActionResult::OutOfBounds => format!("{} 失败：超出地图边界", self.action_type_name(action_type)),
+            ActionResult::AgentDead => format!("{} 失败：Agent 已死亡", self.action_type_name(action_type)),
+            ActionResult::InvalidAgent => format!("{} 失败：Agent 不存在", self.action_type_name(action_type)),
+            ActionResult::NotImplemented => format!("{} 失败：未实现", self.action_type_name(action_type)),
+        }
+    }
+
+    /// 解析成功详情，生成人类可读反馈
+    fn parse_success_detail(&self, detail: &str, action_type: &ActionType, old_position: Option<Position>) -> String {
+        // detail 格式: "动作类型:具体数据"
+        // 如 "move:121,113→(131,142)" 或 "gather:waterx2,remain:184"
+
+        if detail.starts_with("move:") {
+            // 格式: move:old_x,old_y→(new_x,new_y)
+            let parts = detail.strip_prefix("move:").unwrap_or("");
+            if let Some((old, new)) = parts.split_once("→") {
+                let old_coords: Vec<&str> = old.split(',').collect();
+                let new_coords: Vec<&str> = new.trim_matches(|c| c == '(' || c == ')').split(',').collect();
+                if old_coords.len() == 2 && new_coords.len() == 2 {
+                    if let (Ok(ox), Ok(oy), Ok(nx), Ok(ny)) = (
+                        old_coords[0].parse::<i32>(),
+                        old_coords[1].parse::<i32>(),
+                        new_coords[0].parse::<i32>(),
+                        new_coords[1].parse::<i32>(),
+                    ) {
+                        // 直接计算方向名称（不使用 direction_description）
+                        let dx = nx - ox;
+                        let dy = ny - oy;
+                        let dir_name = match (dx.cmp(&0), dy.cmp(&0)) {
+                            (std::cmp::Ordering::Greater, std::cmp::Ordering::Less) => "东北",
+                            (std::cmp::Ordering::Greater, std::cmp::Ordering::Greater) => "东南",
+                            (std::cmp::Ordering::Greater, std::cmp::Ordering::Equal) => "东",
+                            (std::cmp::Ordering::Less, std::cmp::Ordering::Less) => "西北",
+                            (std::cmp::Ordering::Less, std::cmp::Ordering::Greater) => "西南",
+                            (std::cmp::Ordering::Less, std::cmp::Ordering::Equal) => "西",
+                            (std::cmp::Ordering::Equal, std::cmp::Ordering::Greater) => "南",
+                            (std::cmp::Ordering::Equal, std::cmp::Ordering::Less) => "北",
+                            (std::cmp::Ordering::Equal, std::cmp::Ordering::Equal) => "原地",
+                        };
+                        return format!("向{}移动到 ({}, {})", dir_name, nx, ny);
+                    }
+                }
+            }
+            return format!("移动成功");
+        }
+
+        if detail.starts_with("gather:") {
+            // 格式: gather:resourcexamount,remain:count
+            let parts = detail.strip_prefix("gather:").unwrap_or("");
+            if let Some((gather_part, remain_part)) = parts.split_once(",remain:") {
+                // parse resourcexamount
+                let resource_amount: Vec<&str> = gather_part.split('x').collect();
+                if resource_amount.len() == 2 {
+                    let resource = resource_amount[0];
+                    if let Ok(amount) = resource_amount[1].parse::<u32>() {
+                        if let Ok(remain) = remain_part.parse::<u32>() {
+                            return format!("采集了 {} 个 {}，剩余 {}", amount, resource, remain);
+                        }
+                    }
+                }
+            }
+            return format!("采集成功");
+        }
+
+        if detail.starts_with("eat:") {
+            // 格式: eat:satiety=XX/100
+            let parts = detail.strip_prefix("eat:").unwrap_or("");
+            if let Some(satiety_str) = parts.strip_prefix("satiety=") {
+                return format!("进食成功，饱食度恢复至 {}", satiety_str);
+            }
+            return format!("进食成功");
+        }
+
+        if detail.starts_with("drink:") {
+            let parts = detail.strip_prefix("drink:").unwrap_or("");
+            if let Some(hydration_str) = parts.strip_prefix("hydration=") {
+                return format!("饮水成功，水分度恢复至 {}", hydration_str);
+            }
+            return format!("饮水成功");
+        }
+
+        if detail.starts_with("build:") {
+            // 格式: build:StructureTypeat(x,y)
+            let parts = detail.strip_prefix("build:").unwrap_or("");
+            if let Some((struct_part, pos_part)) = parts.split_once("at") {
+                let coords = pos_part.trim_matches(|c| c == '(' || c == ')');
+                return format!("在 {} 建造了 {}", coords, struct_part);
+            }
+            return format!("建造成功");
+        }
+
+        if detail.starts_with("attack:") {
+            // 格式: attack:target_namehit,damage=10 或 attack:target_namedefeated,damage=10
+            let parts = detail.strip_prefix("attack:").unwrap_or("");
+            if let Some((name_part, outcome)) = parts.split_once(",") {
+                if outcome.starts_with("defeated") {
+                    return format!("攻击 {} 并将其击败", name_part);
+                } else if outcome.starts_with("hit") {
+                    return format!("攻击 {}，造成 10 点伤害", name_part);
+                }
+            }
+            return format!("攻击成功");
+        }
+
+        if detail.starts_with("explore:") {
+            // 格式: explore:Nsteps,old_x,old_y→(new_x,new_y)
+            let parts = detail.strip_prefix("explore:").unwrap_or("");
+            if let Some((steps_part, _)) = parts.split_once("steps") {
+                if let Ok(steps) = steps_part.parse::<u32>() {
+                    return format!("探索了 {} 步", steps);
+                }
+            }
+            return format!("探索成功");
+        }
+
+        if detail.starts_with("talk:") {
+            let parts = detail.strip_prefix("talk:").unwrap_or("");
+            if parts == "self" {
+                return format!("自言自语");
+            }
+            return format!("与 {} 交流", parts);
+        }
+
+        if detail.starts_with("trade_offer:") {
+            let target = detail.strip_prefix("trade_offer:").unwrap_or("");
+            return format!("向 {} 发起交易请求", target);
+        }
+
+        if detail.starts_with("trade_accept:") {
+            let parts = detail.strip_prefix("trade_accept:").unwrap_or("");
+            return format!("与 {} 完成交易", parts.replace(" ↔ ", " 和 "));
+        }
+
+        if detail.starts_with("trade_reject:") {
+            let proposer = detail.strip_prefix("trade_reject:").unwrap_or("");
+            return format!("拒绝了 {} 的交易请求", proposer);
+        }
+
+        if detail.starts_with("ally_propose:") {
+            let target = detail.strip_prefix("ally_propose:").unwrap_or("");
+            return format!("向 {} 提议结盟", target);
+        }
+
+        if detail.starts_with("ally_accept:") {
+            let parts = detail.strip_prefix("ally_accept:").unwrap_or("");
+            return format!("与 {} 结成联盟", parts.replace(" ↔ ", " 和 "));
+        }
+
+        if detail.starts_with("ally_reject:") {
+            let proposer = detail.strip_prefix("ally_reject:").unwrap_or("");
+            return format!("拒绝了 {} 的结盟请求", proposer);
+        }
+
+        if detail.starts_with("legacy:") {
+            let parts = detail.strip_prefix("legacy:").unwrap_or("");
+            if parts == "worship" {
+                return format!("祭拜遗产");
+            }
+            if parts == "explore" {
+                return format!("探索遗产");
+            }
+            if parts.starts_with("pickup") {
+                return format!("拾取了 {}", parts.strip_prefix("pickup ").unwrap_or("物品"));
+            }
+            return format!("遗产交互成功");
+        }
+
+        if detail == "wait" {
+            return format!("等待了一回合");
+        }
+
+        // 兜底
+        format!("{} 执行成功", self.action_type_name(action_type))
     }
 
     /// 生成世界快照
@@ -1158,10 +1296,18 @@ impl World {
 /// 动作执行结果
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActionResult {
-    Success,
-    InvalidAgent,
-    AgentDead,
+    /// 成功，携带详细信息供反馈生成
+    SuccessWithDetail(String),
+    /// 失败，携带原因
     Blocked(String),
+    /// Agent 不存在
+    InvalidAgent,
+    /// Agent 已死亡
+    AgentDead,
+    /// 超出边界
     OutOfBounds,
+    /// 未实现
     NotImplemented,
+    /// 已在目标位置（特殊成功情况）
+    AlreadyAtPosition(String),
 }

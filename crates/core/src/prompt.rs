@@ -66,7 +66,9 @@ impl PromptBuilder {
         memory_summary: &str,
         strategy_hint: Option<&str>,
         action_feedback: Option<&str>,
+        stack_limit: u32,
     ) -> String {
+        let warehouse_limit = stack_limit * 2;
         let parts = PromptParts {
             system: format!(
                 "你是 {agent_name}，一个自主决策的 AI Agent，在一个共享世界中生存。\n\
@@ -79,7 +81,7 @@ impl PromptBuilder {
                 - 你应该根据当前状态和环境，自主决定做什么\n\
                 \n\
                 背包规则：\n\
-                - 每种资源堆叠上限 20（仓库建筑附近可达 40）\n\
+                - 每种资源堆叠上限 {stack_limit}（仓库建筑附近可达 {warehouse_limit}）\n\
                 - 背包中的食物(food)和水(water)可以直接用于 Eat/Drink 动作\n\
                 \n\
                 采集规则（Gather 动作）：\n\

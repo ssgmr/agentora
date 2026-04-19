@@ -14,7 +14,6 @@
 
 - **WHEN** Agent 执行决策后 Echo 反馈为"成功"
 - **AND** 决策涉及 ≥ 3 个候选动作筛选
-- **AND** 动机对齐度 > 0.7
 - **THEN** 系统 SHALL 自动创建策略
 - **AND** 策略名 SHALL 使用本次 Spark 类型（如 resource_pressure）
 
@@ -23,8 +22,8 @@
 - **WHEN** 创建策略
 - **THEN** 系统 SHALL 从本次决策提取：
   - reasoning：决策理由
-  - motivation_delta：动机变化（归一化到 [-0.2, +0.2]）
   - spark_type：当前 Spark 类型
+  - 相关状态值（satiety/hydration/position 等）
 
 ### Requirement: 策略创建工具
 
