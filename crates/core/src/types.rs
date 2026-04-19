@@ -95,12 +95,9 @@ pub enum TerrainType {
 }
 
 impl TerrainType {
-    /// 判断地形是否可通行
+    /// 判断地形是否可通行（所有地形均可移动）
     pub fn is_passable(&self) -> bool {
-        match self {
-            TerrainType::Plains | TerrainType::Forest | TerrainType::Desert => true,
-            TerrainType::Mountain | TerrainType::Water => false,
-        }
+        true
     }
 }
 
@@ -132,8 +129,7 @@ impl StructureType {
 /// 动作类型枚举
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ActionType {
-    Move { direction: Direction },
-    MoveToward { target: Position },  // 导航到目标位置，每次移动一格
+    MoveToward { target: Position },  // 导航到目标位置（每次移动一格，支持坐标或方向）
     Gather { resource: ResourceType },
     TradeOffer { offer: HashMap<ResourceType, u32>, want: HashMap<ResourceType, u32>, target_id: AgentId },
     TradeAccept { trade_id: String },
@@ -146,6 +142,8 @@ pub enum ActionType {
     AllyReject { ally_id: AgentId },
     Explore { target_region: u32 },
     Wait,
+    Eat,
+    Drink,
     InteractLegacy { legacy_id: String, interaction: LegacyInteraction },
 }
 
@@ -166,7 +164,6 @@ pub struct Action {
     pub params: HashMap<String, String>,
     pub build_type: Option<StructureType>,  // Build 动作专用参数
     pub direction: Option<Direction>,       // Move 动作专用参数
-    pub motivation_delta: [f32; 6],
 }
 
 /// 人格种子（大五人格三维）

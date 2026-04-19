@@ -3,8 +3,6 @@
 use agentora_core::strategy::{Strategy, StrategyHub, StrategyFrontmatter};
 use agentora_core::strategy::create::{should_create_strategy, create_strategy, scan_strategy_content};
 use agentora_core::strategy::decay::{decay_all_strategies, check_deprecation, should_auto_delete};
-use agentora_core::strategy::motivation_link::{on_strategy_success, on_strategy_failure};
-use agentora_core::motivation::MotivationVector;
 use agentora_core::decision::SparkType;
 
 /// 生成唯一 agent ID，避免持久化目录交叉污染
@@ -29,7 +27,6 @@ fn test_strategy_persistence() {
         last_used_tick: 100,
         created_tick: 50,
         deprecated: false,
-        motivation_delta: Some([0.1, -0.05, 0.02, 0.0, 0.0, 0.0]),
         content: "当资源短缺时，优先采集附近资源".to_string(),
     };
 
@@ -59,7 +56,6 @@ fn test_strategy_exists() {
         last_used_tick: 10,
         created_tick: 5,
         deprecated: false,
-        motivation_delta: None,
         content: "test".to_string(),
     };
 
@@ -70,16 +66,13 @@ fn test_strategy_exists() {
 #[test]
 fn test_should_create_strategy() {
     // 满足所有条件
-    assert!(should_create_strategy(true, 5, 0.8));
+    assert!(should_create_strategy(true, 5));
 
     // 失败决策
-    assert!(!should_create_strategy(false, 5, 0.8));
+    assert!(!should_create_strategy(false, 5));
 
     // 候选动作不足
-    assert!(!should_create_strategy(true, 2, 0.8));
-
-    // 对齐度不足
-    assert!(!should_create_strategy(true, 5, 0.5));
+    assert!(!should_create_strategy(true, 2));
 }
 
 #[test]
@@ -90,17 +83,12 @@ fn test_create_strategy() {
         &hub,
         SparkType::ResourcePressure,
         100,
-        [0.1, -0.05, 0.02, 0.0, 0.0, 0.0],
         "在资源短缺时采集附近资源",
     ).unwrap();
 
     assert_eq!(strategy.spark_type, "resource_pressure");
     assert_eq!(strategy.success_rate, 1.0);
     assert_eq!(strategy.created_tick, 100);
-
-    // 验证动机 delta 被归一化
-    let delta = strategy.motivation_delta.unwrap();
-    assert!(delta.iter().all(|d| *d >= -0.2 && *d <= 0.2));
 }
 
 #[test]
@@ -133,7 +121,6 @@ fn test_decay_all_strategies() {
         last_used_tick: 0,
         created_tick: 0,
         deprecated: false,
-        motivation_delta: None,
         content: "test".to_string(),
     };
     hub.save_strategy(&strategy).unwrap();
@@ -158,7 +145,6 @@ fn test_check_deprecation() {
         last_used_tick: 0,
         created_tick: 0,
         deprecated: false,
-        motivation_delta: None,
         content: "test".to_string(),
     };
     hub.save_strategy(&strategy).unwrap();
@@ -180,7 +166,6 @@ fn test_should_auto_delete() {
         last_used_tick: 0,
         created_tick: 0,
         deprecated: true,
-        motivation_delta: None,
     };
 
     // 100 tick 未使用，应该删除
@@ -196,54 +181,6 @@ fn test_should_auto_delete() {
 }
 
 #[test]
-fn test_motivation_link_success() {
-    let mut motivation = MotivationVector::new();
-    let strategy = Strategy {
-        spark_type: "resource_pressure".to_string(),
-        success_rate: 0.8,
-        use_count: 5,
-        last_used_tick: 100,
-        created_tick: 50,
-        deprecated: false,
-        motivation_delta: Some([0.1, -0.05, 0.02, 0.0, 0.0, 0.0]),
-        content: "test".to_string(),
-    };
-
-    let original = motivation.clone();
-    on_strategy_success(&mut motivation, &strategy);
-
-    // 验证动机被强化（按 success_rate 加权）
-    for i in 0..6 {
-        let expected_delta = strategy.motivation_delta.unwrap()[i] * strategy.success_rate;
-        assert!((motivation[i] - (original[i] + expected_delta)).abs() < 0.001);
-    }
-}
-
-#[test]
-fn test_motivation_link_failure() {
-    let mut motivation = MotivationVector::new();
-    let strategy = Strategy {
-        spark_type: "resource_pressure".to_string(),
-        success_rate: 0.8,
-        use_count: 5,
-        last_used_tick: 100,
-        created_tick: 50,
-        deprecated: false,
-        motivation_delta: Some([0.1, -0.05, 0.02, 0.0, 0.0, 0.0]),
-        content: "test".to_string(),
-    };
-
-    let original = motivation.clone();
-    on_strategy_failure(&mut motivation, &strategy);
-
-    // 验证动机被反向调整（系数 0.5）
-    for i in 0..6 {
-        let expected_delta = -strategy.motivation_delta.unwrap()[i] * 0.5;
-        assert!((motivation[i] - (original[i] + expected_delta)).abs() < 0.001);
-    }
-}
-
-#[test]
 fn test_strategy_delete() {
     let hub = StrategyHub::new(&uid("test-agent-delete"));
 
@@ -254,7 +191,6 @@ fn test_strategy_delete() {
         last_used_tick: 10,
         created_tick: 5,
         deprecated: false,
-        motivation_delta: None,
         content: "test".to_string(),
     };
 
@@ -278,7 +214,6 @@ fn test_load_all_strategies() {
             last_used_tick: 10,
             created_tick: 5,
             deprecated: false,
-            motivation_delta: None,
             content: format!("test {}", spark_type),
         };
         hub.save_strategy(&strategy).unwrap();

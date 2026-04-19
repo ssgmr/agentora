@@ -2,6 +2,7 @@
 
 entry_symbol = "agentora_bridge_init"
 compatibility_minimum = "4.6"
+reloadable = true
 
 [libraries]
 

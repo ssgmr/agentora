@@ -25,7 +25,6 @@ pub fn decay_all_strategies(hub: &StrategyHub, current_tick: u32) -> std::io::Re
                     last_used_tick: strategy_file.frontmatter.last_used_tick,
                     created_tick: strategy_file.frontmatter.created_tick,
                     deprecated: strategy_file.frontmatter.deprecated,
-                    motivation_delta: strategy_file.frontmatter.motivation_delta,
                     content: strategy_file.content.clone(),
                 };
                 hub.save_strategy(&strategy)?;
@@ -53,7 +52,6 @@ pub fn check_deprecation(hub: &StrategyHub) -> std::io::Result<Vec<String>> {
                     last_used_tick: strategy_file.frontmatter.last_used_tick,
                     created_tick: strategy_file.frontmatter.created_tick,
                     deprecated: true,
-                    motivation_delta: strategy_file.frontmatter.motivation_delta,
                     content: strategy_file.content.clone(),
                 };
                 hub.save_strategy(&strategy)?;

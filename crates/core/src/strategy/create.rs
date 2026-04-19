@@ -4,12 +4,8 @@ use crate::strategy::{Strategy, StrategyHub, StrategyFrontmatter};
 use crate::decision::SparkType;
 
 /// 策略创建条件
-pub fn should_create_strategy(
-    success: bool,
-    candidate_count: usize,
-    motivation_alignment: f32,
-) -> bool {
-    success && candidate_count >= 3 && motivation_alignment > 0.7
+pub fn should_create_strategy(success: bool, candidate_count: usize) -> bool {
+    success && candidate_count >= 3
 }
 
 /// 创建策略并保存到文件
@@ -17,19 +13,10 @@ pub fn create_strategy(
     hub: &StrategyHub,
     spark_type: SparkType,
     tick: u32,
-    motivation_delta: [f32; 6],
     reasoning: &str,
 ) -> std::io::Result<Strategy> {
-    // 归一化 motivation_delta 到 [-0.2, +0.2]
-    let normalized_delta: [f32; 6] = motivation_delta.iter()
-        .map(|d| d.clamp(-0.2, 0.2))
-        .collect::<Vec<_>>()
-        .try_into()
-        .unwrap();
-
     let spark_type_name = spark_type_name(spark_type);
 
-    // 确保目录存在
     hub.ensure_strategy_dir(&spark_type_name)?;
 
     let strategy = Strategy {
@@ -39,11 +26,9 @@ pub fn create_strategy(
         last_used_tick: tick,
         created_tick: tick,
         deprecated: false,
-        motivation_delta: Some(normalized_delta),
         content: reasoning.to_string(),
     };
 
-    // 保存到文件
     hub.save_strategy(&strategy)?;
 
     Ok(strategy)
@@ -51,7 +36,6 @@ pub fn create_strategy(
 
 /// 策略内容安全扫描
 pub fn scan_strategy_content(content: &str) -> Result<(), String> {
-    // 威胁模式检测
     let threat_patterns = [
         "ignore previous instructions",
         "you are now",
@@ -66,7 +50,6 @@ pub fn scan_strategy_content(content: &str) -> Result<(), String> {
         }
     }
 
-    // 检测不可见 Unicode 字符
     for c in content.chars() {
         match c {
             '\u{200B}' | '\u{200C}' | '\u{200D}' => {
@@ -86,7 +69,6 @@ pub fn strategy_create(
     content: &str,
     tick: u32,
 ) -> std::io::Result<Strategy> {
-    // 解析 YAML frontmatter
     let frontmatter = match parse_frontmatter(content) {
         Some(fm) => fm,
         None => return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid frontmatter")),
@@ -99,7 +81,6 @@ pub fn strategy_create(
         last_used_tick: frontmatter.last_used_tick,
         created_tick: frontmatter.created_tick,
         deprecated: frontmatter.deprecated,
-        motivation_delta: frontmatter.motivation_delta,
         content: extract_body(content),
     };
 

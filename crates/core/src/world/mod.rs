@@ -10,12 +10,12 @@ pub mod actions;
 
 use crate::seed::WorldSeed;
 use crate::agent::{Agent, RelationType};
+use crate::agent::inventory::get_config as get_inventory_config;
 use crate::types::{AgentId, Position, ActionType, Action, TerrainType, ResourceType, StructureType};
 use crate::legacy::Legacy;
 use crate::strategy::decay::{decay_all_strategies, check_deprecation, auto_delete_deprecated};
 use crate::strategy::create::{should_create_strategy, create_strategy, scan_strategy_content};
 use crate::snapshot::NarrativeEvent;
-use crate::strategy::motivation_link::{on_strategy_success, on_strategy_failure};
 use crate::decision::SparkType;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -234,9 +234,6 @@ impl World {
         let mut rng = rand::thread_rng();
         let (width, height) = map_size;
 
-        let templates: Vec<&[f32; 6]> = seed.motivation_templates.values().map(|t| &t.v).collect();
-        let template_names: Vec<&str> = seed.motivation_templates.keys().map(|s| s.as_str()).collect();
-
         for i in 0..seed.initial_agents {
             // 找一个可通行位置（出生在地图中心附近，确保相机能看到）
             let mut pos;
@@ -252,15 +249,9 @@ impl World {
                 }
             }
 
-            let template_idx = rng.gen_range(0..templates.len().max(1));
-            let name = format!("{}_{}", template_names.get(template_idx).unwrap_or(&"Agent"), i + 1);
+            let name = format!("Agent_{}", i + 1);
 
-            let mut agent = Agent::new(AgentId::new(uuid::Uuid::new_v4().to_string()), name, pos);
-
-            // 应用动机模板
-            if let Some(template) = templates.get(template_idx) {
-                agent.motivation = crate::motivation::MotivationVector::from_array(**template);
-            }
+            let agent = Agent::new(AgentId::new(uuid::Uuid::new_v4().to_string()), name, pos);
 
             world.insert_agent_at(agent.id.clone(), agent);
         }
@@ -338,15 +329,17 @@ impl World {
 
     /// 计算有效库存上限（受 Warehouse 影响）
     pub fn effective_inventory_limit_for(&self, agent_position: Position) -> usize {
-        let base: usize = 20;
+        let config = get_inventory_config();
+        let base: u32 = config.max_stack_size;
+        let multiplier = config.warehouse_limit_multiplier;
         for (_, structure) in &self.structures {
             if structure.structure_type == StructureType::Warehouse {
                 if agent_position.manhattan_distance(&structure.position) <= 1 {
-                    return base + 20; // Warehouse 范围内上限 40
+                    return (base * multiplier) as usize; // 仓库附近上限翻倍
                 }
             }
         }
-        base
+        base as usize
     }
 
     /// 推进 tick
@@ -358,11 +351,6 @@ impl World {
 
         // 建筑效果 tick
         self.structure_effects_tick();
-
-        // 动机惯性衰减（向中性值 0.5 收敛）
-        for (_, agent) in self.agents.iter_mut() {
-            agent.motivation.decay();
-        }
 
         // 更新所有存活 Agent 的临时偏好
         for (_, agent) in self.agents.iter_mut() {
@@ -489,10 +477,11 @@ impl World {
 
         // 路由到具体 handler
         let result = match &action.action_type {
-            ActionType::Move { direction } => self.handle_move(agent_id, *direction),
             ActionType::MoveToward { target } => self.handle_move_toward(agent_id, *target),
             ActionType::Gather { resource } => self.handle_gather(agent_id, *resource),
             ActionType::Wait => self.handle_wait(agent_id),
+            ActionType::Eat => self.handle_eat(agent_id),
+            ActionType::Drink => self.handle_drink(agent_id),
             ActionType::Build { structure } => self.handle_build(agent_id, *structure),
             ActionType::Attack { target_id } => self.handle_attack(agent_id, target_id.clone()),
             ActionType::Talk { message } => self.handle_talk(agent_id, message.clone()),
@@ -513,26 +502,98 @@ impl World {
             self.record_error_narrative(agent_id, &action.action_type, reason);
         }
 
-        // 应用动机变化
+        // 记录上一次执行的动作类型（用于决策重复性惩罚）
         let agent = self.agents.get_mut(agent_id).unwrap();
-        for (i, delta) in action.motivation_delta.iter().enumerate() {
-            if i < 6 {
-                let new_val = agent.motivation[i] + delta;
-                agent.motivation[i] = new_val.clamp(0.0, 1.0);
-            }
+        agent.last_action_type = Some(format!("{:?}", action.action_type));
+
+        // 记录动作执行结果反馈（传递给 LLM）
+        // 注意：handler 可能已设置了特殊的 last_action_result（如已在目标位置），需要保留
+        // 更可靠的方式：检查 Agent 是否实际移动了
+        let agent_after = self.agents.get(agent_id).unwrap();
+        let actually_moved = old_position.map_or(false, |old| old != agent_after.position);
+
+        if !actually_moved && matches!(result, ActionResult::Success) {
+            // Agent 没有实际移动但返回成功 → handler 已设置了特殊反馈（如"已在目标位置"），保留它
+            // 不做任何操作
+        } else {
+            // 正常情况：设置标准反馈
+            let result_desc = match &result {
+                ActionResult::Success => match &action.action_type {
+                    ActionType::MoveToward { target } => {
+                        let from = old_position.unwrap_or(*target);
+                        let dir_name = crate::vision::direction_description(&from, target);
+                        format!("向{}移动到 ({}, {})", dir_name, target.x, target.y)
+                    }
+                    ActionType::Gather { resource } => {
+                        let pos = old_position.unwrap_or_else(|| self.agents.get(agent_id).unwrap().position);
+                        format!("已在当前位置 ({}, {}) 采集了 {:?}", pos.x, pos.y, resource)
+                    }
+                    _ => format!("{:?} 执行成功", action.action_type),
+                },
+                ActionResult::Blocked(reason) => match &action.action_type {
+                    ActionType::MoveToward { target } => {
+                        let from = old_position.unwrap_or(*target);
+                        let dir_name = crate::vision::direction_description(&from, target);
+                        format!("向{}移动失败，未能到达 ({}, {})。原因：{}", dir_name, target.x, target.y, reason)
+                    }
+                    _ => format!("{:?} 执行失败：{}", action.action_type, reason),
+                },
+                ActionResult::OutOfBounds => format!("{:?} 执行失败：超出地图边界", action.action_type),
+                ActionResult::AgentDead => format!("{:?} 执行失败：Agent 已死亡", action.action_type),
+                ActionResult::InvalidAgent => format!("{:?} 执行失败：Agent 不存在", action.action_type),
+                ActionResult::NotImplemented => format!("{:?} 执行失败：未实现", action.action_type),
+            };
+            self.agents.get_mut(agent_id).unwrap().last_action_result = Some(result_desc);
         }
 
-        // 策略创建触发检查（任务 2.1-2.5）
+        // 经验值积累：根据动作类型给予不同XP
+        let xp_reward = match &action.action_type {
+            ActionType::Gather { .. } => 15,       // 采集资源
+            ActionType::Build { .. } => 25,         // 建造建筑
+            ActionType::TradeOffer { .. } => 10,    // 发起交易
+            ActionType::Attack { .. } => 20,        // 攻击
+            ActionType::AllyPropose { .. } | ActionType::AllyAccept { .. } => 15,  // 结盟
+            ActionType::InteractLegacy { .. } => 20, // 遗产交互
+            ActionType::Explore { .. } => 5,        // 探索
+            ActionType::MoveToward { .. } => 1,  // 移动
+            ActionType::Wait => 0,
+            ActionType::Eat => 3,
+            ActionType::Drink => 3,
+            ActionType::Talk { .. } => 2,
+            ActionType::TradeAccept { .. } => 10,
+            ActionType::TradeReject { .. } => 0,
+            ActionType::AllyReject { .. } => 0,
+        };
+        let leveled_up = if xp_reward > 0 {
+            let agent = self.agents.get_mut(agent_id).unwrap();
+            agent.add_experience(xp_reward)
+        } else {
+            false
+        };
+
+        // 升级叙事事件
+        if leveled_up {
+            let agent = self.agents.get(agent_id).unwrap();
+            let level = agent.level;
+            let name = agent.name.clone();
+            self.tick_events.push(NarrativeEvent {
+                tick: self.tick,
+                agent_id: agent_id.as_str().to_string(),
+                agent_name: name.clone(),
+                event_type: "level_up".to_string(),
+                description: format!("🎉 {} 升级到等级 {}！HP上限+10", name, level),
+                color_code: "#FF6B35".to_string(),
+            });
+        }
+
+        // 策略创建触发检查
         let is_success = matches!(result, ActionResult::Success);
         if is_success {
             let candidate_count = action.params.get("candidate_count")
                 .and_then(|v| v.parse::<usize>().ok())
                 .unwrap_or(3);
-            let motivation_alignment = action.params.get("motivation_alignment")
-                .and_then(|v| v.parse::<f32>().ok())
-                .unwrap_or(0.8);
 
-            if should_create_strategy(is_success, candidate_count, motivation_alignment) {
+            if should_create_strategy(is_success, candidate_count) {
                 let agent = self.agents.get_mut(agent_id).unwrap();
                 let spark_type = SparkType::Explore;
                 let _ = scan_strategy_content(&action.reasoning);
@@ -540,27 +601,8 @@ impl World {
                     &agent.strategies,
                     spark_type,
                     self.tick as u32,
-                    action.motivation_delta,
                     &action.reasoning,
                 );
-            }
-
-            // 动机联动：策略成功
-            let strategy_data = self.agents.get(agent_id).and_then(|agent| {
-                agent.strategies.find_by_spark_type("explore").map(|s| s.clone())
-            });
-            if let Some(strategy) = strategy_data {
-                let agent = self.agents.get_mut(agent_id).unwrap();
-                on_strategy_success(&mut agent.motivation, &strategy);
-            }
-        } else {
-            // 动机联动：策略失败
-            let strategy_data = self.agents.get(agent_id).and_then(|agent| {
-                agent.strategies.find_by_spark_type("explore").map(|s| s.clone())
-            });
-            if let Some(strategy) = strategy_data {
-                let agent = self.agents.get_mut(agent_id).unwrap();
-                on_strategy_failure(&mut agent.motivation, &strategy);
             }
         }
 
@@ -593,12 +635,12 @@ impl World {
                     .map(|s| s.as_str())
                     .unwrap_or("等待")
                     .to_string();
+                let action_result = agent.last_action_result.as_deref().unwrap_or("").to_string();
 
                 AgentSnapshot {
                     id: agent.id.as_str().to_string(),
                     name: agent.name.clone(),
                     position: (agent.position.x, agent.position.y),
-                    motivation: agent.motivation.to_array(),
                     health: agent.health,
                     max_health: agent.max_health,
                     satiety: agent.satiety,
@@ -607,8 +649,10 @@ impl World {
                         .map(|(k, v)| (k.clone(), *v))
                         .collect(),
                     current_action,
+                    action_result,
                     age: agent.age,
                     is_alive: agent.is_alive,
+                    level: agent.level,
                 }
             })
             .collect();
@@ -769,6 +813,10 @@ impl World {
                         achieved_tick: self.tick,
                     });
                     tracing::info!("里程碑达成: {} (tick {})", display_name, self.tick);
+
+                    // 世界正反馈：根据里程碑类型产生世界变化
+                    self.apply_milestone_feedback(milestone_type);
+
                     // 添加叙事事件
                     self.tick_events.push(NarrativeEvent {
                         tick: self.tick,
@@ -830,6 +878,133 @@ impl World {
                     color_code: "#FFD700".to_string(),
                 });
             }
+        }
+    }
+
+    /// 里程碑达成时的世界正反馈
+    fn apply_milestone_feedback(&mut self, milestone_type: &MilestoneType) {
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+        let (map_w, map_h) = self.map.size();
+
+        // 找到最近有动作的 Agent 位置作为反馈中心
+        let center_pos = self.agents.values()
+            .filter(|a| a.is_alive)
+            .next()
+            .map(|a| a.position)
+            .unwrap_or(Position::new(128, 128));
+
+        match milestone_type {
+            MilestoneType::FirstCamp => {
+                // 首次建造营地 → 周围生成额外食物和水源（营地带来繁荣）
+                for _ in 0..5 {
+                    let offset_x = rng.gen_range(-3..=3) as i32;
+                    let offset_y = rng.gen_range(-3..=3) as i32;
+                    let px = (center_pos.x as i32 + offset_x).clamp(0, map_w as i32 - 1) as u32;
+                    let py = (center_pos.y as i32 + offset_y).clamp(0, map_h as i32 - 1) as u32;
+                    let pos = Position::new(px, py);
+                    let res_type = if rng.gen_bool(0.5) { ResourceType::Food } else { ResourceType::Water };
+                    let node = resource::ResourceNode::new(pos, res_type, rng.gen_range(3..=8));
+                    self.resources.insert(pos, node);
+                }
+                self.tick_events.push(NarrativeEvent {
+                    tick: self.tick,
+                    agent_id: "system".to_string(),
+                    agent_name: "世界".to_string(),
+                    event_type: "milestone".to_string(),
+                    description: "🌱 营地周围涌现出新的食物和水源！".to_string(),
+                    color_code: "#4CAF50".to_string(),
+                });
+            }
+            MilestoneType::FirstTrade => {
+                // 首次交易 → 所有 Agent 获得少量额外资源（贸易繁荣）
+                for agent in self.agents.values_mut() {
+                    if agent.is_alive {
+                        *agent.inventory.entry("food".to_string()).or_default() += 1;
+                        *agent.inventory.entry("water".to_string()).or_default() += 1;
+                    }
+                }
+                self.tick_events.push(NarrativeEvent {
+                    tick: self.tick,
+                    agent_id: "system".to_string(),
+                    agent_name: "世界".to_string(),
+                    event_type: "milestone".to_string(),
+                    description: " 贸易带来繁荣，所有人获得额外补给！".to_string(),
+                    color_code: "#4CAF50".to_string(),
+                });
+            }
+            MilestoneType::FirstFence => {
+                // 首次防御 → 周围生成木材（建设需要材料）
+                for _ in 0..5 {
+                    let offset_x = rng.gen_range(-3..=3) as i32;
+                    let offset_y = rng.gen_range(-3..=3) as i32;
+                    let px = (center_pos.x as i32 + offset_x).clamp(0, map_w as i32 - 1) as u32;
+                    let py = (center_pos.y as i32 + offset_y).clamp(0, map_h as i32 - 1) as u32;
+                    let pos = Position::new(px, py);
+                    let node = resource::ResourceNode::new(pos, ResourceType::Wood, rng.gen_range(3..=8));
+                    self.resources.insert(pos, node);
+                }
+                self.tick_events.push(NarrativeEvent {
+                    tick: self.tick,
+                    agent_id: "system".to_string(),
+                    agent_name: "世界".to_string(),
+                    event_type: "milestone".to_string(),
+                    description: "🪵 围栏周围发现了新的木材资源！".to_string(),
+                    color_code: "#4CAF50".to_string(),
+                });
+            }
+            MilestoneType::CityState => {
+                // 城邦时代 → 大规模资源涌现 + 所有 Agent 恢复 HP
+                for agent in self.agents.values_mut() {
+                    if agent.is_alive {
+                        agent.health = agent.max_health;
+                        *agent.inventory.entry("food".to_string()).or_default() += 3;
+                        *agent.inventory.entry("water".to_string()).or_default() += 3;
+                    }
+                }
+                for _ in 0..10 {
+                    let offset_x = rng.gen_range(-8..=8) as i32;
+                    let offset_y = rng.gen_range(-8..=8) as i32;
+                    let px = (center_pos.x as i32 + offset_x).clamp(0, map_w as i32 - 1) as u32;
+                    let py = (center_pos.y as i32 + offset_y).clamp(0, map_h as i32 - 1) as u32;
+                    let pos = Position::new(px, py);
+                    let res_types = [ResourceType::Food, ResourceType::Water, ResourceType::Wood, ResourceType::Stone];
+                    let res_type = res_types[rng.gen_range(0..res_types.len())];
+                    let node = resource::ResourceNode::new(pos, res_type, rng.gen_range(5..=15));
+                    self.resources.insert(pos, node);
+                }
+                self.tick_events.push(NarrativeEvent {
+                    tick: self.tick,
+                    agent_id: "system".to_string(),
+                    agent_name: "世界".to_string(),
+                    event_type: "milestone".to_string(),
+                    description: "🏛 城邦崛起！资源涌现，所有人恢复健康！".to_string(),
+                    color_code: "#4CAF50".to_string(),
+                });
+            }
+            MilestoneType::GoldenAge => {
+                // 黄金时代 → 所有 Agent 满 HP + 大量资源
+                for agent in self.agents.values_mut() {
+                    if agent.is_alive {
+                        agent.health = agent.max_health;
+                        agent.satiety = 100;
+                        agent.hydration = 100;
+                        *agent.inventory.entry("food".to_string()).or_default() += 5;
+                        *agent.inventory.entry("water".to_string()).or_default() += 5;
+                        *agent.inventory.entry("wood".to_string()).or_default() += 5;
+                        *agent.inventory.entry("stone".to_string()).or_default() += 5;
+                    }
+                }
+                self.tick_events.push(NarrativeEvent {
+                    tick: self.tick,
+                    agent_id: "system".to_string(),
+                    agent_name: "世界".to_string(),
+                    event_type: "milestone".to_string(),
+                    description: "👑 黄金时代降临！所有人满状态，资源充沛！".to_string(),
+                    color_code: "#4CAF50".to_string(),
+                });
+            }
+            _ => {}
         }
     }
 

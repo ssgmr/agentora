@@ -26,6 +26,8 @@ fn init_logging() {
 
 fn try_init_logging() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     use tracing_subscriber::{fmt, EnvFilter, Layer, prelude::*};
+    use tracing_subscriber::fmt::time::LocalTime;
+    use time::macros::format_description;
 
     // 加载日志配置
     let log_cfg = LogConfig::load("../config/log.toml");
@@ -63,16 +65,21 @@ fn try_init_logging() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     );
     let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
 
+    let time_format = format_description!("[year]-[month]-[day] [hour]:[minute]:[second].[subsecond digits:3]");
+    let local_timer = LocalTime::new(time_format);
+
     let console_layer = fmt::layer()
         .with_target(false)
         .with_ansi(false)
-        .with_writer(std::io::stderr)
+        .with_timer(local_timer.clone())
+        .with_writer(std::io::stdout)
         .with_filter(console_filter);
     let file_layer = fmt::layer()
         .with_target(true)
         .with_ansi(false)
         .with_thread_ids(true)
         .with_line_number(true)
+        .with_timer(local_timer)
         .with_writer(non_blocking)
         .with_filter(file_filter);
 
@@ -168,7 +175,7 @@ impl LogConfig {
 // 核心引擎类型
 use agentora_core::{World, WorldSeed, Agent, Position, WorldSnapshot, AgentId, Action};
 use agentora_core::snapshot::{AgentSnapshot, NarrativeEvent as CoreNarrativeEvent};
-use agentora_core::decision::{DecisionPipeline, Spark};
+use agentora_core::decision::{DecisionPipeline, infer_state_mode};
 use agentora_core::rule_engine::WorldState;
 use agentora_core::vision::scan_vision;
 use agentora_core::memory::MemoryEvent;
@@ -191,7 +198,6 @@ pub enum AgentDelta {
         max_health: u32,
         is_alive: bool,
         age: u32,
-        motivation: [f32; 6],
     },
     /// Agent 死亡
     AgentDied {
@@ -207,7 +213,6 @@ pub enum AgentDelta {
         position: (u32, u32),
         health: u32,
         max_health: u32,
-        motivation: [f32; 6],
     },
 
     // ===== Tier 2 新增 =====
@@ -296,6 +301,14 @@ pub struct SimConfig {
     pub npc_decision_interval_secs: u64,
     /// 玩家 Agent 决策间隔（秒）
     pub player_decision_interval_secs: u64,
+    /// Agent 视野扫描半径（格子数）
+    pub vision_radius: u32,
+    /// 背包格子数量（不同资源类型的种类上限）
+    pub inventory_max_slots: usize,
+    /// 单个资源堆叠上限
+    pub inventory_max_stack_size: u32,
+    /// 仓库附近堆叠上限倍率
+    pub inventory_warehouse_multiplier: u32,
 }
 
 impl Default for SimConfig {
@@ -305,6 +318,10 @@ impl Default for SimConfig {
             npc_count: 3,
             npc_decision_interval_secs: 1,
             player_decision_interval_secs: 2,
+            vision_radius: 10,
+            inventory_max_slots: 20,
+            inventory_max_stack_size: 20,
+            inventory_warehouse_multiplier: 2,
         }
     }
 }
@@ -330,9 +347,24 @@ impl SimConfig {
                             if let Some(v) = sim.get("player_decision_interval_secs").and_then(|v| v.as_integer()) {
                                 cfg.player_decision_interval_secs = v as u64;
                             }
+                            if let Some(v) = sim.get("vision_radius").and_then(|v| v.as_integer()) {
+                                cfg.vision_radius = v as u32;
+                            }
                         }
-                        tracing::info!("[SimConfig] 配置加载成功 [agents={} npc={} npc_interval={}s player_interval={}s]",
-                            cfg.initial_agent_count, cfg.npc_count, cfg.npc_decision_interval_secs, cfg.player_decision_interval_secs);
+                        if let Some(inv) = table.get("inventory") {
+                            if let Some(v) = inv.get("max_slots").and_then(|v| v.as_integer()) {
+                                cfg.inventory_max_slots = v as usize;
+                            }
+                            if let Some(v) = inv.get("max_stack_size").and_then(|v| v.as_integer()) {
+                                cfg.inventory_max_stack_size = v as u32;
+                            }
+                            if let Some(v) = inv.get("warehouse_limit_multiplier").and_then(|v| v.as_integer()) {
+                                cfg.inventory_warehouse_multiplier = v as u32;
+                            }
+                        }
+                        tracing::info!("[SimConfig] 配置加载成功 [agents={} npc={} npc_interval={}s player_interval={}s vision_radius={} inv_slots={} inv_stack={} warehouse_mult={}]",
+                            cfg.initial_agent_count, cfg.npc_count, cfg.npc_decision_interval_secs, cfg.player_decision_interval_secs, cfg.vision_radius,
+                            cfg.inventory_max_slots, cfg.inventory_max_stack_size, cfg.inventory_warehouse_multiplier);
                         cfg
                     }
                     Err(e) => {
@@ -355,14 +387,9 @@ pub enum SimCommand {
     Start,
     Pause,
     SetTickInterval { seconds: f32 },
-    AdjustMotivation {
-        agent_id: String,
-        dimension: usize,
-        value: f32,
-    },
     InjectPreference {
         agent_id: String,
-        dimension: usize,
+        key: String,
         boost: f32,
         duration_ticks: u32,
     },
@@ -520,7 +547,7 @@ impl SimulationBridge {
     fn delta_to_dict(delta: &AgentDelta) -> Variant {
         let mut dict: Dictionary<GString, Variant> = Dictionary::new();
         match delta {
-            AgentDelta::AgentMoved { id, name, position, health, max_health, is_alive, age, motivation } => {
+            AgentDelta::AgentMoved { id, name, position, health, max_health, is_alive, age } => {
                 dict.set("type", &"agent_moved".to_variant());
                 dict.set("id", &id.to_variant());
                 dict.set("name", &name.to_variant());
@@ -530,9 +557,6 @@ impl SimulationBridge {
                 dict.set("max_health", &(Variant::from(*max_health as i64)));
                 dict.set("is_alive", &is_alive.to_variant());
                 dict.set("age", &(Variant::from(*age as i64)));
-                let mut mot_arr: Array<f32> = Array::new();
-                for &v in motivation { mot_arr.push(v); }
-                dict.set("motivation", &mot_arr.to_variant());
             }
             AgentDelta::AgentDied { id, name, position, age } => {
                 dict.set("type", &"agent_died".to_variant());
@@ -542,7 +566,7 @@ impl SimulationBridge {
                 dict.set("position", &pos.to_variant());
                 dict.set("age", &(Variant::from(*age as i64)));
             }
-            AgentDelta::AgentSpawned { id, name, position, health, max_health, motivation } => {
+            AgentDelta::AgentSpawned { id, name, position, health, max_health } => {
                 dict.set("type", &"agent_spawned".to_variant());
                 dict.set("id", &id.to_variant());
                 dict.set("name", &name.to_variant());
@@ -550,9 +574,6 @@ impl SimulationBridge {
                 dict.set("position", &pos.to_variant());
                 dict.set("health", &(Variant::from(*health as i64)));
                 dict.set("max_health", &(Variant::from(*max_health as i64)));
-                let mut mot_arr: Array<f32> = Array::new();
-                for &v in motivation { mot_arr.push(v); }
-                dict.set("motivation", &mot_arr.to_variant());
             }
 
             // Tier 2 新增
@@ -641,14 +662,11 @@ impl SimulationBridge {
         dict.set("hydration", &(Variant::from(agent.hydration as i64)));
         dict.set("is_alive", &agent.is_alive.to_variant());
         dict.set("age", &(Variant::from(agent.age as i64)));
+        dict.set("level", &(Variant::from(agent.level as i64)));
         dict.set("current_action", &agent.current_action.clone().to_variant());
+        dict.set("action_result", &agent.action_result.clone().to_variant());
         let pos = Vector2::new(agent.position.0 as f32, agent.position.1 as f32);
         dict.set("position", &pos.to_variant());
-        let mut motivation_arr: Array<f32> = Array::new();
-        for &v in &agent.motivation {
-            motivation_arr.push(v);
-        }
-        dict.set("motivation", &motivation_arr.to_variant());
         // 背包摘要
         let mut inv_dict: Dictionary<GString, Variant> = Dictionary::new();
         for (k, v) in &agent.inventory_summary {
@@ -678,10 +696,10 @@ impl SimulationBridge {
         self.is_running = true;
         self.is_paused = false;
 
-        let llm_provider = Self::create_llm_provider();
+        let (llm_provider, llm_config) = Self::create_llm_provider();
 
         std::thread::spawn(move || {
-            run_simulation(snapshot_tx, delta_tx, narrative_tx, cmd_rx, llm_provider);
+            run_simulation(snapshot_tx, delta_tx, narrative_tx, cmd_rx, llm_provider, llm_config);
         });
 
         godot::global::print(&[Variant::from("SimulationBridge: 模拟已启动（事件驱动模式）")]);
@@ -699,11 +717,12 @@ impl SimulationBridge {
         self.toggle_pause();
     }
 
-    fn create_llm_provider() -> Option<Box<dyn LlmProvider>> {
+    fn create_llm_provider() -> (Option<Box<dyn LlmProvider>>, agentora_ai::config::LlmConfig) {
         let config_path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/llm.toml");
         match load_llm_config(config_path) {
             Ok(config) => {
                 let model = config.primary.model.clone();
+                let full_config = config.clone();
                 godot::global::print(&[Variant::from(format!(
                     "SimulationBridge: LLM 配置加载成功，model={}",
                     model
@@ -717,14 +736,14 @@ impl SimulationBridge {
 
                 let fallback = FallbackChain::new(vec![Box::new(openai)]);
                 godot::global::print(&[Variant::from("SimulationBridge: LLM Provider 链已创建")]);
-                Some(Box::new(fallback))
+                (Some(Box::new(fallback)), full_config)
             }
             Err(e) => {
                 godot::global::print(&[Variant::from(format!(
                     "SimulationBridge: LLM 配置加载失败: {}，将使用规则引擎兜底",
                     e
                 ))]);
-                None
+                (None, agentora_ai::config::LlmConfig::default())
             }
         }
     }
@@ -757,22 +776,11 @@ impl SimulationBridge {
     }
 
     #[func]
-    fn adjust_motivation(&self, agent_id: String, dimension: i32, value: f32) {
-        if let Some(tx) = &self.command_sender {
-            let _ = tx.send(SimCommand::AdjustMotivation {
-                agent_id,
-                dimension: dimension as usize,
-                value,
-            });
-        }
-    }
-
-    #[func]
-    fn inject_preference(&self, agent_id: String, dimension: i32, boost: f32, duration: i32) {
+    fn inject_preference(&self, agent_id: String, key: String, boost: f32, duration: i32) {
         if let Some(tx) = &self.command_sender {
             let _ = tx.send(SimCommand::InjectPreference {
                 agent_id,
-                dimension: dimension as usize,
+                key,
                 boost,
                 duration_ticks: duration as u32,
             });
@@ -799,14 +807,11 @@ impl SimulationBridge {
                 dict.set("hydration", &(Variant::from(agent.hydration as i64)));
                 dict.set("is_alive", &agent.is_alive.to_variant());
                 dict.set("age", &(Variant::from(agent.age as i64)));
+                dict.set("level", &(Variant::from(agent.level as i64)));
                 dict.set("current_action", &agent.current_action.clone().to_variant());
+                dict.set("action_result", &agent.action_result.clone().to_variant());
                 let pos = Vector2::new(agent.position.0 as f32, agent.position.1 as f32);
                 dict.set("position", &pos.to_variant());
-                let mut motivation_arr: Array<f32> = Array::new();
-                for &v in &agent.motivation {
-                    motivation_arr.push(v);
-                }
-                dict.set("motivation", &motivation_arr.to_variant());
                 let mut inv_dict: Dictionary<GString, Variant> = Dictionary::new();
                 for (k, v) in &agent.inventory_summary {
                     inv_dict.set(k.as_str(), &Variant::from(*v as i64));
@@ -830,10 +835,11 @@ fn run_simulation(
     narrative_tx: Sender<NarrativeEvent>,
     cmd_rx: Receiver<SimCommand>,
     llm_provider: Option<Box<dyn LlmProvider>>,
+    llm_config: agentora_ai::config::LlmConfig,
 ) {
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
-        run_simulation_async(snapshot_tx, delta_tx, narrative_tx, cmd_rx, llm_provider).await;
+        run_simulation_async(snapshot_tx, delta_tx, narrative_tx, cmd_rx, llm_provider, llm_config).await;
     });
 }
 
@@ -843,9 +849,17 @@ async fn run_simulation_async(
     narrative_tx: Sender<NarrativeEvent>,
     cmd_rx: Receiver<SimCommand>,
     llm_provider: Option<Box<dyn LlmProvider>>,
+    llm_config: agentora_ai::config::LlmConfig,
 ) {
     // 加载模拟配置（相对于项目根目录，Godot 工作目录为 client/）
     let sim_config = SimConfig::load("../config/sim.toml");
+
+    // 初始化背包配置
+    agentora_core::agent::inventory::init_inventory_config(agentora_core::agent::inventory::InventoryConfig {
+        max_slots: sim_config.inventory_max_slots,
+        max_stack_size: sim_config.inventory_max_stack_size,
+        warehouse_limit_multiplier: sim_config.inventory_warehouse_multiplier,
+    });
 
     // 从配置文件加载世界种子
     let mut seed = WorldSeed::load("../worldseeds/default.toml")
@@ -859,21 +873,19 @@ async fn run_simulation_async(
     let world = World::new(&seed);
 
     let pipeline = if let Some(provider) = llm_provider {
-        DecisionPipeline::new().with_llm_provider(provider)
+        DecisionPipeline::from_config(&llm_config.memory)
+            .with_llm_provider(provider)
+            .with_llm_params(llm_config.decision.max_tokens, llm_config.decision.temperature)
     } else {
-        DecisionPipeline::new()
+        DecisionPipeline::from_config(&llm_config.memory)
+            .with_llm_params(llm_config.decision.max_tokens, llm_config.decision.temperature)
     };
 
-    // 共享 World（Arc + Mutex），Agent 决策 task 和 Apply 循环共享访问
+    // 共享 World（Arc + Mutex）
     let world_arc = Arc::new(Mutex::new(world));
     let pipeline_arc = Arc::new(pipeline);
 
-    // World::new 已经通过 generate_agents 创建了初始 Agent
-
-    // 动作通道：Agent 决策完成后发送 (AgentId, Action) 到 Apply 循环
-    let (action_tx, action_rx) = tokio::sync::mpsc::channel::<(AgentId, Action)>(1024);
-
-    // 初始化 Agent 并 spawn 决策 task
+    // 初始化 Agent 并 spawn 同步决策+执行 task
     let agent_ids: Vec<AgentId>;
     {
         let world = world_arc.lock().await;
@@ -884,25 +896,29 @@ async fn run_simulation_async(
     for agent_id in &agent_ids {
         let w = world_arc.clone();
         let p = pipeline_arc.clone();
-        let tx = action_tx.clone();
+        let delta = delta_tx.clone();
+        let narrative = narrative_tx.clone();
         let aid = agent_id.clone();
         let interval = sim_config.player_decision_interval_secs;
+        let vision_r = sim_config.vision_radius;
         let handle = tokio::spawn(async move {
-            run_agent_loop(w, aid, p, tx, false, interval as u32).await;
+            run_agent_loop(w, aid, p, delta, narrative, false, interval as u32, vision_r).await;
         });
         _agent_handles.push(handle);
     }
 
-    // 创建 NPC Agent 并 spawn 决策 task
+    // 创建 NPC Agent 并 spawn 同步决策+执行 task
     let npc_ids = create_npc_agents(&world_arc, &sim_config).await;
     for npc_id in &npc_ids {
         let w = world_arc.clone();
         let p = pipeline_arc.clone();
-        let tx = action_tx.clone();
+        let delta = delta_tx.clone();
+        let narrative = narrative_tx.clone();
         let aid = npc_id.clone();
         let interval = sim_config.npc_decision_interval_secs;
+        let vision_r = sim_config.vision_radius;
         let handle = tokio::spawn(async move {
-            run_agent_loop(w, aid, p, tx, true, interval as u32).await;
+            run_agent_loop(w, aid, p, delta, narrative, true, interval as u32, vision_r).await;
         });
         _agent_handles.push(handle);
     }
@@ -919,14 +935,6 @@ async fn run_simulation_async(
         let _ = snapshot_tx.send(initial_snapshot);
         tracing::info!("已发送初始 snapshot（含 {} 个 map_changes）", map_changes_count);
     }
-
-    // Apply 循环：串行应用动作并发 delta + narrative
-    let delta_tx_clone = delta_tx.clone();
-    let narrative_tx_clone = narrative_tx.clone();
-    let w_apply = world_arc.clone();
-    let _apply_handle = tokio::spawn(async move {
-        run_apply_loop(action_rx, w_apply, delta_tx_clone, narrative_tx_clone).await;
-    });
 
     // 定期 snapshot 兜底循环
     let w_snap = world_arc.clone();
@@ -951,23 +959,13 @@ async fn run_simulation_async(
                     let mut world = world_arc.lock().await;
                     world.tick_interval = seconds as u32;
                 }
-                SimCommand::AdjustMotivation { agent_id, dimension, value } => {
+                SimCommand::InjectPreference { agent_id, key, boost, duration_ticks } => {
                     let aid = AgentId::new(agent_id.clone());
                     let mut world = world_arc.lock().await;
                     if let Some(agent) = world.agents.get_mut(&aid) {
-                        let current = agent.motivation.get(dimension);
-                        let new_val = (current + (value - current) * 0.5).clamp(0.0, 1.0);
-                        agent.motivation.set(dimension, new_val);
-                        tracing::info!("调整 {:?} 动机[{}]={}", aid, dimension, value);
-                    }
-                }
-                SimCommand::InjectPreference { agent_id, dimension, boost, duration_ticks } => {
-                    let aid = AgentId::new(agent_id.clone());
-                    let mut world = world_arc.lock().await;
-                    if let Some(agent) = world.agents.get_mut(&aid) {
-                        agent.inject_preference(dimension, boost, duration_ticks);
-                        tracing::info!("注入偏好 {:?} dim={} boost={} duration={}",
-                            aid, dimension, boost, duration_ticks);
+                        agent.inject_preference(&key, boost, duration_ticks);
+                        tracing::info!("注入偏好 {:?} key={} boost={} duration={}",
+                            aid, key, boost, duration_ticks);
                     }
                 }
             }
@@ -996,18 +994,6 @@ async fn create_npc_agents(
     let mut world = world_arc.lock().await;
 
     let npc_names = ["Explorer", "Miner", "Builder", "Trader", "Guard", "Scout", "Gatherer", "Hunter", "Farmer", "Nomad"];
-    let templates = [
-        [0.6, 0.3, 0.7, 0.4, 0.2, 0.3],  // Explorer
-        [0.8, 0.2, 0.3, 0.2, 0.3, 0.2],  // Miner
-        [0.5, 0.4, 0.5, 0.8, 0.3, 0.5],  // Builder
-        [0.4, 0.8, 0.5, 0.3, 0.7, 0.3],  // Trader
-        [0.6, 0.3, 0.4, 0.2, 0.8, 0.2],  // Guard
-        [0.5, 0.3, 0.8, 0.3, 0.2, 0.4],  // Scout
-        [0.8, 0.2, 0.3, 0.2, 0.2, 0.3],  // Gatherer
-        [0.7, 0.3, 0.4, 0.3, 0.3, 0.2],  // Hunter
-        [0.7, 0.4, 0.3, 0.2, 0.2, 0.5],  // Farmer
-        [0.5, 0.5, 0.6, 0.3, 0.3, 0.3],  // Nomad
-    ];
 
     // NPC spawn 位置（地图中心附近，确保相机能看到）
     let cx = 128u32;
@@ -1020,7 +1006,6 @@ async fn create_npc_agents(
     for i in 0..config.npc_count.min(npc_names.len()).min(npc_positions.len()) {
         let name = format!("[NPC]{}", npc_names[i]);
         let (mut x, mut y) = npc_positions[i];
-        let template = templates[i];
 
         // 确保出生位置可通行，如果不可通行则找附近可通行位置
         let mut pos = Position::new(x, y);
@@ -1043,12 +1028,11 @@ async fn create_npc_agents(
             }
         }
 
-        let mut agent = Agent::new(
+        let agent = Agent::new(
             AgentId::default(),
             name.clone(),
             Position::new(x, y),
         );
-        agent.motivation = agentora_core::motivation::MotivationVector::from_array(template);
 
         let aid = agent.id.clone();
         world.insert_agent_at(aid.clone(), agent);
@@ -1058,24 +1042,24 @@ async fn create_npc_agents(
     ids
 }
 
-/// Agent 独立决策循环
+/// Agent 同步决策+执行循环
+/// 每个 Agent 独立 task，在同一个 task 内顺序完成：读取状态 → LLM 决策 → 应用动作 → 推送 delta
 async fn run_agent_loop(
     world: Arc<Mutex<World>>,
     agent_id: AgentId,
     pipeline: Arc<DecisionPipeline>,
-    action_tx: tokio::sync::mpsc::Sender<(AgentId, Action)>,
+    delta_tx: Sender<AgentDelta>,
+    narrative_tx: Sender<NarrativeEvent>,
     is_npc: bool,
     interval_secs: u32,
+    vision_radius: u32,
 ) {
-    tracing::info!("[AgentLoop] Agent {:?} 启动 (is_npc={}, interval={}s)", agent_id, is_npc, interval_secs);
+    tracing::info!("[AgentLoop] Agent {:?} 启动 (is_npc={}, interval={}s, vision_radius={})", agent_id, is_npc, interval_secs, vision_radius);
 
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(interval_secs as u64));
-    // 跳过第一次立即触发
-    interval.tick().await;
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     loop {
-        interval.tick().await;
-
         // 检查 Agent 是否存活
         let should_continue = {
             let w = world.lock().await;
@@ -1094,16 +1078,16 @@ async fn run_agent_loop(
         let (agent_clone, world_state) = {
             let w = world.lock().await;
 
-            // scan_vision() → VisionScanResult  ← 纯计算，快
-            let vision = scan_vision(&w, &agent_id, 5);
+            let vision = scan_vision(&w, &agent_id, vision_radius);
 
-            // clone Agent 的必要字段
             let agent = match w.agents.get(&agent_id) {
                 Some(a) => a.clone(),
                 None => break,
             };
 
-            // 将 VisionScanResult 映射到 WorldState
+            tracing::debug!("[AgentLoop] Agent {:?} vision: {} terrain, {} resources, {} agents, {} structures, {} legacies",
+                agent_id, vision.terrain_at.len(), vision.resources_at.len(), vision.nearby_agents.len(), vision.nearby_structures.len(), vision.nearby_legacies.len());
+
             let ws = WorldState {
                 map_size: 256,
                 agent_position: agent.position,
@@ -1121,10 +1105,19 @@ async fn run_agent_loop(
                 agent_satiety: agent.satiety,
                 agent_hydration: agent.hydration,
                 terrain_at: vision.terrain_at,
+                self_id: agent_id.clone(),
                 existing_agents: w.agents.keys().cloned().collect(),
                 resources_at: vision.resources_at,
                 nearby_agents: vision.nearby_agents,
+                nearby_structures: vision.nearby_structures,
+                nearby_legacies: vision.nearby_legacies,
                 active_pressures: w.pressure_pool.iter().map(|p| p.description.clone()).collect(),
+                last_move_direction: agent.last_position.and_then(|last_pos| {
+                    agentora_core::vision::calculate_direction(&last_pos, &agent.position)
+                }),
+                temp_preferences: agent.temp_preferences.iter()
+                    .map(|p| (p.key.clone(), p.boost, p.remaining_ticks))
+                    .collect(),
             };
 
             (agent, ws)
@@ -1132,14 +1125,7 @@ async fn run_agent_loop(
 
         // 锁外 I/O：获取记忆摘要
         let memory_summary_opt = {
-            let effective = agent_clone.effective_motivation();
-            let mot = agentora_core::motivation::MotivationVector::from_array(effective);
-            let spark = Spark::from_gap(
-                &mot,
-                &[0.5; 6],
-            );
-            let spark_type = spark.spark_type;
-            // clone 后的 Agent memory 已重连 SQLite，可以安全调用 get_summary
+            let spark_type = infer_state_mode(&world_state);
             let summary = agent_clone.memory.get_summary(spark_type);
             if summary.is_empty() { None } else { Some(summary) }
         };
@@ -1147,222 +1133,214 @@ async fn run_agent_loop(
         tracing::debug!("[AgentLoop] Agent {:?} ({}) 开始决策{}", agent_id.as_str(), agent_clone.name,
             if is_npc { " (NPC 规则决策)" } else { "" });
 
-        let action = if is_npc {
-            // NPC：规则引擎决策（不调用 LLM）
+        let (action, validation_failure): (Option<Action>, Option<String>) = if is_npc {
+            // NPC：规则引擎生存兜底（不调用 LLM）
             use agentora_core::rule_engine::RuleEngine;
-            let effective = agent_clone.effective_motivation();
-            let mot = agentora_core::motivation::MotivationVector::from_array(effective);
             let engine = RuleEngine::new();
-            engine.rule_decision(&mot, &world_state)
+            if let Some(candidate) = engine.survival_fallback(&world_state) {
+                (Some(Action {
+                    reasoning: candidate.reasoning,
+                    action_type: candidate.action_type,
+                    target: candidate.target,
+                    params: candidate.params.into_iter().map(|(k, v)| (k, v.to_string())).collect(),
+                    build_type: None,
+                    direction: None,
+                }), None)
+            } else {
+                (Some(Action {
+                    reasoning: "NPC 无明确目标，等待".to_string(),
+                    action_type: agentora_core::types::ActionType::Wait,
+                    target: None,
+                    params: HashMap::new(),
+                    build_type: None,
+                    direction: None,
+                }), None)
+            }
         } else {
             // Player Agent：LLM 决策
-            let effective = agent_clone.effective_motivation();
-            let satisfaction = [0.5; 6];
-            let spark = Spark::from_gap(
-                &agentora_core::motivation::MotivationVector::from_array(effective),
-                &satisfaction,
-            );
-            let effective_mot = agentora_core::motivation::MotivationVector::from_array(effective);
-
+            let _ = agent_clone.last_action_type.as_deref(); // 保留占位，待后续使用
+            let action_feedback = agent_clone.last_action_result.as_deref();
             let start = std::time::Instant::now();
-            let result = pipeline.execute(&agent_clone.id, &effective_mot, &spark, &world_state, memory_summary_opt.as_deref()).await;
+            let result = pipeline.execute(&agent_clone.id, &world_state, memory_summary_opt.as_deref(), action_feedback).await;
             let elapsed = start.elapsed().as_secs_f32();
 
             if result.error_info.is_some() {
-                tracing::warn!("[AgentLoop] Agent {:?} ({}) 决策完成 (耗时 {:.1}s, 兜底): {:?} | 原因: {:?}",
-                    agent_id.as_str(), agent_clone.name, elapsed, result.selected_action.action_type, result.error_info);
+                // 校验失败：不执行动作，记录反馈让 LLM 下回合修正
+                let vf = result.validation_failure.clone();
+                if let Some(ref msg) = vf {
+                    tracing::warn!("[AgentLoop] Agent {:?} ({}) 决策被拒绝 (耗时 {:.1}s): {}",
+                        agent_id.as_str(), agent_clone.name, elapsed, msg);
+                    eprintln!("[决策被拒绝] {} (耗时 {:.1}s): {}", agent_clone.name, elapsed, msg);
+                }
+                (None, vf)
             } else {
+                let candidate = result.selected_action.expect("决策成功但 selected_action 为 None");
                 tracing::info!("[AgentLoop] Agent {:?} ({}) 决策完成 (耗时 {:.1}s): {:?}",
-                    agent_id.as_str(), agent_clone.name, elapsed, result.selected_action.action_type);
-            }
+                    agent_id.as_str(), agent_clone.name, elapsed, candidate.action_type);
+                eprintln!("[{}] {} (耗时 {:.1}s): {:?}", agent_clone.name, "决策完成", elapsed, candidate.action_type);
+                eprintln!("[{}] reasoning: {}", agent_clone.name, candidate.reasoning);
 
-            Action {
-                reasoning: result.selected_action.reasoning,
-                action_type: result.selected_action.action_type,
-                target: result.selected_action.target,
-                params: result.selected_action.params.into_iter().map(|(k, v)| (k, v.to_string())).collect(),
-                build_type: None,
-                direction: None,
-                motivation_delta: result.selected_action.motivation_delta,
+                (Some(Action {
+                    reasoning: candidate.reasoning,
+                    action_type: candidate.action_type,
+                    target: candidate.target,
+                    params: candidate.params.into_iter().map(|(k, v)| (k, v.to_string())).collect(),
+                    build_type: None,
+                    direction: None,
+                }), None)
             }
         };
 
-        // 发送动作到 Apply 循环（如果通道满了，丢弃该动作）
-        if let Err(e) = action_tx.try_send((agent_id.clone(), action)) {
-            tracing::warn!("[AgentLoop] Agent {:?} 动作发送失败: {:?}", agent_id, e);
-        } else {
-            tracing::debug!("[AgentLoop] Agent {:?} ({}) 动作已发送", agent_id.as_str(), agent_clone.name);
-        }
-    }
-}
+        // 应用动作并发送 delta/narrative（同一个锁内完成，确保位置一致性）
+        if let Some(action) = action {
+            let events = {
+                let mut w = world.lock().await;
+                w.advance_tick();
+                w.apply_action(&agent_id, &action);
 
-/// Apply 循环：串行应用动作并发 delta + narrative
-async fn run_apply_loop(
-    mut action_rx: tokio::sync::mpsc::Receiver<(AgentId, Action)>,
-    world: Arc<Mutex<World>>,
-    delta_tx: Sender<AgentDelta>,
-    narrative_tx: Sender<NarrativeEvent>,
-) {
-    tracing::info!("[ApplyLoop] 启动");
-    while let Some((agent_id, action)) = action_rx.recv().await {
-        tracing::debug!("[ApplyLoop] 收到 Agent {:?} 的动作: {:?}", agent_id, action.action_type);
-        let (delta, events, extra_deltas) = {
-            let mut w = world.lock().await;
+                // 记录到 Agent 记忆系统
+                if let Some(_agent) = w.agents.get(&agent_id) {
+                    let action_type_str = format!("{:?}", action.action_type);
+                    let (emotion_tags, importance) = match action.action_type {
+                        agentora_core::types::ActionType::MoveToward { .. } => (vec!["purposeful".to_string()], 0.3),
+                        agentora_core::types::ActionType::Gather { .. } => (vec!["satisfied".to_string()], 0.4),
+                        agentora_core::types::ActionType::Wait => (vec!["resting".to_string()], 0.1),
+                        agentora_core::types::ActionType::Eat => (vec!["satisfied".to_string()], 0.3),
+                        agentora_core::types::ActionType::Drink => (vec!["refreshed".to_string()], 0.3),
+                        agentora_core::types::ActionType::Attack { .. } => (vec!["aggressive".to_string(), "angry".to_string()], 0.8),
+                        agentora_core::types::ActionType::Talk { .. } => (vec!["social".to_string()], 0.5),
+                        agentora_core::types::ActionType::Build { .. } => (vec!["creative".to_string()], 0.6),
+                        agentora_core::types::ActionType::Explore { .. } => (vec!["curious".to_string()], 0.5),
+                        agentora_core::types::ActionType::TradeOffer { .. } | agentora_core::types::ActionType::TradeAccept { .. } => (vec!["cooperative".to_string()], 0.6),
+                        agentora_core::types::ActionType::AllyPropose { .. } | agentora_core::types::ActionType::AllyAccept { .. } => (vec!["trust".to_string(), "bonding".to_string()], 0.7),
+                        agentora_core::types::ActionType::InteractLegacy { .. } => (vec!["reverent".to_string()], 0.7),
+                        _ => (vec!["unknown".to_string()], 0.3),
+                    };
 
-            // 每应用一个动作前推进 world tick（确保世界状态更新）
-            w.advance_tick();
+                    let event = MemoryEvent {
+                        tick: w.tick as u32,
+                        event_type: action_type_str,
+                        content: action.reasoning.clone(),
+                        emotion_tags,
+                        importance,
+                    };
 
-            // 应用动作
-            w.apply_action(&agent_id, &action);
+                    if let Some(agent_mut) = w.agents.get_mut(&agent_id) {
+                        agent_mut.memory.record(&event);
+                    }
+                }
 
-            // 记录到 Agent 记忆系统（任务 4.2-4.3）
-            if let Some(agent) = w.agents.get(&agent_id) {
-                let action_type_str = format!("{:?}", action.action_type);
-                // 根据 ActionType 自动标注 emotion_tags 和 importance
-                let (emotion_tags, importance) = match action.action_type {
-                    agentora_core::types::ActionType::Move { .. } => (vec!["neutral".to_string()], 0.2),
-                    agentora_core::types::ActionType::MoveToward { .. } => (vec!["purposeful".to_string()], 0.3),  // 导航移动，有目的性
-                    agentora_core::types::ActionType::Gather { .. } => (vec!["satisfied".to_string()], 0.4),
-                    agentora_core::types::ActionType::Wait => (vec!["resting".to_string()], 0.1),
-                    agentora_core::types::ActionType::Attack { .. } => (vec!["aggressive".to_string(), "angry".to_string()], 0.8),
-                    agentora_core::types::ActionType::Talk { .. } => (vec!["social".to_string()], 0.5),
-                    agentora_core::types::ActionType::Build { .. } => (vec!["creative".to_string()], 0.6),
-                    agentora_core::types::ActionType::Explore { .. } => (vec!["curious".to_string()], 0.5),
-                    agentora_core::types::ActionType::TradeOffer { .. } | agentora_core::types::ActionType::TradeAccept { .. } => (vec!["cooperative".to_string()], 0.6),
-                    agentora_core::types::ActionType::AllyPropose { .. } | agentora_core::types::ActionType::AllyAccept { .. } => (vec!["trust".to_string(), "bonding".to_string()], 0.7),
-                    agentora_core::types::ActionType::InteractLegacy { .. } => (vec!["reverent".to_string()], 0.7),
-                    _ => (vec!["unknown".to_string()], 0.3),
+                // 提取叙事事件
+                let events: Vec<NarrativeEvent> = w.tick_events.drain(..).map(|e| NarrativeEvent {
+                    tick: e.tick,
+                    agent_id: e.agent_id,
+                    agent_name: e.agent_name,
+                    event_type: e.event_type,
+                    description: e.description,
+                    color_code: e.color_code,
+                }).collect();
+
+                // 构建 delta 事件
+                let delta: Option<AgentDelta> = match w.agents.get(&agent_id) {
+                    Some(agent) if agent.is_alive => {
+                        Some(AgentDelta::AgentMoved {
+                            id: agent.id.as_str().to_string(),
+                            name: agent.name.clone(),
+                            position: (agent.position.x, agent.position.y),
+                            health: agent.health,
+                            max_health: agent.max_health,
+                            is_alive: true,
+                            age: agent.age,
+                        })
+                    }
+                    Some(agent) => {
+                        Some(AgentDelta::AgentDied {
+                            id: agent.id.as_str().to_string(),
+                            name: agent.name.clone(),
+                            position: (agent.position.x, agent.position.y),
+                            age: agent.age,
+                        })
+                    }
+                    None => None,
                 };
 
-                let event = MemoryEvent {
-                    tick: w.tick as u32,
-                    event_type: action_type_str,
-                    content: action.reasoning.clone(),
-                    emotion_tags,
-                    importance,
-                };
-
-                // 需要可变引用，重新获取 agent
-                if let Some(agent_mut) = w.agents.get_mut(&agent_id) {
-                    agent_mut.memory.record(&event);
-                }
-            }
-
-            // 提取叙事事件
-            let events: Vec<NarrativeEvent> = w.tick_events.drain(..).map(|e| NarrativeEvent {
-                tick: e.tick,
-                agent_id: e.agent_id,
-                agent_name: e.agent_name,
-                event_type: e.event_type,
-                description: e.description,
-                color_code: e.color_code,
-            }).collect();
-
-            // 构建 delta 事件
-            let delta = match w.agents.get(&agent_id) {
-                Some(agent) if agent.is_alive => {
-                    let mot = agent.motivation.to_array();
-                    tracing::debug!("[ApplyLoop] Agent {:?} ({}) 应用成功 -> ({}, {})",
-                        agent_id, agent.name, agent.position.x, agent.position.y);
-                    AgentDelta::AgentMoved {
-                        id: agent.id.as_str().to_string(),
-                        name: agent.name.clone(),
-                        position: (agent.position.x, agent.position.y),
-                        health: agent.health,
-                        max_health: agent.max_health,
-                        is_alive: true,
-                        age: agent.age,
-                        motivation: mot,
-                    }
-                }
-                Some(agent) => {
-                    // Agent 死亡
-                    tracing::warn!("[ApplyLoop] Agent {:?} ({}) 死亡", agent_id, agent.name);
-                    AgentDelta::AgentDied {
-                        id: agent.id.as_str().to_string(),
-                        name: agent.name.clone(),
-                        position: (agent.position.x, agent.position.y),
-                        age: agent.age,
-                    }
-                }
-                None => {
-                    tracing::warn!("[ApplyLoop] Agent {:?} 不存在，跳过", agent_id);
-                    AgentDelta::AgentDied {
-                        id: agent_id.as_str().to_string(),
-                        name: String::new(),
-                        position: (0, 0),
-                        age: 0,
-                    }
-                }
-            };
-
-            // Tier 2: 基于动作类型生成额外 delta
-            let mut extra_deltas: Vec<AgentDelta> = Vec::new();
-            match &action.action_type {
-                agentora_core::types::ActionType::Build { structure } => {
-                    if let Some(agent) = w.agents.get(&agent_id) {
-                        extra_deltas.push(AgentDelta::StructureCreated {
-                            x: agent.position.x,
-                            y: agent.position.y,
-                            structure_type: format!("{:?}", structure),
-                            owner_id: agent_id.as_str().to_string(),
-                        });
-                    }
-                }
-                agentora_core::types::ActionType::Gather { resource } => {
-                    if let Some(agent) = w.agents.get(&agent_id) {
-                        if let Some(node) = w.resources.get(&agent.position) {
-                            extra_deltas.push(AgentDelta::ResourceChanged {
+                // Tier 2: 基于动作类型生成额外 delta
+                let mut extra_deltas: Vec<AgentDelta> = Vec::new();
+                match &action.action_type {
+                    agentora_core::types::ActionType::Build { structure } => {
+                        if let Some(agent) = w.agents.get(&agent_id) {
+                            extra_deltas.push(AgentDelta::StructureCreated {
                                 x: agent.position.x,
                                 y: agent.position.y,
-                                resource_type: resource.as_str().to_string(),
-                                amount: node.current_amount,
+                                structure_type: format!("{:?}", structure),
+                                owner_id: agent_id.as_str().to_string(),
                             });
                         }
                     }
+                    agentora_core::types::ActionType::Gather { resource } => {
+                        if let Some(agent) = w.agents.get(&agent_id) {
+                            if let Some(node) = w.resources.get(&agent.position) {
+                                extra_deltas.push(AgentDelta::ResourceChanged {
+                                    x: agent.position.x,
+                                    y: agent.position.y,
+                                    resource_type: resource.as_str().to_string(),
+                                    amount: node.current_amount,
+                                });
+                            }
+                        }
+                    }
+                    agentora_core::types::ActionType::TradeAccept { .. } => {
+                        if let Some(event) = events.iter().find(|e| e.event_type == "trade") {
+                            extra_deltas.push(AgentDelta::TradeCompleted {
+                                from_id: agent_id.as_str().to_string(),
+                                to_id: "unknown".to_string(),
+                                items: event.description.clone(),
+                            });
+                        }
+                    }
+                    agentora_core::types::ActionType::AllyAccept { .. } => {
+                        if events.iter().any(|e| e.event_type == "ally") {
+                            extra_deltas.push(AgentDelta::AllianceFormed {
+                                id1: agent_id.as_str().to_string(),
+                                id2: "unknown".to_string(),
+                            });
+                        }
+                    }
+                    _ => {}
                 }
-                agentora_core::types::ActionType::TradeAccept { .. } => {
-                    // 查找最近的已完成交易叙事
-                    if let Some(event) = events.iter().find(|e| e.event_type == "trade") {
-                        extra_deltas.push(AgentDelta::TradeCompleted {
-                            from_id: agent_id.as_str().to_string(),
-                            to_id: "unknown".to_string(),
-                            items: event.description.clone(),
-                        });
+
+                // 发送 delta
+                if let Some(delta) = delta {
+                    if let Err(e) = delta_tx.send(delta) {
+                        tracing::error!("[AgentLoop] delta 发送失败: {:?}", e);
+                    }
+                    for extra in extra_deltas {
+                        if let Err(e) = delta_tx.send(extra) {
+                            tracing::error!("[AgentLoop] extra delta 发送失败: {:?}", e);
+                        }
                     }
                 }
-                agentora_core::types::ActionType::AllyAccept { .. } => {
-                    // 查找结盟叙事
-                    if let Some(event) = events.iter().find(|e| e.event_type == "ally") {
-                        extra_deltas.push(AgentDelta::AllianceFormed {
-                            id1: agent_id.as_str().to_string(),
-                            id2: "unknown".to_string(),
-                        });
-                    }
+
+                events
+            };
+
+            // 发送叙事事件（锁外）
+            for event in events {
+                tracing::info!("[Narrative] tick={} {}: {}", event.tick, event.event_type, event.description);
+                let _ = narrative_tx.send(event);
+            }
+        } else if !is_npc {
+            // Player Agent 决策被拒绝，写入 last_action_result 供下次决策使用
+            if let Some(ref vf) = validation_failure {
+                let mut w = world.lock().await;
+                if let Some(agent) = w.agents.get_mut(&agent_id) {
+                    agent.last_action_result = Some(format!("[错误] 上次决策被拒绝：{}", vf));
                 }
-                _ => {}
-            }
-
-            (delta, events, extra_deltas)
-        };
-
-        // 发送叙事事件
-        for event in events {
-            tracing::info!("[Narrative] tick={} {}: {}", event.tick, event.event_type, event.description);
-            let _ = narrative_tx.send(event);
-        }
-
-        // 在锁外发送 delta，避免阻塞
-        if let Err(e) = delta_tx.send(delta) {
-            tracing::error!("[ApplyLoop] delta 发送失败: {:?}", e);
-        }
-
-        // Tier 2: 发送额外 delta 事件
-        for extra_delta in extra_deltas {
-            if let Err(e) = delta_tx.send(extra_delta) {
-                tracing::error!("[ApplyLoop] extra delta 发送失败: {:?}", e);
+                tracing::info!("[AgentLoop] Agent {:?} LLM 校验失败反馈已记录: {}", agent_id, vf);
             }
         }
+
+        interval.tick().await;
     }
 }
 

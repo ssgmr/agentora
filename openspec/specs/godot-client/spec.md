@@ -68,6 +68,9 @@
 
 - **WHEN** 用户点击Agent Sprite
 - **THEN** 系统 SHALL 在右侧面板显示Agent详情
+- **AND** 面板 SHALL 显示饱食度条、水分度条、HP条、库存列表
+- **AND** 饱食度条颜色随数值变化：>50绿色，20-50黄色，<20红色
+- **AND** 水分度条颜色随数值变化：>50蓝色，20-50黄色，<20红色
 
 #### Scenario: Agent死亡效果
 
@@ -105,19 +108,34 @@
 
 ### Requirement: 玩家引导面板
 
-系统 SHALL 提供引导面板，允许玩家通过HSlider调整Agent的6维动机权重。调整后的权重在下一tick生效，影响Agent决策。
+系统 SHALL 提供引导面板，包含 6 个预设倾向按钮（生存/社交/探索/创造/征服/传承）+ 可折叠高级滑块面板。点击按钮 SHALL 对选中 Agent 注入对应维度的临时偏好（+30% 目标维度，-5% 其余维度），持续 30 tick。
+
+#### Scenario: 预设按钮界面
+
+- **WHEN** 玩家打开引导面板
+- **THEN** 显示 6 个按钮：生存、社交、探索、创造、征服、传承
+- **AND** 底部有"高级"展开/折叠切换
+
+#### Scenario: 高级滑块折叠
+
+- **WHEN** 高级面板折叠
+- **THEN** 不显示自定义滑块
+
+#### Scenario: 高级滑块展开
+
+- **WHEN** 玩家点击"高级"
+- **THEN** 显示 6 维动机的自定义滑块 (0%-50%)
 
 #### Scenario: 调整动机权重
 
-- **WHEN** 用户拖动"生存与资源"滑块至0.9
-- **THEN** Agent的"生存与资源"动机 SHALL 在下一tick提升
-- **AND** Agent决策 SHALL 更倾向资源获取行为
+- **WHEN** 用户拖动"生存"滑块至 30%
+- **THEN** Agent 的"生存与资源"动机 SHALL 在下一 tick 提升
+- **AND** Agent 决策 SHALL 更倾向资源获取行为
 
-#### Scenario: 注入偏好
+#### Scenario: 未选中 Agent 时提示
 
-- **WHEN** 用户点击"建议探索"按钮
-- **THEN** 系统 SHALL 向Agent注入一个临时偏好（"认知与好奇"维度临时+0.3）
-- **AND** 该偏好 SHALL 在3个tick后衰减
+- **WHEN** 游戏启动，玩家未选中任何 Agent
+- **THEN** 面板显示选择提示"点击地图上的 Agent 以查看详情和引导"
 
 ### Requirement: 桌面打包分发
 
@@ -134,3 +152,31 @@
 - **WHEN** 执行Godot macOS导出
 - **THEN** SHALL 生成agentora.app
 - **AND** 双击可运行
+
+### Requirement: 里程碑进度UI
+
+界面 SHALL 在顶部或底部显示里程碑进度条（已达成数/总数），达成时弹出 2 秒提示。
+
+#### Scenario: 进度展示
+
+- **WHEN** 游戏运行中
+- **THEN** 显示里程碑进度如 "3/7"
+
+#### Scenario: 里程碑达成提示
+
+- **WHEN** 收到MilestoneReached事件
+- **THEN** 屏幕中央弹出达成提示，2秒后消失
+
+### Requirement: 压力事件叙事显示
+
+叙事流面板 SHALL 用特殊颜色显示压力事件的开始和结束。
+
+#### Scenario: 压力事件显示
+
+- **WHEN** 收到PressureStarted事件
+- **THEN** 叙事流中用橙色显示压力事件描述
+
+#### Scenario: 压力结束显示
+
+- **WHEN** 收到PressureEnded事件
+- **THEN** 叙事流中用灰色显示压力结束信息

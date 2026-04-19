@@ -6,7 +6,6 @@ pub mod create;
 pub mod patch;
 pub mod decay;
 pub mod retrieve;
-pub mod motivation_link;
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -30,7 +29,6 @@ pub struct StrategyFrontmatter {
     pub created_tick: u32,
     #[serde(default)]
     pub deprecated: bool,
-    pub motivation_delta: Option<[f32; 6]>,
 }
 
 /// 策略定义
@@ -42,7 +40,6 @@ pub struct Strategy {
     pub last_used_tick: u32,
     pub created_tick: u32,
     pub deprecated: bool,
-    pub motivation_delta: Option<[f32; 6]>,
     pub content: String,
 }
 
@@ -142,7 +139,6 @@ impl StrategyHub {
 
     /// 解析策略文件（YAML frontmatter + 正文）
     pub fn parse_strategy_file(content: &str) -> Option<StrategyFile> {
-        // 分离 frontmatter 和正文
         if !content.starts_with("---") {
             return None;
         }
@@ -171,10 +167,8 @@ impl StrategyHub {
         let path = dir.join("STRATEGY.md");
         let temp_path = dir.join(format!(".STRATEGY.md.tmp.{}", std::process::id()));
 
-        // 构建文件内容
         let content = self.build_strategy_file(strategy);
 
-        // 原子写入：先写临时文件，再 rename
         fs::write(&temp_path, &content)?;
         fs::rename(&temp_path, &path)?;
 
@@ -190,7 +184,6 @@ impl StrategyHub {
             last_used_tick: strategy.last_used_tick,
             created_tick: strategy.created_tick,
             deprecated: strategy.deprecated,
-            motivation_delta: strategy.motivation_delta,
         };
 
         let yaml = serde_yaml::to_string(&frontmatter).unwrap();
@@ -205,7 +198,6 @@ impl StrategyHub {
             fs::remove_file(path)?;
         }
 
-        // 尝试删除空目录
         let dir = self.strategy_dir(spark_type);
         let _ = fs::remove_dir(dir);
 
@@ -232,7 +224,6 @@ impl StrategyHub {
                     last_used_tick: strategy_file.frontmatter.last_used_tick,
                     created_tick: strategy_file.frontmatter.created_tick,
                     deprecated: strategy_file.frontmatter.deprecated,
-                    motivation_delta: strategy_file.frontmatter.motivation_delta,
                     content: strategy_file.content,
                 };
                 self.strategies.push(strategy);

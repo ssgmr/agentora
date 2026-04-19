@@ -22,7 +22,7 @@ func _input(event: InputEvent) -> void:
 	# 拖拽平移
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_RIGHT or \
-		   (event.button_index == MOUSE_BUTTON_LEFT and event.shift_pressed):
+			event.button_index == MOUSE_BUTTON_LEFT and event.shift_pressed:
 			if event.pressed:
 				_is_panning = true
 				_pan_start_pos = event.position

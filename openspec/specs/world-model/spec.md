@@ -25,6 +25,15 @@
 - **WHEN** Agent尝试移动到坐标 < 0 或 >= 地图大小
 - **THEN** 系统 SHALL 阻止移动，Agent保持在地图内
 
+### Requirement: advance_tick执行顺序
+
+advance_tick SHALL 按以下顺序执行世界状态更新：1. 生存消耗 2. 建筑效果 3. 动机衰减 4. 临时偏好衰减 5. 压力tick 6. 死亡检查 7. 遗产衰减 8. 策略衰减。
+
+#### Scenario: advance_tick执行顺序
+
+- **WHEN** advance_tick执行
+- **THEN** 按顺序执行：1. 生存消耗(satiety/hydration衰减+饥饿掉血) 2. 建筑效果(Camp回血) 3. 动机衰减 4. 临时偏好衰减 5. 压力tick 6. 死亡检查 7. 遗产衰减 8. 策略衰减
+
 ### Requirement: 地形类型
 
 系统 SHALL 支持以下地形类型：平原（可通行）、森林（可通行，采集木材）、山地（不可通行）、水域（不可通行）、沙漠（可通行，无资源）。MVP至少实现4种地形。
@@ -93,8 +102,17 @@
 #### Scenario: 压力生成频率
 
 - **WHEN** 世界运行中
-- **THEN** 系统 SHALL 每20~50个tick随机生成一个环境压力事件
+- **THEN** 系统 SHALL 每40-80个tick随机生成一个压力事件
+- **AND** 事件类型从[干旱，丰饶，瘟疫]中随机选择
+- **AND** 活跃事件超过3个时不生成新事件
 - **AND** 事件 SHALL 优先选择已长时间无压力的区域
+
+#### Scenario: 世界维护里程碑列表
+
+- **WHEN** 创建新World
+- **THEN** World结构体包含 `milestones: Vec<Milestone>` 字段
+- **AND** World结构体包含 `next_pressure_tick: u64` 字段
+- **AND** next_pressure_tick初始化为40-80之间的随机值
 
 ### Requirement: 结构与建筑
 

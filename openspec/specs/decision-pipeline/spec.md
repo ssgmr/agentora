@@ -51,6 +51,8 @@
 - **WHEN** 构建决策 Prompt
 - **THEN** Prompt SHALL 包含：动机向量 + Spark + 记忆摘要 + 感知摘要 + 策略提示
 - **AND** 各部分 SHALL 使用围栏标签包裹（`<chronicle-context>`, `<current-spark>`, `<strategy-context>`）
+- **AND** Prompt SHALL 包含 satiety/hydration 数值及状态标签（"饥饿中"/"口渴中"/"正常"）
+- **AND** Prompt SHALL 包含当前所有活跃压力事件描述
 
 #### Scenario: Prompt 大小控制
 
@@ -63,6 +65,19 @@
 - **WHEN** Agent 周围有多个其他 Agent
 - **THEN** Prompt SHALL 仅包含视野半径（5 格）内的 Agent 信息
 - **AND** 超出视野的 Agent SHALL 不出现在上下文中
+
+#### Scenario: Prompt 注入生存状态
+
+- **WHEN** Agent satiety ≤ 30
+- **THEN** Prompt 包含"饱食度：{satiety}/100, 状态：饥饿中！需要寻找食物"
+
+- **WHEN** Agent hydration ≤ 30
+- **THEN** Prompt 包含"水分度：{hydration}/100, 状态：口渴中！需要寻找水源"
+
+#### Scenario: Prompt 注入压力事件
+
+- **WHEN** pressure_pool 中有干旱事件
+- **THEN** Prompt 包含"当前世界事件：干旱来袭，水源产出减半"
 
 ### Requirement: LLM 候选生成
 

@@ -340,11 +340,13 @@ mod tests {
         // gemma 会在数组元素后添加 // 注释
         let input = r#"{
   "action_type": "Talk",
-  "motivation_delta": [
-    0.0,
-    0.25,  // 增加社会与关系
-    0.0
-  ]
+  "params": {
+    "scores": [
+      0.0,
+      0.25,  // 社交分数
+      0.0
+    ]
+  }
 }"#;
         let result = parse_action_json(input);
         assert!(result.is_ok(), "应能解析带注释的数组: {:?}", result);
@@ -355,12 +357,14 @@ mod tests {
         // gemma 会在正数前加 + 号
         let input = r#"{
   "action_type": "Talk",
-  "motivation_delta": [
-    0.0,
-    +0.25,
-    +0.10,
-    0.0
-  ]
+  "params": {
+    "scores": [
+      0.0,
+      +0.25,
+      +0.10,
+      0.0
+    ]
+  }
 }"#;
         let result = parse_action_json(input);
         assert!(result.is_ok(), "应能解析带+号前缀的数字: {:?}", result);
@@ -371,12 +375,14 @@ mod tests {
         // gemma 同时使用注释和+号
         let input = r#"{
   "action_type": "Talk",
-  "motivation_delta": [
-    0.0,
-    +0.25,  // 增加社会与关系
-    0.0,
-    +0.10   // 认知
-  ]
+  "params": {
+    "scores": [
+      0.0,
+      +0.25,  // 社交分数
+      0.0,
+      +0.10   // 认知分数
+    ]
+  }
 }"#;
         let result = parse_action_json(input);
         assert!(result.is_ok(), "应能同时处理注释和+号: {:?}", result);
@@ -389,11 +395,13 @@ mod tests {
 {
   "reasoning": "社交需求最重要",
   "action_type": "Talk",
-  "motivation_delta": [
-    0.0,
-    +0.25,  // social
-    0.0
-  ]
+  "params": {
+    "scores": [
+      0.0,
+      +0.25,  // social
+      0.0
+    ]
+  }
 }
 ```"#;
         let result = parse_action_json(input);

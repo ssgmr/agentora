@@ -22,6 +22,18 @@
 - **WHEN** Agent 尝试移动至山地或水域
 - **THEN** 移动 SHALL 被拒绝，Agent 位置不变
 
+#### Scenario: 移动被 Fence 阻挡
+
+- **WHEN** Agent 尝试 Move 到 Fence 所在格
+- **AND** Agent 与 Fence 所有者为 Enemy 关系
+- **THEN** 动作被 Blocked，返回错误叙事
+
+#### Scenario: 非敌对 Agent 通过 Fence
+
+- **WHEN** Agent 尝试 Move 到 Fence 所在格
+- **AND** Agent 与 Fence 所有者非 Enemy 关系
+- **THEN** 移动正常执行
+
 ### Requirement: Gather 动作执行
 
 `World::apply_action()` SHALL 正确处理 `Gather` 动作类型，调用 Agent 采集模块。
@@ -40,14 +52,31 @@
 
 ### Requirement: Wait 动作执行
 
-`World::apply_action()` SHALL 正确处理 `Wait` 动作类型。
+`World::apply_action()` SHALL 正确处理 `Wait` 动作类型，专注饮食恢复。
 
-#### Scenario: Wait 恢复生命
+#### Scenario: Wait 有食物和水
 
 - **WHEN** Agent 执行 Wait 动作
-- **THEN** Agent SHALL 恢复少量生命值
-- **AND** 恢复后生命值 SHALL 不超过 max_health
-- **AND** 系统 SHALL 生成 "正在休息" 叙事事件
+- **AND** 背包 Food ≥ 1, Water ≥ 1
+- **THEN** 消耗 1 Food, satiety +30; 消耗 1 Water, hydration +25; HP 不变
+
+#### Scenario: Wait 无食物无水
+
+- **WHEN** Agent 执行 Wait 动作
+- **AND** 背包无 Food 也无 Water
+- **THEN** satiety 不变, hydration 不变, HP 不变（纯休息）
+
+#### Scenario: Wait 仅有食物
+
+- **WHEN** Agent 执行 Wait 动作
+- **AND** 背包有 Food ≥ 1 且 Water = 0
+- **THEN** 消耗 1 Food, satiety +30; hydration 不变; HP 不变
+
+#### Scenario: Wait 仅有水
+
+- **WHEN** Agent 执行 Wait 动作
+- **AND** 背包 Food = 0 且 Water ≥ 1
+- **THEN** 消耗 1 Water, hydration +25; satiety 不变; HP 不变
 
 ### Requirement: TradeOffer 动作执行
 

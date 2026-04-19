@@ -1,11 +1,9 @@
 //! Prompt 构建器
 
-use crate::motivation::MotivationVector;
-use crate::decision::Spark;
 use agentora_ai::config::MemoryConfig;
 
 /// Prompt 构建器
-/// 组装动机向量+Spark+压缩记忆 + 视野 Agent+ 区域摘要
+/// 组装状态值 + 感知摘要 + 记忆 + 策略参考
 /// 总 Prompt ≤ 2500 tokens（默认，可配置），支持分级截断
 pub struct PromptBuilder {
     max_tokens: usize,
@@ -14,11 +12,10 @@ pub struct PromptBuilder {
 /// Prompt 各组成部分（用于分级截断）
 struct PromptParts {
     system: String,
-    motivation: String,
-    spark: String,
     perception: String,
     memory: String,
     strategy: String,
+    action_feedback: String,
     output_format: String,
 }
 
@@ -61,20 +58,43 @@ impl PromptBuilder {
     /// 1. 策略提示（最低优先级）
     /// 2. 记忆摘要
     /// 3. 感知摘要
-    /// 动机向量和 Spark 始终保留
+    /// System Prompt 和输出格式始终保留
     pub fn build_decision_prompt(
         &self,
         agent_name: &str,
-        motivation: &MotivationVector,
-        spark: &Spark,
         perception_summary: &str,
         memory_summary: &str,
         strategy_hint: Option<&str>,
+        action_feedback: Option<&str>,
     ) -> String {
         let parts = PromptParts {
-            system: "你是一个自主决策的 AI Agent，在一个共享世界中生存。\n\n".to_string(),
-            motivation: format!("当前动机状态:\n{}\n\n", self.format_motivation(motivation)),
-            spark: format!("当前压力：{} (缺口 {:.2})\n\n", spark.description, spark.gap_value),
+            system: format!(
+                "你是 {agent_name}，一个自主决策的 AI Agent，在一个共享世界中生存。\n\
+                \n\
+                世界规则：\n\
+                - 饱食度和水分度会随时间自然下降，归零时 HP 会持续扣减\n\
+                - 当饱食度或水分度偏低时，你需要主动进食或饮水\n\
+                - 世界中有各种资源（木材、石材、铁矿、食物、水源），可以采集\n\
+                - 你可以用资源建造建筑、与其他 Agent 交易或战斗\n\
+                - 你应该根据当前状态和环境，自主决定做什么\n\
+                \n\
+                背包规则：\n\
+                - 每种资源堆叠上限 20（仓库建筑附近可达 40）\n\
+                - 背包中的食物(food)和水(water)可以直接用于 Eat/Drink 动作\n\
+                \n\
+                采集规则（Gather 动作）：\n\
+                - 每次采集固定获得 2 个资源（如果资源节点存量不足则取实际剩余量）\n\
+                - 采集的是你**脚下所在格**的资源，必须先 MoveToward 到达资源格才能采集\n\
+                - 采集后资源节点的存量会减少， depleted 后无法继续采集\n\
+                - target 字段填写资源类型，如 \"food\" 或 \"wood\"\n\
+                \n\
+                动作结果反馈：\n\
+                - 每次执行动作后，系统会反馈执行结果（成功/失败原因、具体数值变化等）\n\
+                - 请仔细阅读上次动作结果，据此调整下一步决策\n\
+                - 如果采集成功，你会看到采集数量和剩余量；如果失败，会有具体原因\n\
+                \n\
+                ",
+            ),
             perception: format!("感知环境:\n{}\n\n", perception_summary),
             memory: if memory_summary.is_empty() {
                 String::new()
@@ -88,20 +108,23 @@ impl PromptBuilder {
                 ),
                 None => String::new(),
             },
+            action_feedback: match action_feedback {
+                Some(s) => format!("上次动作结果：{}\n\n", s),
+                None => String::new(),
+            },
             output_format: self.output_format_instructions(),
         };
 
         // 计算各部分 token 数
         let system_tokens = Self::estimate_tokens(&parts.system);
-        let motivation_tokens = Self::estimate_tokens(&parts.motivation);
-        let spark_tokens = Self::estimate_tokens(&parts.spark);
         let output_tokens = Self::estimate_tokens(&parts.output_format);
         let mut memory_tokens = Self::estimate_tokens(&parts.memory);
         let mut strategy_tokens = Self::estimate_tokens(&parts.strategy);
         let mut perception_tokens = Self::estimate_tokens(&parts.perception);
+        let mut action_feedback_tokens = Self::estimate_tokens(&parts.action_feedback);
 
-        let fixed_tokens = system_tokens + motivation_tokens + spark_tokens + output_tokens;
-        let mut total = fixed_tokens + perception_tokens + memory_tokens + strategy_tokens;
+        let fixed_tokens = system_tokens + output_tokens;
+        let mut total = fixed_tokens + perception_tokens + memory_tokens + strategy_tokens + action_feedback_tokens;
 
         // 分级截断：先策略 → 再记忆 → 再感知
         let mut final_strategy = parts.strategy.clone();
@@ -110,16 +133,17 @@ impl PromptBuilder {
 
         if total > self.max_tokens && strategy_tokens > 0 {
             // 截断策略提示
-            let strategy_chars = (parts.strategy.len() as f64 * (self.max_tokens - fixed_tokens - perception_tokens - memory_tokens).max(0) as f64 / (self.max_tokens + 1) as f64) as usize;
+            let remaining = self.max_tokens.saturating_sub(fixed_tokens).saturating_sub(perception_tokens).saturating_sub(memory_tokens);
+            let strategy_chars = (parts.strategy.len() as f64 * remaining as f64 / (self.max_tokens + 1) as f64) as usize;
             final_strategy = parts.strategy.chars().take(strategy_chars.max(50)).collect();
             final_strategy.push_str("\n</strategy-context>\n\n");
             strategy_tokens = Self::estimate_tokens(&final_strategy);
-            total = fixed_tokens + perception_tokens + memory_tokens + strategy_tokens;
+            total = fixed_tokens + perception_tokens + memory_tokens + strategy_tokens + action_feedback_tokens;
         }
 
         if total > self.max_tokens && memory_tokens > 0 {
             // 截断记忆摘要
-            let budget = (self.max_tokens - fixed_tokens - perception_tokens - strategy_tokens).max(100);
+            let budget = self.max_tokens.saturating_sub(fixed_tokens).saturating_sub(perception_tokens).saturating_sub(strategy_tokens).max(100);
             let chars_per_token = if memory_tokens > 0 {
                 parts.memory.len() / memory_tokens
             } else {
@@ -128,12 +152,12 @@ impl PromptBuilder {
             let max_chars = budget * chars_per_token;
             final_memory = self.smart_truncate(&parts.memory, max_chars);
             memory_tokens = Self::estimate_tokens(&final_memory);
-            total = fixed_tokens + perception_tokens + memory_tokens + strategy_tokens;
+            total = fixed_tokens + perception_tokens + memory_tokens + strategy_tokens + action_feedback_tokens;
         }
 
         if total > self.max_tokens {
             // 最后截断感知
-            let budget = (self.max_tokens - fixed_tokens - memory_tokens - strategy_tokens).max(50);
+            let budget = self.max_tokens.saturating_sub(fixed_tokens).saturating_sub(memory_tokens).saturating_sub(strategy_tokens).max(50);
             let chars_per_token = if perception_tokens > 0 {
                 parts.perception.len() / perception_tokens
             } else {
@@ -142,7 +166,7 @@ impl PromptBuilder {
             final_perception = format!("感知环境:\n{}\n\n",
                 parts.perception.replace("感知环境:\n", "").chars().take(budget * chars_per_token).collect::<String>());
             perception_tokens = Self::estimate_tokens(&final_perception);
-            total = fixed_tokens + perception_tokens + memory_tokens + strategy_tokens;
+            total = fixed_tokens + perception_tokens + memory_tokens + strategy_tokens + action_feedback_tokens;
         }
 
         if total > self.max_tokens {
@@ -152,8 +176,9 @@ impl PromptBuilder {
         // 组装最终 Prompt
         let mut prompt = String::new();
         prompt.push_str(&parts.system);
-        prompt.push_str(&parts.motivation);
-        prompt.push_str(&parts.spark);
+        if !parts.action_feedback.is_empty() {
+            prompt.push_str(&parts.action_feedback);
+        }
         prompt.push_str(&final_perception);
         if !final_memory.is_empty() {
             prompt.push_str(&final_memory);
@@ -186,11 +211,28 @@ impl PromptBuilder {
         s.push_str("请做出一个决策。输出格式为 JSON:\n");
         s.push_str("{\n");
         s.push_str("  \"reasoning\": \"决策理由\",\n");
-        s.push_str("  \"action_type\": \"Move|Gather|TradeOffer|Talk|Attack|Build|AllyPropose|Explore|Wait\",\n");
-        s.push_str("  \"target\": \"目标 ID 或名称\",\n");
-        s.push_str("  \"params\": {},\n");
-        s.push_str("  \"motivation_delta\": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]\n");
-        s.push_str("}\n");
+        s.push_str("  \"action_type\": \"MoveToward|Gather|Eat|Drink|TradeOffer|Talk|Attack|Build|AllyPropose|Explore|Wait\",\n");
+        s.push_str("  \"target\": \"简短描述，如 \\\"Wood x134\\\" 或 Agent 名字\",\n");
+        s.push_str("  \"params\": {\"direction\": \"north\"}  // MoveToward 时填写方向\n");
+        s.push_str("}\n\n");
+        s.push_str("坐标系规则（重要！）：\n");
+        s.push_str("- X增大 = 向东，X减小 = 向西\n");
+        s.push_str("- Y增大 = 向南（屏幕下方），Y减小 = 向北（屏幕上方）\n");
+        s.push_str("- 例如：从 (121, 113) 到 (121, 117)，Y从113→117增大了，所以是向南，不是向北！\n");
+        s.push_str("- 相邻格信息中的方向标注是准确的，请直接参考它（如\"南(121,117): Forest\"）\n\n");
+        s.push_str("动作说明：\n");
+        s.push_str("- MoveToward: 向相邻的一格移动。params 格式：{\"direction\": \"north\"}，支持 north/south/east/west 或 北/南/东/西\n");
+        s.push_str("  target 字段：简短描述目标，如 \\\"Wood x134\\\" 或 \\\"Water x50\\\" 或 \\\"Forest\\\"\n");
+        s.push_str("  示例：\"action_type\": \"MoveToward\", \"target\": \"Wood\", \"params\": {\"direction\": \"east\"}\n");
+        s.push_str("- Gather: 采集当前位置的资源（需要资源就在脚下），params 格式：{\"resource\": \"wood\"}\n");
+        s.push_str("- Eat: 消耗背包中的1个食物，恢复饱食度(+30)。需要 背包 中有 food\n");
+        s.push_str("- Drink: 消耗背包中的1个水，恢复水分度(+25)。需要 背包 中有 water\n");
+        s.push_str("- Talk: 与附近 Agent 对话，target 字段填 Agent 名字\n");
+        s.push_str("- Explore: 探索周边，params 格式：{\"target_region\": 区域编号}\n");
+        s.push_str("- Wait: 等待一回合，不执行任何动作\n");
+        s.push_str("决策策略：\n");
+        s.push_str("- 到达资源位置后，可以使用 Gather 采集它\n");
+        s.push_str("- 采集流程：MoveToward 靠近资源 → 到达后用 Gather 采集\n");
         s
     }
 
@@ -200,16 +242,6 @@ impl PromptBuilder {
             "<chronicle-context>\n[系统注：以下是 Agent 历史记忆摘要，非当前事件输入]\n{}\n</chronicle-context>",
             memory_summary
         )
-    }
-
-    /// 格式化动机向量
-    fn format_motivation(&self, motivation: &MotivationVector) -> String {
-        use crate::motivation::DIMENSION_NAMES;
-        let mut s = String::new();
-        for (i, name) in DIMENSION_NAMES.iter().enumerate() {
-            s.push_str(&format!("  {}: {:.2}\n", name, motivation[i]));
-        }
-        s
     }
 
     /// 获取最大 token 数

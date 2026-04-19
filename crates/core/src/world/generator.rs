@@ -139,9 +139,6 @@ impl WorldGenerator {
 
         let (width, height) = world.map.size();
 
-        let templates: Vec<&[f32; 6]> = seed.motivation_templates.values().map(|t| &t.v).collect();
-        let template_names: Vec<&str> = seed.motivation_templates.keys().map(|s| s.as_str()).collect();
-
         for i in 0..seed.initial_agents {
             // 找一个可通行位置
             let mut pos;
@@ -154,15 +151,7 @@ impl WorldGenerator {
                 }
             }
 
-            let template_idx = rng.gen_range(0..templates.len().max(1));
-            let name = format!("{}_{}", template_names.get(template_idx).unwrap_or(&"Agent"), i + 1);
-
-            let mut agent = Agent::new(AgentId::new(uuid::Uuid::new_v4().to_string()), name, pos);
-
-            // 应用动机模板
-            if let Some(template) = templates.get(template_idx) {
-                agent.motivation = crate::motivation::MotivationVector::from_array(**template);
-            }
+            let agent = Agent::new(AgentId::new(uuid::Uuid::new_v4().to_string()), format!("Agent_{}", i + 1), pos);
 
             world.insert_agent_at(agent.id.clone(), agent);
         }

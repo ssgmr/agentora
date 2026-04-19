@@ -7,7 +7,6 @@ pub mod dialogue;
 pub mod combat;
 pub mod alliance;
 
-use crate::motivation::MotivationVector;
 use crate::types::{AgentId, Position, PersonalitySeed, Action, ActionType};
 use crate::memory::MemorySystem;
 use crate::strategy::StrategyHub;
@@ -19,7 +18,6 @@ pub struct Agent {
     pub id: AgentId,
     pub name: String,
     pub position: Position,
-    pub motivation: MotivationVector,
     pub health: u32,
     pub max_health: u32,
     pub satiety: u32,       // 饱食度 0-100，初始100
@@ -34,12 +32,21 @@ pub struct Agent {
     pub is_alive: bool,
     /// 临时偏好（由外部注入，随 tick 衰减）
     pub temp_preferences: Vec<TempPreference>,
+    /// 经验值与等级
+    pub experience: u32,
+    pub level: u32,
+    /// 上一次执行的动作类型（用于避免重复选择相同动作）
+    pub last_action_type: Option<String>,
+    /// 上一次动作执行结果反馈（成功/失败原因，传递给 LLM 感知）
+    pub last_action_result: Option<String>,
+    /// 上一次移动前的位置（用于检测来回振荡）
+    pub last_position: Option<Position>,
 }
 
 /// 临时偏好
 #[derive(Debug, Clone)]
 pub struct TempPreference {
-    pub dimension: usize,
+    pub key: String,
     pub boost: f32,
     pub remaining_ticks: u32,
 }
@@ -71,7 +78,6 @@ impl Agent {
             id,
             name,
             position,
-            motivation: MotivationVector::new(),
             health: 100,
             max_health: 100,
             satiety: 100,
@@ -85,18 +91,23 @@ impl Agent {
             max_age: 200,
             is_alive: true,
             temp_preferences: Vec::new(),
+            experience: 0,
+            level: 1,
+            last_action_type: None,
+            last_action_result: None,
+            last_position: None,
         }
     }
 
     /// 注入临时偏好
-    pub fn inject_preference(&mut self, dimension: usize, boost: f32, duration_ticks: u32) {
-        // 检查是否已有同维度偏好，有则叠加
-        if let Some(pref) = self.temp_preferences.iter_mut().find(|p| p.dimension == dimension) {
+    pub fn inject_preference(&mut self, key: &str, boost: f32, duration_ticks: u32) {
+        // 检查是否已有同 key 偏好，有则叠加
+        if let Some(pref) = self.temp_preferences.iter_mut().find(|p| p.key == key) {
             pref.boost += boost;
             pref.remaining_ticks = pref.remaining_ticks.max(duration_ticks);
         } else {
             self.temp_preferences.push(TempPreference {
-                dimension,
+                key: key.to_string(),
                 boost,
                 remaining_ticks: duration_ticks,
             });
@@ -112,27 +123,20 @@ impl Agent {
         self.temp_preferences.retain(|p| p.remaining_ticks > 0);
     }
 
-    /// 计算有效动机（基础 + 临时偏好加成 + 生存压力）
-    pub fn effective_motivation(&self) -> [f32; 6] {
-        let mut base = self.motivation.to_array();
-        for pref in &self.temp_preferences {
-            if pref.dimension < 6 {
-                base[pref.dimension] = (base[pref.dimension] + pref.boost).clamp(0.0, 1.0);
-            }
+    /// 增加经验值，返回是否升级
+    pub fn add_experience(&mut self, amount: u32) -> bool {
+        self.experience += amount;
+        // 升级公式：level * 100 XP（LV1→2需要100，LV2→3需要200，...）
+        let xp_for_next = self.level * 100;
+        if self.experience >= xp_for_next {
+            self.experience -= xp_for_next;
+            self.level += 1;
+            // 升级奖励：HP上限+10，恢复少量HP
+            self.max_health += 10;
+            self.health = (self.health + 20).min(self.max_health);
+            return true;
         }
-
-        // 生存压力驱动：satiety/hydration 低时增加生存维度
-        // 阈值从 30 提高到 50，让 Agent 更早开始储备资源
-        let survival_boost = if self.satiety == 0 || self.hydration == 0 {
-            0.5 // 极端饥渴：生存+0.5
-        } else if self.satiety <= 50 || self.hydration <= 50 {
-            0.3 // 饥饿/口渴：生存+0.3
-        } else {
-            0.0
-        };
-        base[0] = (base[0] + survival_boost).clamp(0.0, 1.0);
-
-        base
+        false
     }
 
     /// 增加信任值

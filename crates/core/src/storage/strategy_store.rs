@@ -5,10 +5,6 @@ use rusqlite::Connection;
 
 /// 保存策略
 pub fn save_strategy(conn: &Connection, strategy: &Strategy) -> Result<i64, rusqlite::Error> {
-    let motivation_bytes: Option<Vec<u8>> = strategy.motivation_delta.map(|delta| {
-        delta.iter().flat_map(|f| f.to_le_bytes()).collect()
-    });
-
     conn.execute(
         "INSERT OR REPLACE INTO strategies (spark_type, success_rate, use_count, last_used_tick, deprecated, created_tick)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -39,7 +35,6 @@ pub fn load_all_strategies(conn: &Connection) -> Result<Vec<Strategy>, rusqlite:
             last_used_tick: row.get(3)?,
             deprecated: row.get::<_, bool>(4)?,
             created_tick: row.get(5)?,
-            motivation_delta: None,
             content: String::new(),
         })
     })?.collect::<Result<Vec<_>, _>>()?;

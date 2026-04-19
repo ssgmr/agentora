@@ -1,8 +1,9 @@
-//! 视觉感知模块：圆形视野扫描，填充地形/资源/Agent/关系数据
+//! 视觉感知模块：圆形视野扫描，填充地形/资源/Agent/结构/遗产数据
 
 use crate::agent::{Agent, RelationType};
-use crate::types::{AgentId, Direction, Position, TerrainType, ResourceType};
+use crate::types::{AgentId, Direction, Position, TerrainType, ResourceType, StructureType};
 use crate::world::World;
+use crate::legacy::LegacyType;
 use std::collections::HashMap;
 
 /// 附近 Agent 信息
@@ -12,9 +13,28 @@ pub struct NearbyAgentInfo {
     pub name: String,
     pub position: Position,
     pub distance: u32,                   // 曼哈顿距离
-    pub motivation_summary: [f32; 6],
     pub relation_type: RelationType,     // 对自己的关系
     pub trust: f32,
+}
+
+/// 附近结构信息
+#[derive(Debug, Clone)]
+pub struct NearbyStructureInfo {
+    pub position: Position,
+    pub structure_type: StructureType,
+    pub owner_name: Option<String>,
+    pub durability: u32,
+    pub distance: u32,
+}
+
+/// 附近遗产信息
+#[derive(Debug, Clone)]
+pub struct NearbyLegacyInfo {
+    pub position: Position,
+    pub legacy_type: LegacyType,
+    pub original_agent_name: String,
+    pub has_items: bool,
+    pub distance: u32,
 }
 
 /// 视野扫描结果
@@ -24,6 +44,8 @@ pub struct VisionScanResult {
     pub terrain_at: HashMap<Position, TerrainType>,
     pub resources_at: HashMap<Position, (ResourceType, u32)>,
     pub nearby_agents: Vec<NearbyAgentInfo>,
+    pub nearby_structures: Vec<NearbyStructureInfo>,
+    pub nearby_legacies: Vec<NearbyLegacyInfo>,
 }
 
 /// 扫描指定 Agent 的视野
@@ -38,6 +60,8 @@ pub fn scan_vision(world: &World, agent_id: &AgentId, radius: u32) -> VisionScan
                 terrain_at: HashMap::new(),
                 resources_at: HashMap::new(),
                 nearby_agents: Vec::new(),
+                nearby_structures: Vec::new(),
+                nearby_legacies: Vec::new(),
             };
         }
     };
@@ -53,6 +77,8 @@ pub fn scan_vision(world: &World, agent_id: &AgentId, radius: u32) -> VisionScan
     let mut terrain_at = HashMap::new();
     let mut resources_at = HashMap::new();
     let mut nearby_agents = Vec::new();
+    let mut nearby_structures = Vec::new();
+    let mut nearby_legacies = Vec::new();
 
     for y in min_y..=max_y {
         for x in min_x..=max_x {
@@ -98,7 +124,6 @@ pub fn scan_vision(world: &World, agent_id: &AgentId, radius: u32) -> VisionScan
                             name: other.name.clone(),
                             position: other.position,
                             distance: pos.manhattan_distance(&agent.position),
-                            motivation_summary: other.motivation.to_array(),
                             relation_type,
                             trust,
                         });
@@ -108,11 +133,42 @@ pub fn scan_vision(world: &World, agent_id: &AgentId, radius: u32) -> VisionScan
         }
     }
 
+    // 扫描视野内的结构
+    for (pos, structure) in &world.structures {
+        if pos.manhattan_distance(&agent.position) <= radius {
+            let owner_name = structure.owner_id.as_ref().and_then(|id| {
+                world.agents.get(id).map(|a| a.name.clone())
+            });
+            nearby_structures.push(NearbyStructureInfo {
+                position: *pos,
+                structure_type: structure.structure_type,
+                owner_name,
+                durability: structure.durability,
+                distance: pos.manhattan_distance(&agent.position),
+            });
+        }
+    }
+
+    // 扫描视野内的遗产
+    for legacy in &world.legacies {
+        if legacy.position.manhattan_distance(&agent.position) <= radius {
+            nearby_legacies.push(NearbyLegacyInfo {
+                position: legacy.position,
+                legacy_type: legacy.legacy_type,
+                original_agent_name: legacy.original_agent_name.clone(),
+                has_items: !legacy.items.is_empty(),
+                distance: legacy.position.manhattan_distance(&agent.position),
+            });
+        }
+    }
+
     VisionScanResult {
         self_position: agent.position,
         terrain_at,
         resources_at,
         nearby_agents,
+        nearby_structures,
+        nearby_legacies,
     }
 }
 

@@ -23,15 +23,16 @@ pub struct AgentSnapshot {
     pub id: String,
     pub name: String,
     pub position: (u32, u32),
-    pub motivation: [f32; 6],
     pub health: u32,
     pub max_health: u32,
     pub satiety: u32,
     pub hydration: u32,
     pub inventory_summary: HashMap<String, u32>,
     pub current_action: String,
+    pub action_result: String,
     pub age: u32,
     pub is_alive: bool,
+    pub level: u32,
 }
 
 /// 地图单元格变化

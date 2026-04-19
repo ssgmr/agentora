@@ -9,7 +9,7 @@ tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "local-time"] }
 tracing-appender = "0.2"
 thiserror.workspace = true
 anyhow.workspace = true
@@ -19,6 +19,7 @@ agentora-core = { workspace = true }
 agentora-ai = { workspace = true }
 
 toml = "0.8"
+time = { version = "0.3", features = ["macros", "local-offset"] }
 
 [lib]
 crate-type = ["cdylib"]  # GDExtension需要动态库

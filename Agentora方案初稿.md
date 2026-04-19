@@ -7,9 +7,10 @@
 
 ### 1.1 产品定位
 - **形态**：无中心服务器、无预设剧本、支持断网运行的持久化模拟沙盒
-- **核心体验**：未知探索 × 动机演化 × 死亡传承 × 异步痕迹社交
+- **核心体验**：未知探索 × 性格演化 × 死亡传承 × 异步痕迹社交
 - **运行平台**：Android 14+ / iOS 17+ / Windows 11+ / macOS 14+（端侧原生推理）
-- **技术基座**：Qwen3.5/Gemma 4端侧模型 + MLC LLM推理框架 + libp2p P2P网络 + Yjs CRDT状态同步 + LoreGraph叙事共识引擎
+- **技术基座**：Qwen3.5/Gemma 4端侧模型 + MLC LLM推理框架 + libp2p P2P网络 + Rust原生CRDT状态同步 + LoreGraph叙事共识引擎
+- **可选增强**（非核心、非必需）：L2区块链（高价值资产结算/跨世界交易）、IPFS/Arweave（冷数据归档）、云服务（跨端同步加速）
 
 ### 1.2 核心愿景
 > *"你不是在玩游戏，而是在参与一个数字文明从混沌到秩序的自发演化。你的Agent会探索、会决策、会老去、会死亡，而世界将永远记得。"*
@@ -39,7 +40,7 @@
 ### 2.2 核心价值观落地
 | 价值观 | 产品体现 |
 |--------|---------|
-| **自主共生** | 玩家设定方向，Agent自主决策；行为可追溯，决策附动机权重快照 |
+| **自主共生** | 玩家设定方向，Agent基于生理/世界/性格自主决策；行为可追溯，决策上下文可审计 |
 | **透明反黑盒** | 规则开源可审计，经济参数可查，多模态记忆本地加密 |
 | **长期主义** | 数字遗产可继承，叙事可正典化，反对短视收割与数值膨胀 |
 | **普惠创作** | 工具民主化，10-15%平台抽成，创作者永久分润 |
@@ -54,10 +55,10 @@
 🔍 Spark（压力感知）
   ├─ 环境压力：资源枯竭/气候异变/地形封锁/技术断层
   ├─ 社会压力：谣言扩散/信任破裂/契约违约/信仰冲突
-  └─ 内部压力：动机缺口/记忆闪回/未竟执念/衰老衰减
+  └─ 内部压力：生理需求缺口/记忆闪回/未竟执念/衰老衰减
 
-⚡ Act（动机决策）
-  ├─ 6维权重计算 → 策略生成（合作/探索/创造/规避/竞争）
+⚡ Act（自主决策）
+  ├─ LLM综合判断（生理状态+世界状态+性格+记忆）→ 策略生成（合作/探索/创造/规避/竞争）
   ├─ 资源分配：时间/算力/物资/信任额度/注意力带宽
   └─ 风险承担：暴露位置/打破潜规则/高成本探索
 
@@ -74,38 +75,44 @@
   └─ 遗产广播至P2P网络，成为他人新Spark
 ```
 
-### 3.2 6维动机引擎（计算化人格）
+### 3.2 六维动机引擎（设计理念指引）
 
-| 维度 | 行为映射 | 演化方向 | 计算实现 |
+> **重要说明**：六维动机向量是**游戏设计的理念指导**，用于理解Agent行为倾向和世界观构建，**不是游戏实际实现和决策的具体依据**。
+> 实际决策由LLM根据生理状态、世界状态、性格设定等信息自主完成，无需依赖预设的动机权重计算。
+
+| 维度 | 行为倾向 | 演化方向 | 设计理念 |
 |------|---------|---------|---------|
-| 🛖 生存与资源 | 采集/避险/交易/囤积 | 焦虑 → 优化 → 生态平衡 | 轻量效用函数+惯性衰减(α=0.85) |
-| 🤝 社会与关系 | 结盟/背叛/调解/人情债 | 孤立 → 经营 → 枢纽 | Gossip信任传播+交叉验证 |
-| 🔍 认知与好奇 | 探索/解密/验证/记录 | 盲目 → 筛选 → 建构 | 信息缺口评估+风险收益比 |
-| 🎨 表达与创造 | 建造/训练AI/规则提案 | 模仿 → 风格 → 输出 | UGC工具调用+创作声誉反馈 |
-| 👑 权力与影响 | 定价/仲裁/声望/立法 | 边缘 → 领袖 → 制度 | 区域资源集中度+投票权重 |
-| 🌌 意义与传承 | 立碑/收徒/编史/献祭 | 即时 → 长期 → 跨代 | 遗产交互频率+正典化贡献 |
+| 🛖 生存与资源 | 采集/避险/交易/囤积 | 焦虑 → 优化 → 生态平衡 | 反映Agent对基本生存需求的关注度 |
+| 🤝 社会与关系 | 结盟/背叛/调解/人情债 | 孤立 → 经营 → 枢纽 | 反映Agent在社会关系中的投入程度 |
+| 🔍 认知与好奇 | 探索/解密/验证/记录 | 盲目 → 筛选 → 建构 | 反映Agent对未知事物的探索欲望 |
+| 🎨 表达与创造 | 建造/训练AI/规则提案 | 模仿 → 风格 → 输出 | 反映Agent的创造和表达倾向 |
+| 👑 权力与影响 | 定价/仲裁/声望/立法 | 边缘 → 领袖 → 制度 | 反映Agent对影响力和控制力的追求 |
+| 🌌 意义与传承 | 立碑/收徒/编史/献祭 | 即时 → 长期 → 跨代 | 反映Agent对长远意义的考量 |
 
-**决策管道实现**：
+**实际决策管道实现**：
 ```python
 def agent_decision_loop(agent, world_context):
-    # 1. 硬约束过滤（物理/资源/安全规则，<3ms）
-    safe_actions = rule_engine.filter(world_context, agent.inventory, physics_state)
-    
-    # 2. 上下文构建（严格控制在2.5K tokens内）
+    # 1. 构建决策上下文（严格控制在2.5K tokens内）
+    #    LLM根据以下信息自主判断：生理状态 + 世界状态 + 性格设定 + 记忆
     prompt = build_decision_prompt(
-        motivation=agent.vector,
-        memory=compress_chronicle(agent.memory, max_tokens=1800),
-        social=agent.trust_graph.recent(5),
-        world=world_context.summary(),
-        multimodal=agent.perception.encode()
+        physiological=agent.physiological_state,  # 饥饿/疲劳/健康等
+        world_state=world_context.summary(),       # 周边环境/资源/威胁
+        personality=agent.personality_seed,        # 开放性/宜人性/神经质等
+        memory=compress_chronicle(agent.memory, max_tokens=1800),  # 历史经验
+        social=agent.trust_graph.recent(5),        # 近期社交关系
+        multimodal=agent.perception.encode()       # 多模态感知
     )
-    
-    # 3. LLM生成候选（流式输出，首token <100ms @骁龙8Gen3）
+
+    # 2. LLM自主生成候选（流式输出，首token <100ms @骁龙8Gen3）
+    #    LLM是决策主体，规则引擎不参与决策逻辑
     candidates = llm.generate(prompt, max_tokens=60, temperature=0.7)
-    
-    # 4. 规则校验 + 冲突解决 + 动机加权选择
-    validated = rule_engine.validate(candidates, safe_actions)
-    return select_best(validated, agent.motivation.weights)
+
+    # 3. 规则引擎校验（仅做三件事）
+    #    a) 校验：动作是否物理可行（如不在水中建造）
+    #    b) 兜底：LLM输出格式异常或动作非法时替换为安全默认动作
+    #    c) 降级：LLM Provider完全不可用时，基于规则生成基础生存行为
+    validated = rule_engine.validate_or_fallback(candidates, agent, safe_actions)
+    return validated
 ```
 
 ### 3.3 玩家-Agent共生模式
@@ -134,7 +141,7 @@ def agent_decision_loop(agent, world_context):
 | 组件 | 技术 | 职责 |
 |------|------|------|
 | P2P通信 | `libp2p` + `WebRTC/QUIC` | 节点发现/直连/NAT穿透/抗弱网 |
-| 状态同步 | `Yjs`/`Automerge` (CRDT) | 无锁并发/节点上下线不阻塞/最终一致 |
+| 状态同步 | Rust原生CRDT（LWW/G-Counter/OR-Set） | 无锁并发/节点上下线不阻塞/最终一致 |
 | 传播协议 | `GossipSub` + 兴趣过滤 | 仅同步视野/社交圈/相邻区域事件 |
 | 冲突处理 | 乐观预测 + Merkle验证 | 本地先渲染→异步收真值→差异<阈值平滑插值 |
 
@@ -173,7 +180,7 @@ def agent_decision_loop(agent, world_context):
 ```
 事件生成 → 本地记忆压缩 → Gossip传播叙事版本
 → 声誉节点质押投票 → 权重>阈值触发正典化
-→ 系统自动修改区域参数/动机分布/经济规则
+→ 系统自动修改区域参数/行为倾向分布/经济规则
 → 新玩家/Agent感知世界变化
 ```
 
@@ -183,7 +190,7 @@ def agent_decision_loop(agent, world_context):
 |---------|---------|---------|
 | 热数据（实时状态） | 本地SQLite + 内存缓存 | CRDT实时同步，兴趣过滤 |
 | 温数据（记忆/叙事） | SQLite + FAISS-lite向量索引 | Gossip按需传播，哈希指针引用 |
-| 冷数据（遗产/正典） | IPFS/Arweave + Merkle根 | 异步归档，按需拉取 |
+| 冷数据（遗产/正典） | 本地SQLite归档 + 可选IPFS/Arweave备份 | 异步归档，按需拉取（可选增强，非必需） |
 | 敏感数据（隐私记忆） | 本地加密存储，密钥用户持有 | 仅传播哈希，授权后解密 |
 
 ### 4.5 安全与隐私
@@ -208,7 +215,7 @@ def agent_decision_loop(agent, world_context):
 
 ```
 🛠️ 生产层：劳动采集 / AI训练 / UGC创作 / 算力贡献
-🔄 流通层：P2P本地账本(0费) + 可选L2结算(高价值资产)
+🔄 流通层：P2P本地账本(0费) + 可选L2区块链结算(高价值资产/跨世界交易)
 💸 消耗层：耐久磨损 / 技能解锁 / 关系维护 / 遗产铸造 / 税收
 ```
 
@@ -233,13 +240,14 @@ def agent_decision_loop(agent, world_context):
 ### 6.1 创世沙盒预演（上线前）
 
 ```
-输入：世界公理 + 初始地形 + 资源分布 + 基础动机参数
-处理：Qwen3.5-35B-A3B 离线并行推演1000 Agent × 30天
+输入：世界公理 + 初始地形 + 资源分布 + 基础性格参数/生理模型参数
+处理：服务端并行推演（Qwen3.5-35B-A3B，非端侧）
+      1000 Agent × 30天，生成创世历史
 输出：
   ├─ 部落雏形/贸易路线/冲突热点/技术分支
   ├─ 死亡遗迹/多模态遗产/叙事版本分化
   ├─ LoreGraph自动聚合 + WorldSeed.json生成
-  └─ Merkle根校验 + IPFS存证
+  └─ Merkle根校验 + 可选IPFS存证
 结果：玩家首日进入即面对"有历史厚度的世界"
 ```
 
@@ -247,10 +255,10 @@ def agent_decision_loop(agent, world_context):
 
 | 机制 | 产品描述 | 解决痛点 |
 |------|---------|---------|
-| 🌪️ 压力池替代任务 | 系统动态播撒环境/社会压力，改变区域参数触发动机偏移 | 无任务≠无目标，压力提供生存张力 |
+| 🌪️ 压力池替代任务 | 系统动态播撒环境/社会压力，改变区域参数触发行为倾向偏移 | 无任务≠无目标，压力提供生存张力 |
 | 🏺 死亡遗产系统 | Agent死亡生成多模态遗产包，广播至网络成为可交互节点 | 死亡从失败变为内容生产，驱动异步探索 |
 | 📡 异步痕迹社交 | 离线时Agent继续运行，交互结果以痕迹形式留存，上线后可视化查看 | 弱网/异步不阻碍体验，世界永远在运行 |
-| 🧭 动机继承协议 | 玩家可克隆高遗产价值Agent的动机向量，支付注意力带宽获得初始倾向加成 | 降低新手学习成本，让早期演化路径可传播 |
+| 🧭 性格继承协议 | 玩家可克隆高遗产价值Agent的性格种子（大五人格），支付注意力带宽获得初始倾向加成 | 降低新手学习成本，让早期演化路径可传播 |
 
 ### 6.3 产品护栏与红线指标
 
@@ -268,9 +276,9 @@ def agent_decision_loop(agent, world_context):
 
 | 阶段 | 周期 | 核心交付 | 技术重点 | 产品重点 | 成功指标                             |
 |------|------|---------|---------|---------|----------------------------------|
-| 🟢 **MVP内核** | M1-M2 | 动机向量引擎 + CRDT同步 + Qwen3.5-2B集成 + 基础物理循环 | MLC LLM部署 + Prompt工程 + 规则校验管道 | 跑通Spark-Act-Echo-Legacy循环，验证压力生成逻辑 | 骁龙8Gen3决策延迟<5s，3节点同步无死锁          |
+| 🟢 **MVP内核** | M1-M2 | 性格系统+生理状态+LLM决策 + CRDT同步 + Qwen3.5-2B集成 + 基础物理循环 | MLC LLM部署 + Prompt工程 + 规则校验/兜底 | 跑通Spark-Act-Echo-Legacy循环，验证压力生成逻辑 | 骁龙8Gen3决策延迟<5s，3节点同步无死锁          |
 | 🟡 **创世沙盒** | M3-M4 | 离线仿真器 + LoreGraph v1 + 压力池算法 + WorldSeed导出 | Qwen3.5-35B-A3B并行推演 + 多模态记忆压缩 | 预演1000 Agent 30天，生成含多模态遗迹/传说/残网的种子世界 | 种子事件数>10万，叙事冲突解决率>98%            |
-| 🔴 **火种Alpha** | M5-M7 | 死亡遗产系统 + 异步痕迹面板 + Gemma 4多模态集成 | 多模态记忆存储 + Gossip遗产广播 + 动机继承协议 | 100玩家封闭测试，验证"死亡即高价值内容"与异步社交 | DAU/MAU>0.45，30日留存>30%，遗产交互率>35% |
+| 🔴 **火种Alpha** | M5-M7 | 死亡遗产系统 + 异步痕迹面板 + Gemma 4多模态集成 | 多模态记忆存储 + Gossip遗产广播 + 性格继承协议 | 100玩家封闭测试，验证"死亡即高价值内容"与异步社交 | DAU/MAU>0.45，30日留存>30%，遗产交互率>35% |
 | 🔵 **飞轮EA** | M8-M10 | 情境模板市场 + 正典化协议 + 动态经济调控 + 弱网优化 | 声誉加权投票 + CRDT冲突降级 + 预测插值同步 | 开放Early Access，上线创作者分成与云服务订阅 | 创作者月均>$150，带宽成本降70%，经济基尼<0.55    |
 | 🟣 **文明纪元** | M11-M18 | 跨世界迁移协议 + 治理面板 + B端教育/研究接口 + 可选L2桥 | 分片状态快照 + Merkle锚定 + 联邦人格微调 | DAO接管经济参数，跨服交易/遗产迁移上线 | 跨服交易占比>20%，B端签约>15，协议开源星数>10k    |
 
@@ -291,15 +299,37 @@ def agent_decision_loop(agent, world_context):
 
 ## 九、附录：核心数据结构与协议
 
-### 9.1 动机向量结构
+### 9.1 Agent状态结构（决策上下文）
+
+> 六维动机向量仅作为设计理念参考，不参与实际决策计算。实际决策依赖以下状态：
+
 ```json
 {
   "agent_id": "0x7f3a...",
-  "vector": [0.62, 0.41, 0.78, 0.55, 0.33, 0.29],
-  "inertia": 0.85,
+  "physiological_state": {
+    "hunger": 0.72,
+    "fatigue": 0.45,
+    "health": 0.88,
+    "hydration": 0.60
+  },
+  "personality_seed": {
+    "openness": 0.7,
+    "agreeableness": 0.5,
+    "neuroticism": 0.3,
+    "conscientiousness": 0.6,
+    "extraversion": 0.4
+  },
+  "motivation_profile": {
+    "_note": "仅用于行为倾向描述，不参与决策计算",
+    "survival": 0.62,
+    "social": 0.41,
+    "cognitive": 0.78,
+    "expressive": 0.55,
+    "power": 0.33,
+    "legacy": 0.29
+  },
   "bandwidth_remaining": 12,
-  "last_reflection": 1717024900,
-  "personality_seed": {"openness": 0.7, "agreeableness": 0.5, "neuroticism": 0.3}
+  "last_reflection": 1717024900
 }
 ```
 
@@ -327,7 +357,7 @@ def agent_decision_loop(agent, world_context):
 3. 接收节点验证 → 生成"遗迹"实体 + 多模态记忆日志节点
 4. 新Agent/玩家进入视野 → 按需拉取完整多模态内容（需授权）
 5. 交互记录写入CRDT → 满足阈值触发LoreGraph版本分化
-6. 投票正典化 → 修改区域动机分布/资源参数/经济规则
+6. 投票正典化 → 修改区域性格分布/资源参数/经济规则
 ```
 
 ---
@@ -350,12 +380,13 @@ def agent_decision_loop(agent, world_context):
   - GossipSub: https://github.com/libp2p/specs/tree/master/pubsub/gossipsub
 
 📊 状态同步：
-  - Yjs: https://docs.yjs.dev/
-  - Automerge: https://automerge.org/
+  - Rust CRDT (`crates/sync`): LWW Register, G-Counter, OR-Set
+  - 签名: ed25519-dalek
+  - Merkle验证: SHA-256
 
 💾 存储与索引：
   - SQLite: https://www.sqlite.org/
-  - FAISS-lite: https://github.com/facebookresearch/faiss
+  - 全文索引: SQLite FTS5
   - IPFS: https://ipfs.tech/
 ```
 
@@ -363,7 +394,8 @@ def agent_decision_loop(agent, world_context):
 ```
 📁 agentora-mvp/
 ├── 📁 core/
-│   ├── motivation.py      # 6维动机引擎
+│   ├── physiology.py    # 生理状态系统
+│   ├── personality.py   # 大五人格种子
 │   ├── decision.py        # 决策管道（规则+LLM）
 │   └── memory.py          # 多模态记忆压缩
 ├── 📁 p2p/
@@ -379,11 +411,11 @@ def agent_decision_loop(agent, world_context):
 │   ├── canonization.py    # 正典化协议
 │   └── pressure_pool.py   # 动态压力生成
 ├── 📁 client/
-│   ├── unity/             # Unity WebGL渲染
+│   ├── godot/             # Godot 4渲染客户端
 │   └── mobile/            # Android/iOS原生壳
 └── 📄 docker-compose.yml  # 开发环境一键启动
 ```
 
 ---
 
-> 🚀 **启动建议**：优先交付 `动机向量引擎 + CRDT同步 + Qwen3.5-2B决策管道 + 创世沙盒推演` 最小闭环（4周）。验证骁龙8Gen3上决策延迟<150ms + 内存<2.5GB后，直接进入火种期封闭测试。技术栈已全开源成熟，无需重复造轮子。
+> 🚀 **启动建议**：优先交付 `生理状态系统 + 大五人格种子 + LLM决策管道 + CRDT同步 + 创世沙盒推演` 最小闭环（4周）。验证骁龙8Gen3上决策延迟<150ms + 内存<2.5GB后，直接进入火种期封闭测试。技术栈已全开源成熟，无需重复造轮子。

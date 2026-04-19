@@ -1,6 +1,5 @@
-//! 决策管道：硬约束→上下文→LLM→校验→选择
+//! 决策管道：上下文构建 → LLM 生成 → 规则校验 → 执行
 
-use crate::motivation::{MotivationVector, DIMENSION_NAMES};
 use crate::types::{ActionType, AgentId, Position};
 use crate::types::ResourceType;
 use crate::rule_engine::{RuleEngine, WorldState};
@@ -15,117 +14,23 @@ use agentora_ai::parser::parse_action_json;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// 候选动作来源
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum CandidateSource {
-    Llm,
-    RuleEngine,
-}
-
-/// 动作候选：统一承载 LLM 生成和规则引擎兜底的候选动作
+/// 动作候选：LLM 生成的决策结果
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActionCandidate {
     pub reasoning: String,
     pub action_type: ActionType,
     pub target: Option<String>,
     pub params: HashMap<String, serde_json::Value>,
-    pub motivation_delta: [f32; 6],
-    pub source: CandidateSource,
 }
 
 /// 决策结果
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DecisionResult {
-    pub selected_action: ActionCandidate,
+    pub selected_action: Option<ActionCandidate>,
     pub all_candidates: Vec<ActionCandidate>,
     pub error_info: Option<String>,
-}
-
-/// Spark类型枚举
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SparkType {
-    ResourcePressure,   // 资源压力
-    SocialPressure,     // 社交压力
-    CognitivePressure,  // 认知压力
-    ExpressivePressure, // 表达压力
-    PowerPressure,      // 权力压力
-    LegacyPressure,     // 传承压力
-    Explore,            // 探索（无明确压力时）
-}
-
-impl SparkType {
-    /// 从动机维度索引获取对应的Spark类型
-    pub fn from_dimension(dim: usize) -> Self {
-        match dim {
-            0 => SparkType::ResourcePressure,
-            1 => SparkType::SocialPressure,
-            2 => SparkType::CognitivePressure,
-            3 => SparkType::ExpressivePressure,
-            4 => SparkType::PowerPressure,
-            5 => SparkType::LegacyPressure,
-            _ => SparkType::Explore,
-        }
-    }
-
-    /// 获取Spark类型名称
-    pub fn name(&self) -> &str {
-        match self {
-            SparkType::ResourcePressure => "资源压力",
-            SparkType::SocialPressure => "社交压力",
-            SparkType::CognitivePressure => "认知压力",
-            SparkType::ExpressivePressure => "表达压力",
-            SparkType::PowerPressure => "权力压力",
-            SparkType::LegacyPressure => "传承压力",
-            SparkType::Explore => "探索",
-        }
-    }
-}
-
-impl std::fmt::Display for SparkType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.name())
-    }
-}
-
-/// Spark：动机缺口驱动的决策触发器
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Spark {
-    pub spark_type: SparkType,
-    pub gap_value: f32,
-    pub description: String,
-}
-
-impl Spark {
-    /// 从动机缺口生成Spark
-    pub fn from_gap(motivation: &MotivationVector, satisfaction: &[f32; 6]) -> Self {
-        let max_dim = motivation.max_gap_dimension(satisfaction);
-        let gap = motivation.compute_gap(satisfaction);
-        let gap_value = gap[max_dim];
-
-        // 如果所有缺口都很小，生成探索类Spark
-        if gap_value < 0.1 {
-            // 找动机值最高的维度
-            let mut max_dim = 0;
-            let mut max_val = motivation[0];
-            for i in 1..6 {
-                if motivation[i] > max_val {
-                    max_val = motivation[i];
-                    max_dim = i;
-                }
-            }
-            Self {
-                spark_type: SparkType::Explore,
-                gap_value: 0.0,
-                description: format!("无明确压力，按最高动机{}探索", DIMENSION_NAMES[max_dim]),
-            }
-        } else {
-            Self {
-                spark_type: SparkType::from_dimension(max_dim),
-                gap_value,
-                description: format!("{}缺口 {:.2}", DIMENSION_NAMES[max_dim], gap_value),
-            }
-        }
-    }
+    /// LLM 原始动作校验失败的详细信息，用于反馈给 LLM 让其自我修正
+    pub validation_failure: Option<String>,
 }
 
 /// 决策管道
@@ -134,6 +39,8 @@ pub struct DecisionPipeline {
     prompt_builder: PromptBuilder,
     llm_provider: Option<Box<dyn LlmProvider>>,
     strategy_hub: Option<StrategyHub>,
+    max_tokens: u32,
+    temperature: f32,
 }
 
 impl DecisionPipeline {
@@ -144,6 +51,8 @@ impl DecisionPipeline {
             prompt_builder: PromptBuilder::from_config(config),
             llm_provider: None,
             strategy_hub: None,
+            max_tokens: 500,
+            temperature: 0.7,
         }
     }
 
@@ -158,6 +67,8 @@ impl DecisionPipeline {
             prompt_builder: PromptBuilder::new(),
             llm_provider: None,
             strategy_hub: None,
+            max_tokens: 500,
+            temperature: 0.7,
         }
     }
 
@@ -173,96 +84,107 @@ impl DecisionPipeline {
         self
     }
 
-    /// 执行完整五阶段决策管道
+    /// 设置 LLM 生成参数
+    pub fn with_llm_params(mut self, max_tokens: u32, temperature: f32) -> Self {
+        self.max_tokens = max_tokens;
+        self.temperature = temperature;
+        self
+    }
+
+    /// 执行完整决策管道
+    ///
+    /// 核心原则：LLM Provider 可用时，决策权完全交给 LLM。
+    /// LLM 的决策即使有问题，也应通过 action_feedback 反馈让它自我修正，
+    /// 而不是用规则引擎覆盖。规则引擎仅在 LLM Provider 不可用时兜底。
     pub async fn execute(
         &self,
         agent_id: &AgentId,
-        motivation: &MotivationVector,
-        spark: &Spark,
         world_state: &WorldState,
         memory_summary: Option<&str>,
+        action_feedback: Option<&str>,
     ) -> DecisionResult {
         tracing::info!("开始决策管道执行 for agent {}", agent_id.as_str());
 
-        // 阶段 1: 硬约束过滤 - 生成合法候选动作
-        let filtered_actions = self.rule_engine.filter_hard_constraints(world_state);
-        tracing::debug!("Agent {} 硬约束过滤后剩余 {} 个候选动作", agent_id.as_str(), filtered_actions.len());
-
-        // 阶段 2: 上下文构建 (Prompt 组装)
-        let prompt = self.build_prompt(agent_id, motivation, spark, world_state, memory_summary);
+        // 阶段 1: 上下文构建 (Prompt 组装)
+        let prompt = self.build_prompt(agent_id, world_state, memory_summary, action_feedback);
+        tracing::info!("===== LLM Request Prompt =====\n{}\n===============================", prompt);
         tracing::trace!("Agent {} Prompt 长度：{} chars", agent_id.as_str(), prompt.len());
 
-        // 阶段 3: LLM 调用
-        match self.call_llm(&prompt).await {
+        // 阶段 2: LLM 调用
+        match self.call_llm(&prompt, world_state.agent_position).await {
             Ok(llm_candidates) => {
                 tracing::debug!("Agent {} LLM 返回 {} 个候选动作", agent_id.as_str(), llm_candidates.len());
 
-                // 阶段 4: 规则校验
+                // 阶段 3: 规则校验
+                let mut failure_reasons: Vec<String> = Vec::new();
                 let validated: Vec<ActionCandidate> = llm_candidates
                     .into_iter()
-                    .filter_map(|c| {
-                        let is_valid = self.rule_engine.validate_action(&c, world_state);
+                    .filter(|c| {
+                        let (is_valid, reason) = self.rule_engine.validate_action(c, world_state);
                         if !is_valid {
-                            tracing::warn!("Agent {} 动作校验失败：{:?}", agent_id.as_str(), c.action_type);
-                            // Gather 不合法时，转换为 Explore（向附近移动寻找资源）
-                            if let ActionType::Gather { resource } = &c.action_type {
-                                tracing::debug!("Agent {} Gather {:?} 当前位置无资源，转换为 Explore 兜底", agent_id.as_str(), resource);
-                                return Some(ActionCandidate {
-                                    reasoning: format!("LLM建议采集{:?}但当前位置无资源，改为探索寻找", resource),
-                                    action_type: ActionType::Explore { target_region: 0 },
-                                    target: c.target,
-                                    params: c.params,
-                                    motivation_delta: c.motivation_delta,
-                                    source: c.source,
-                                });
-                            }
-                            return None;
+                            let action_debug = format!("{:?}", c.action_type);
+                            let detail = reason.unwrap_or_else(|| "未知原因".to_string());
+                            tracing::warn!("Agent {} 动作校验失败：{}，原因：{}", agent_id.as_str(), action_debug, detail);
+                            failure_reasons.push(format!("{}（{}）", action_debug, detail));
                         }
-                        Some(c)
+                        is_valid
                     })
                     .collect();
 
                 tracing::debug!("Agent {} 规则校验后剩余 {} 个候选动作", agent_id.as_str(), validated.len());
 
-                // 阶段 5: 动机加权选择
+                // 阶段 4: 选择
                 if validated.is_empty() {
-                    // 无候选通过校验，使用规则引擎兜底
-                    let fallback = self.rule_engine.fallback_action(motivation, world_state);
-                    tracing::warn!("Agent {} LLM 候选均未通过校验，使用规则引擎兜底: {:?}", agent_id.as_str(), fallback.action_type);
+                    // LLM 候选均未通过校验，不执行动作，反馈错误让 LLM 下回合修正
+                    let failure_detail = format!("动作校验失败：{}。请根据当前状态重新选择有效动作", failure_reasons.join("; "));
+                    tracing::warn!("Agent {} {}", agent_id.as_str(), failure_detail);
+
                     DecisionResult {
-                        selected_action: fallback,
+                        selected_action: None,
                         all_candidates: vec![],
-                        error_info: Some("LLM 候选均未通过校验，使用规则引擎兜底".to_string()),
-                    }
-                } else if validated.len() == 1 {
-                    // 唯一候选直接选择
-                    let selected = validated.first().unwrap().clone();
-                    tracing::trace!("Agent {} 唯一候选直接选择：{:?}", agent_id.as_str(), selected.action_type);
-                    DecisionResult {
-                        selected_action: selected,
-                        all_candidates: validated,
-                        error_info: None,
+                        error_info: Some(failure_detail.clone()),
+                        validation_failure: Some(failure_detail),
                     }
                 } else {
-                    // 多候选加权选择
-                    let selected = self.select_with_motivation(&validated, motivation);
-                    tracing::debug!("Agent {} 动机加权选择：{:?}", agent_id.as_str(), selected.action_type);
+                    // 校验通过，选择第一个候选动作
+                    let selected = validated.into_iter().next().unwrap();
+                    tracing::debug!("Agent {} 选择动作：{:?}", agent_id.as_str(), selected.action_type);
                     DecisionResult {
-                        selected_action: selected,
-                        all_candidates: validated,
+                        selected_action: Some(selected),
+                        all_candidates: vec![],
                         error_info: None,
+                        validation_failure: None,
                     }
                 }
             }
             Err(e) => {
-                // LLM 调用失败，降级到规则引擎
-                tracing::warn!("Agent {} LLM 调用失败，降级到规则引擎: {}", agent_id.as_str(), e);
-                let fallback = self.rule_engine.fallback_action(motivation, world_state);
-                tracing::warn!("Agent {} 规则引擎兜底: {:?}", agent_id.as_str(), fallback.action_type);
-                DecisionResult {
-                    selected_action: fallback,
-                    all_candidates: vec![],
-                    error_info: Some(format!("LLM 调用失败：{}", e)),
+                // 判断 LLM Provider 是否可用
+                let is_provider_unavailable = self.llm_provider.is_none()
+                    || e.contains("未配置 LLM Provider")
+                    || e.contains("LLM 调用超时")
+                    || e.contains("LLM 调用失败");
+
+                if is_provider_unavailable {
+                    // LLM Provider 不可用，使用规则引擎兜底
+                    tracing::warn!("Agent {} LLM Provider 不可用，降级到规则引擎: {}", agent_id.as_str(), e);
+                    let fallback = self.rule_engine.survival_fallback(world_state);
+                    DecisionResult {
+                        selected_action: fallback,
+                        all_candidates: vec![],
+                        error_info: Some(format!("LLM 不可用：{}", e)),
+                        validation_failure: None,
+                    }
+                } else {
+                    // LLM Provider 可用但返回了无效的决策（解析失败、校验失败等）
+                    // 不执行动作，反馈错误让 LLM 下回合修正
+                    tracing::warn!("Agent {} LLM 返回无效决策: {}", agent_id.as_str(), e);
+
+                    DecisionResult {
+                        selected_action: None,
+                        all_candidates: vec![],
+                        error_info: Some(format!("LLM 响应无效：{}", e)),
+                        validation_failure: Some(e.clone()),
+                    }
                 }
             }
         }
@@ -272,10 +194,9 @@ impl DecisionPipeline {
     fn build_prompt(
         &self,
         agent_id: &AgentId,
-        motivation: &MotivationVector,
-        spark: &Spark,
         world_state: &WorldState,
         memory_summary: Option<&str>,
+        action_feedback: Option<&str>,
     ) -> String {
         // 构建感知摘要
         let perception_summary = self.build_perception_summary(world_state);
@@ -283,9 +204,10 @@ impl DecisionPipeline {
         // 使用传入的记忆摘要，默认为空
         let memory_summary = memory_summary.unwrap_or("");
 
-        // 构建策略提示（任务 5.1-5.4：从策略系统检索并注入）
+        // 构建策略提示（基于 Agent 当前状态推断模式）
         let strategy_hint = self.strategy_hub.as_ref().and_then(|hub| {
-            retrieve_strategy(hub, spark.spark_type).map(|strategy| {
+            let state_mode = infer_state_mode(world_state);
+            retrieve_strategy(hub, state_mode).map(|strategy| {
                 let summary = get_strategy_summary(&strategy);
                 wrap_strategy_for_prompt(&summary)
             })
@@ -293,35 +215,32 @@ impl DecisionPipeline {
 
         self.prompt_builder.build_decision_prompt(
             agent_id.as_str(),
-            motivation,
-            spark,
             &perception_summary,
             memory_summary,
             strategy_hint.as_deref(),
-        )
+            action_feedback,
+        ) + &self.build_temp_preferences_prompt(world_state)
     }
 
-    /// 构建 Prompt（带记忆系统）
-    pub fn build_prompt_with_memory(
-        &self,
-        agent_id: &AgentId,
-        motivation: &MotivationVector,
-        spark: &Spark,
-        world_state: &WorldState,
-        memory_summary: &str,
-        strategy_hint: Option<&str>,
-    ) -> String {
-        // 构建感知摘要
-        let perception_summary = self.build_perception_summary(world_state);
+    /// 构建临时偏好提示
+    fn build_temp_preferences_prompt(&self, world_state: &WorldState) -> String {
+        if world_state.temp_preferences.is_empty() {
+            return String::new();
+        }
 
-        self.prompt_builder.build_decision_prompt(
-            agent_id.as_str(),
-            motivation,
-            spark,
-            &perception_summary,
-            memory_summary,
-            strategy_hint,
-        )
+        let mut s = String::from("\n<guidance>\n[引导] 当前有外部引导倾向影响你的决策：\n");
+        for (key, boost, remaining) in &world_state.temp_preferences {
+            let label = match key.as_str() {
+                "eat" => "进食",
+                "drink" => "饮水",
+                "gather" => "采集",
+                "explore" => "探索",
+                _ => key.as_str(),
+            };
+            s.push_str(&format!("  - {}（倾向强度: {:.1}, 剩余 {} 回合）\n", label, boost, remaining));
+        }
+        s.push_str("请适当考虑引导倾向，但你可以自主决定是否完全遵循。\n</guidance>\n");
+        s
     }
 
     /// 构建感知摘要
@@ -330,12 +249,12 @@ impl DecisionPipeline {
 
         // 生存状态
         let satiety_status = if world_state.agent_satiety <= 30 {
-            "饥饿中！需要寻找食物"
+            "饥饿中！"
         } else {
             "正常"
         };
         let hydration_status = if world_state.agent_hydration <= 30 {
-            "口渴中！需要寻找水源"
+            "口渴中！"
         } else {
             "正常"
         };
@@ -346,6 +265,19 @@ impl DecisionPipeline {
             world_state.agent_hydration,
             if world_state.agent_hydration <= 30 { format!(" [{}]", hydration_status) } else { String::new() },
         ));
+
+        // 背包信息
+        if !world_state.agent_inventory.is_empty() {
+            let total: u32 = world_state.agent_inventory.values().sum();
+            summary.push_str(&format!("背包（每种资源上限99，仓库附近可达198，当前合计{}）：", total));
+            let items: Vec<String> = world_state.agent_inventory.iter()
+                .map(|(r, count)| format!("{} x{}", r.as_str(), count))
+                .collect();
+            summary.push_str(&items.join(", "));
+            summary.push('\n');
+        } else {
+            summary.push_str("背包（每种资源上限99，仓库附近可达198，当前空）：\n");
+        }
 
         // 活跃压力事件
         if !world_state.active_pressures.is_empty() {
@@ -361,6 +293,39 @@ impl DecisionPipeline {
             world_state.agent_position.x,
             world_state.agent_position.y
         ));
+
+        // 坐标系说明（帮助 LLM 正确理解方向）
+        summary.push_str("方向规则：X增大=向东，X减小=向西，Y增大=向南，Y减小=向北。注意：Y轴向下增大，与数学坐标相反！\n");
+
+        // 相邻格信息（用于 Agent 自主规划移动路线）
+        let pos = world_state.agent_position;
+        let dirs = [
+            (crate::types::Direction::North, "北", 0i32, -1i32),
+            (crate::types::Direction::South, "南", 0, 1),
+            (crate::types::Direction::East, "东", 1, 0),
+            (crate::types::Direction::West, "西", -1, 0),
+        ];
+        let mut adjacent_info = Vec::new();
+        for (_dir, name, dx, dy) in &dirs {
+            let nx = pos.x as i32 + dx;
+            let ny = pos.y as i32 + dy;
+            if nx < 0 || ny < 0 || nx >= world_state.map_size as i32 || ny >= world_state.map_size as i32 {
+                adjacent_info.push(format!("{}: 越界", name));
+            } else {
+                let np = crate::types::Position::new(nx as u32, ny as u32);
+                let terrain = world_state.terrain_at.get(&np);
+                let terrain_name = terrain.map(|t| format!("{:?}", t)).unwrap_or("未知".to_string());
+                let res_info = world_state.resources_at.get(&np)
+                    .map(|(r, a)| format!(" {:?}x{}", r, a))
+                    .unwrap_or_default();
+                let agent_info = world_state.nearby_agents.iter()
+                    .find(|a| a.position == np)
+                    .map(|a| format!(" Agent:{}", a.name))
+                    .unwrap_or_default();
+                adjacent_info.push(format!("{}({},{}): {}{}{}", name, nx, ny, terrain_name, res_info, agent_info));
+            }
+        }
+        summary.push_str(&format!("相邻格（可移动到的坐标）：{}\n", adjacent_info.join(", ")));
 
         // 地形概览
         if !world_state.terrain_at.is_empty() {
@@ -378,7 +343,7 @@ impl DecisionPipeline {
             }
         }
 
-        // 附近 Agent（任务 5.1：名字/距离/关系状态）
+        // 附近 Agent
         if !world_state.nearby_agents.is_empty() {
             summary.push_str(&format!("附近 Agent ({} 个):\n", world_state.nearby_agents.len()));
             for agent_info in &world_state.nearby_agents {
@@ -387,16 +352,21 @@ impl DecisionPipeline {
                     crate::agent::RelationType::Enemy => "敌人",
                     crate::agent::RelationType::Neutral => "陌生人",
                 };
+                let dir_desc = direction_description(&world_state.agent_position, &agent_info.position);
                 summary.push_str(&format!(
-                    "  {} (距离:{}, 关系:{}, 信任:{:.1})\n",
+                    "  {} ({},{}) [{}] 距离:{}格 关系:{} 信任:{:.1}\n",
                     agent_info.name,
+                    agent_info.position.x,
+                    agent_info.position.y,
+                    dir_desc,
                     agent_info.distance,
                     relation_str,
                     agent_info.trust,
                 ));
             }
-        } else if !world_state.existing_agents.is_empty() {
-            summary.push_str(&format!("附近 Agent 数量：{}（无详细信息）\n", world_state.existing_agents.len()));
+        } else {
+            // 附近没有其他 Agent，告知自身信息
+            summary.push_str("附近无其他 Agent（只有你自己）\n");
         }
 
         // 资源信息（增强：显示方向、距离、丰富度，按优先级排序）
@@ -457,16 +427,71 @@ impl DecisionPipeline {
             }
         }
 
+        // 附近建筑
+        if !world_state.nearby_structures.is_empty() {
+            summary.push_str(&format!("附近建筑 ({} 个):\n", world_state.nearby_structures.len()));
+            for structure in &world_state.nearby_structures {
+                let owner_str = structure.owner_name.as_deref().unwrap_or("无主");
+                let dur_status = if structure.durability > 70 {
+                    "完好"
+                } else if structure.durability > 30 {
+                    "受损"
+                } else {
+                    "破败"
+                };
+                let dir_desc = direction_description(&world_state.agent_position, &structure.position);
+                summary.push_str(&format!(
+                    "  ({}, {}): {:?} [{}] ({}: {}, 耐久{})\n",
+                    structure.position.x, structure.position.y,
+                    structure.structure_type, dir_desc, owner_str, dur_status, structure.distance
+                ));
+            }
+        }
+
+        // 附近遗产
+        if !world_state.nearby_legacies.is_empty() {
+            summary.push_str(&format!("附近遗迹 ({} 个):\n", world_state.nearby_legacies.len()));
+            for legacy in &world_state.nearby_legacies {
+                let items_hint = if legacy.has_items { "有物品" } else { "空" };
+                let dir_desc = direction_description(&world_state.agent_position, &legacy.position);
+                summary.push_str(&format!(
+                    "  ({}, {}): {:?} [{}] ({}的遗迹, {})\n",
+                    legacy.position.x, legacy.position.y,
+                    legacy.legacy_type, dir_desc, legacy.original_agent_name, items_hint
+                ));
+            }
+        }
+
+        // 宏观区域上下文
+        let region_x = world_state.agent_position.x / 16;
+        let region_y = world_state.agent_position.y / 16;
+        let region_id = region_y * 16 + region_x;
+        // 计算该区域主导地形（从 vision 数据估算）
+        if !world_state.terrain_at.is_empty() {
+            let mut terrain_counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+            for terrain in world_state.terrain_at.values() {
+                *terrain_counts.entry(format!("{:?}", terrain)).or_default() += 1;
+            }
+            if let Some((dominant, count)) = terrain_counts.iter().max_by_key(|(_, c)| **c) {
+                let total: u32 = terrain_counts.values().sum();
+                summary.push_str(&format!(
+                    "区域：区域{} ({}-{})，主导地形{} ({:.0}%)\n",
+                    region_id, region_x, region_y, dominant,
+                    (*count as f32 / total as f32) * 100.0
+                ));
+            }
+        }
+
         summary
     }
 
     /// 调用 LLM
-    async fn call_llm(&self, prompt: &str) -> Result<Vec<ActionCandidate>, String> {
+    async fn call_llm(&self, prompt: &str, agent_pos: Position) -> Result<Vec<ActionCandidate>, String> {
         if let Some(provider) = &self.llm_provider {
             let request = LlmRequest {
                 prompt: prompt.to_string(),
-                max_tokens: 500,
-                temperature: 0.7,
+                max_tokens: self.max_tokens,
+                temperature: self.temperature,
                 response_format: ResponseFormat::Json { schema: None },
                 stop_sequences: vec![],
             };
@@ -475,7 +500,12 @@ impl DecisionPipeline {
             let generate_fut = provider.generate(request);
             let response = match tokio::time::timeout(std::time::Duration::from_secs(60), generate_fut).await {
                 Ok(Ok(resp)) => {
-                    tracing::debug!("LLM 调用成功，raw_text: {}", resp.raw_text);
+                    tracing::info!("===== LLM Response =====\n{}\n==========================", resp.raw_text);
+                    // 检测空响应：快速失败，避免无意义的 JSON 解析
+                    if resp.raw_text.trim().is_empty() {
+                        tracing::warn!("LLM 返回空响应，快速降级到规则引擎");
+                        return Err("LLM 返回空响应".to_string());
+                    }
                     resp
                 }
                 Ok(Err(e)) => {
@@ -493,7 +523,7 @@ impl DecisionPipeline {
                 Ok(json_value) => {
                     tracing::trace!("JSON 解析成功: {}", json_value);
                     // 将 JSON 转换为 ActionCandidate
-                    match self.json_to_candidate(json_value) {
+                    match self.json_to_candidate(json_value, agent_pos) {
                         Ok(candidate) => Ok(vec![candidate]),
                         Err(e) => {
                             tracing::warn!("转换候选动作失败: {}", e);
@@ -512,7 +542,7 @@ impl DecisionPipeline {
     }
 
     /// 将 JSON 值转换为 ActionCandidate
-    fn json_to_candidate(&self, json: serde_json::Value) -> Result<ActionCandidate, String> {
+    fn json_to_candidate(&self, json: serde_json::Value, agent_pos: Position) -> Result<ActionCandidate, String> {
         let reasoning = json["reasoning"]
             .as_str()
             .unwrap_or("")
@@ -522,9 +552,28 @@ impl DecisionPipeline {
             .as_str()
             .ok_or("缺少 action_type 字段")?;
 
-        // 解析 action_type（简化版本，需要完整实现）
-        let action_type = self.parse_action_type(action_type_str, &json)
-            .ok_or(format!("未知的动作类型：{}", action_type_str))?;
+        // 解析 action_type
+        let action_type = self.parse_action_type(action_type_str, &json, agent_pos)
+            .ok_or_else(|| {
+                // 为 MoveToward 不相邻的情况提供详细的失败原因
+                if action_type_str.starts_with("MoveToward") || action_type_str.contains("移动到") || action_type_str.contains("前往") {
+                    if let Some(target_obj) = json["params"]["target"].as_object()
+                        .or_else(|| json["target"].as_object())
+                    {
+                        if let (Some(x), Some(y)) = (
+                            target_obj.get("x").and_then(|v| v.as_u64()),
+                            target_obj.get("y").and_then(|v| v.as_u64()),
+                        ) {
+                            let pos = Position::new(x as u32, y as u32);
+                            let dist = pos.manhattan_distance(&agent_pos);
+                            return format!("MoveToward 目标 ({},{}) 不相邻（距离 {}），请从相邻格中选择坐标或使用方向（north/south/east/west）", pos.x, pos.y, dist);
+                        }
+                    }
+                    format!("MoveToward 目标解析失败")
+                } else {
+                    format!("未知的动作类型：{}", action_type_str)
+                }
+            })?;
 
         let target = json["target"].as_str().map(String::from);
 
@@ -537,49 +586,45 @@ impl DecisionPipeline {
             })
             .unwrap_or_default();
 
-        let motivation_delta = json["motivation_delta"]
-            .as_array()
-            .and_then(|arr| {
-                if arr.len() == 6 {
-                    let mut delta = [0.0; 6];
-                    for (i, val) in arr.iter().enumerate() {
-                        delta[i] = val.as_f64().unwrap_or(0.0) as f32;
-                    }
-                    Some(delta)
-                } else {
-                    None
-                }
-            })
-            .unwrap_or([0.0; 6]);
-
         Ok(ActionCandidate {
             reasoning,
             action_type,
             target,
             params,
-            motivation_delta,
-            source: CandidateSource::Llm,
         })
     }
 
     /// 解析动作类型
-    fn parse_action_type(&self, type_str: &str, json: &serde_json::Value) -> Option<ActionType> {
+    fn parse_action_type(&self, type_str: &str, json: &serde_json::Value, agent_pos: Position) -> Option<ActionType> {
         use crate::types::{Direction, ResourceType, StructureType};
 
         match type_str {
             "Move" | "move" | "移动" => {
-                let dir = json["params"]["direction"].as_str().unwrap_or("north");
-                let direction = match dir {
-                    "North" | "north" | "北" => Direction::North,
-                    "South" | "south" | "南" => Direction::South,
-                    "East" | "east" | "东" => Direction::East,
-                    "West" | "west" | "西" => Direction::West,
-                    _ => Direction::North,
-                };
-                Some(ActionType::Move { direction })
+                // Move 统一转为 MoveToward，支持方向和坐标两种格式
+                // 优先尝试方向格式
+                if let Some(dir_str) = json["params"]["direction"].as_str() {
+                    let direction = match dir_str {
+                        "North" | "north" | "北" | "n" | "N" => crate::types::Direction::North,
+                        "South" | "south" | "南" | "s" | "S" => crate::types::Direction::South,
+                        "East" | "east" | "东" | "e" | "E" => crate::types::Direction::East,
+                        "West" | "west" | "西" | "w" | "W" => crate::types::Direction::West,
+                        _ => return None,
+                    };
+                    let target = match direction {
+                        crate::types::Direction::North => Position::new(agent_pos.x, agent_pos.y.wrapping_sub(1)),
+                        crate::types::Direction::South => Position::new(agent_pos.x, agent_pos.y + 1),
+                        crate::types::Direction::East => Position::new(agent_pos.x + 1, agent_pos.y),
+                        crate::types::Direction::West => Position::new(agent_pos.x.wrapping_sub(1), agent_pos.y),
+                    };
+                    Some(ActionType::MoveToward { target })
+                } else if let Some(target) = self.parse_target_position(json, agent_pos) {
+                    Some(ActionType::MoveToward { target })
+                } else {
+                    None
+                }
             }
             "MoveToward" | "move_toward" | "移动到" | "前往" => {
-                let target = self.parse_target_position(json)?;
+                let target = self.parse_target_position(json, agent_pos)?;
                 Some(ActionType::MoveToward { target })
             }
             "Gather" | "gather" | "采集" | "收集" => {
@@ -595,6 +640,8 @@ impl DecisionPipeline {
                 Some(ActionType::Gather { resource })
             }
             "Wait" | "wait" | "等待" => Some(ActionType::Wait),
+            "Eat" | "eat" | "进食" | "吃东西" => Some(ActionType::Eat),
+            "Drink" | "drink" | "饮水" | "喝水" => Some(ActionType::Drink),
             "Explore" | "explore" | "探索" => {
                 let region = json["params"]["target_region"].as_u64().unwrap_or(0) as u32;
                 Some(ActionType::Explore { target_region: region })
@@ -684,38 +731,82 @@ impl DecisionPipeline {
     /// - { x: 130, y: 125 }
     /// - [130, 125]
     /// - "130,125" 或 "(130, 125)"
-    fn parse_target_position(&self, json: &serde_json::Value) -> Option<Position> {
-        // 尝试从 params.target 获取
-        let target = json.get("params")?.get("target")?;
-
-        // 格式1: { x: 130, y: 125 }
-        if let (Some(x), Some(y)) = (target.get("x"), target.get("y")) {
-            let x = x.as_u64()? as u32;
-            let y = y.as_u64()? as u32;
-            return Some(Position::new(x, y));
-        }
-
-        // 格式2: [130, 125]
-        if let Some(arr) = target.as_array() {
-            if arr.len() >= 2 {
-                let x = arr[0].as_u64()? as u32;
-                let y = arr[1].as_u64()? as u32;
-                return Some(Position::new(x, y));
+    fn parse_target_position(&self, json: &serde_json::Value, agent_pos: Position) -> Option<Position> {
+        // 优先尝试从 direction 字段解析（LLM 输出方向更可靠）
+        // 支持 params.direction 和顶层 direction
+        if let Some(dir_str) = json["params"]["direction"].as_str()
+            .or_else(|| json["direction"].as_str())
+        {
+            let direction = match dir_str.trim() {
+                "North" | "north" | "北" | "n" | "N" => Some(crate::types::Direction::North),
+                "South" | "south" | "南" | "s" | "S" => Some(crate::types::Direction::South),
+                "East" | "east" | "东" | "e" | "E" => Some(crate::types::Direction::East),
+                "West" | "west" | "西" | "w" | "W" => Some(crate::types::Direction::West),
+                _ => None,
+            };
+            if let Some(dir) = direction {
+                let target = match dir {
+                    crate::types::Direction::North => Position::new(agent_pos.x, agent_pos.y.wrapping_sub(1)),
+                    crate::types::Direction::South => Position::new(agent_pos.x, agent_pos.y + 1),
+                    crate::types::Direction::East => Position::new(agent_pos.x + 1, agent_pos.y),
+                    crate::types::Direction::West => Position::new(agent_pos.x.wrapping_sub(1), agent_pos.y),
+                };
+                return Some(target);
             }
         }
 
-        // 格式3: "130,125" 或 "(130, 125)"
-        if let Some(s) = target.as_str() {
-            let cleaned = s.trim_matches(|c| c == '(' || c == ')');
-            let parts: Vec<&str> = cleaned.split(',').collect();
-            if parts.len() >= 2 {
-                if let (Ok(x), Ok(y)) = (parts[0].trim().parse::<u32>(), parts[1].trim().parse::<u32>()) {
-                    return Some(Position::new(x, y));
+        // 尝试从 params.target 或顶层 target 获取坐标
+        let target = json["params"]["target"]
+            .as_object()
+            .map(|_| &json["params"]["target"])
+            .or_else(|| json["target"].as_object().map(|_| &json["target"]));
+
+        if let Some(target_obj) = target {
+            // 格式1: { x: 130, y: 125 }
+            if let (Some(x), Some(y)) = (target_obj.get("x"), target_obj.get("y")) {
+                if let (Some(x), Some(y)) = (x.as_u64(), y.as_u64()) {
+                    let pos = Position::new(x as u32, y as u32);
+                    // 校验：如果坐标不相邻，自动修正为 nearest valid adjacent cell
+                    if pos.manhattan_distance(&agent_pos) == 1 {
+                        return Some(pos);
+                    }
+                    // LLM 输出了非相邻坐标，记录警告并返回 None（让调用者处理）
+                    tracing::warn!("MoveToward 目标 ({},{}) 不相邻（距离 {}），LLM 不理解相邻约束", pos.x, pos.y, pos.manhattan_distance(&agent_pos));
+                    return None;
+                }
+            }
+
+            // 格式2: [130, 125]
+            if let Some(arr) = target_obj.as_array() {
+                if arr.len() >= 2 {
+                    if let (Some(x), Some(y)) = (arr[0].as_u64(), arr[1].as_u64()) {
+                        let pos = Position::new(x as u32, y as u32);
+                        if pos.manhattan_distance(&agent_pos) == 1 {
+                            return Some(pos);
+                        }
+                        tracing::warn!("MoveToward 目标 [{},{}] 不相邻", pos.x, pos.y);
+                        return None;
+                    }
+                }
+            }
+
+            // 格式3: "130,125" 或 "(130, 125)"
+            if let Some(s) = target_obj.as_str() {
+                let cleaned = s.trim_matches(|c| c == '(' || c == ')');
+                let parts: Vec<&str> = cleaned.split(',').collect();
+                if parts.len() >= 2 {
+                    if let (Ok(x), Ok(y)) = (parts[0].trim().parse::<u32>(), parts[1].trim().parse::<u32>()) {
+                        let pos = Position::new(x, y);
+                        if pos.manhattan_distance(&agent_pos) == 1 {
+                            return Some(pos);
+                        }
+                        tracing::warn!("MoveToward 目标字符串 \"{}\" 不相邻", s);
+                        return None;
+                    }
                 }
             }
         }
 
-        tracing::debug!("MoveToward 目标位置解析失败，使用默认值");
         None
     }
 
@@ -740,87 +831,60 @@ impl DecisionPipeline {
         }
         map
     }
-
-    /// 动机加权选择（公共方法，供测试使用）
-    pub fn select_unique_or_motivated(
-        &self,
-        candidates: &[ActionCandidate],
-        motivation: &MotivationVector,
-    ) -> ActionCandidate {
-        if candidates.len() == 1 {
-            return candidates[0].clone();
-        }
-        self.select_with_motivation(candidates, motivation)
-    }
-
-    /// 点积计算（公共方法，供测试使用）
-    pub fn compute_dot_product(&self, a: &[f32; 6], b: &MotivationVector) -> f32 {
-        self.dot_product(a, b)
-    }
-
-    /// 动机加权选择
-    fn select_with_motivation(
-        &self,
-        candidates: &[ActionCandidate],
-        motivation: &MotivationVector,
-    ) -> ActionCandidate {
-        // 计算每个候选的点积得分
-        let scores: Vec<f32> = candidates
-            .iter()
-            .map(|c| self.dot_product(&c.motivation_delta, motivation))
-            .collect();
-
-        // 使用 softmax + temperature 选择
-        self.softmax_select(candidates, &scores, 0.1)
-    }
-
-    /// 点积计算
-    fn dot_product(&self, a: &[f32; 6], b: &MotivationVector) -> f32 {
-        let mut sum = 0.0;
-        for i in 0..6 {
-            sum += a[i] * b[i];
-        }
-        sum
-    }
-
-    /// Softmax 选择（带 temperature）
-    fn softmax_select(
-        &self,
-        candidates: &[ActionCandidate],
-        scores: &[f32],
-        temperature: f32,
-    ) -> ActionCandidate {
-        // 计算 exp(score / temperature)
-        let max_score = scores.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        let exp_scores: Vec<f32> = scores
-            .iter()
-            .map(|&s| ((s - max_score) / temperature).exp())
-            .collect();
-
-        let sum_exp: f32 = exp_scores.iter().sum();
-
-        // 归一化为概率
-        let probs: Vec<f32> = exp_scores
-            .iter()
-            .map(|&e| e / sum_exp)
-            .collect();
-
-        // 按概率采样选择（简化版本：选择概率最高的）
-        let mut best_idx = 0;
-        let mut best_prob = probs[0];
-        for (i, &prob) in probs.iter().enumerate() {
-            if prob > best_prob {
-                best_prob = prob;
-                best_idx = i;
-            }
-        }
-
-        candidates[best_idx].clone()
-    }
 }
 
 impl Default for DecisionPipeline {
     fn default() -> Self {
         Self::with_defaults()
+    }
+}
+
+/// 根据 Agent 当前状态推断决策模式，用于策略检索和记忆查询。
+///
+/// 这替代了原来从动机缺口推导 Spark 的机制，改为直接从
+/// health/satiety/hydration/inventory 等状态值推断。
+pub fn infer_state_mode(world_state: &WorldState) -> SparkType {
+    // 生存优先：饥饿/口渴 → 资源压力
+    if world_state.agent_satiety <= 30 || world_state.agent_hydration <= 30 {
+        return SparkType::ResourcePressure;
+    }
+    // 社交模式：附近有其他 Agent
+    if !world_state.nearby_agents.is_empty() {
+        return SparkType::SocialPressure;
+    }
+    // 认知/探索模式：无生存压力且无社交 → 探索
+    SparkType::Explore
+}
+
+/// 决策模式分类（原 SparkType，保留用于策略/记忆分类键）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SparkType {
+    ResourcePressure,   // 资源压力（饥饿/口渴/缺资源）
+    SocialPressure,     // 社交压力（附近有其他 Agent）
+    CognitivePressure,  // 认知压力（学习/发现）
+    ExpressivePressure, // 表达压力（创造/建造）
+    PowerPressure,      // 权力压力（领导/影响）
+    LegacyPressure,     // 传承压力（遗产/教导）
+    Explore,            // 探索（无明确压力时）
+}
+
+impl SparkType {
+    /// 获取模式名称
+    pub fn name(&self) -> &str {
+        match self {
+            SparkType::ResourcePressure => "资源压力",
+            SparkType::SocialPressure => "社交压力",
+            SparkType::CognitivePressure => "认知压力",
+            SparkType::ExpressivePressure => "表达压力",
+            SparkType::PowerPressure => "权力压力",
+            SparkType::LegacyPressure => "传承压力",
+            SparkType::Explore => "探索",
+        }
+    }
+}
+
+impl std::fmt::Display for SparkType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name())
     }
 }

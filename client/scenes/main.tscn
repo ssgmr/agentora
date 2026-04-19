@@ -4,7 +4,6 @@
 [ext_resource type="Script" path="res://scripts/camera_controller.gd" id="camera_controller"]
 [ext_resource type="Script" path="res://scripts/world_renderer.gd" id="world_renderer"]
 [ext_resource type="Script" path="res://scripts/agent_manager.gd" id="agent_manager"]
-[ext_resource type="Script" path="res://scripts/motivation_radar.gd" id="motivation_radar"]
 [ext_resource type="Script" path="res://scripts/guide_panel.gd" id="guide_panel"]
 [ext_resource type="Script" path="res://scripts/narrative_feed.gd" id="narrative_feed"]
 [ext_resource type="Script" path="res://scripts/milestone_panel.gd" id="milestone_panel"]
@@ -77,41 +76,40 @@ text = "Agent 数：5"
 layout_mode = 2
 size_flags_vertical = 1
 
-[node name="AgentDetail" type="VBoxContainer" parent="UI/RightPanel"]
+[node name="AgentDetail" type="PanelContainer" parent="UI/RightPanel"]
 layout_mode = 2
-size_flags_vertical = 3
+size_flags_vertical = 0
+
+[node name="VBoxContent" type="VBoxContainer" parent="UI/RightPanel/AgentDetail"]
+layout_mode = 2
 add_theme_constant_override("separation", 4)
 
-[node name="AgentNameLabel" type="Label" parent="UI/RightPanel/AgentDetail"]
+[node name="AgentNameLabel" type="Label" parent="UI/RightPanel/AgentDetail/VBoxContent"]
 layout_mode = 2
 text = "Agent 名称"
 horizontal_alignment = 1
 
-[node name="MotivationRadar" type="Control" parent="UI/RightPanel/AgentDetail"]
-layout_mode = 2
-custom_minimum_size = Vector2(280, 220)
-script = ExtResource("motivation_radar")
-
-[node name="StatusLabel" type="Label" parent="UI/RightPanel/AgentDetail"]
+[node name="StatusLabel" type="Label" parent="UI/RightPanel/AgentDetail/VBoxContent"]
 layout_mode = 2
 size_flags_vertical = 0
 text = "状态：等待
-健康：100/100
+动作：无
 年龄：0"
 autowrap_mode = 2
-max_lines_visible = 6
+max_lines_visible = 12
 
-[node name="GuidePanel" type="VBoxContainer" parent="UI/RightPanel/AgentDetail"]
+[node name="GuidePanel" type="VBoxContainer" parent="UI/RightPanel/AgentDetail/VBoxContent"]
 layout_mode = 2
 size_flags_vertical = 0
 script = ExtResource("guide_panel")
 
-[node name="AgentDetailPanel" type="VBoxContainer" parent="UI/RightPanel"]
+[node name="AgentDetailPanel" type="PanelContainer" parent="UI/RightPanel"]
 layout_mode = 2
+custom_minimum_size = Vector2(300, 100)
 size_flags_vertical = 0
 script = ExtResource("agent_detail_panel")
 
-[node name="MilestonePanel" type="VBoxContainer" parent="UI/RightPanel"]
+[node name="MilestonePanel" type="PanelContainer" parent="UI/RightPanel"]
 layout_mode = 2
 size_flags_vertical = 0
 script = ExtResource("milestone_panel")

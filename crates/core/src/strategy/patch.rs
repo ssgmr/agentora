@@ -56,7 +56,6 @@ pub fn patch_strategy(
         last_used_tick: strategy_file.frontmatter.last_used_tick,
         created_tick: strategy_file.frontmatter.created_tick,
         deprecated: strategy_file.frontmatter.deprecated,
-        motivation_delta: strategy_file.frontmatter.motivation_delta,
         content: strategy_file.content.clone(),
     };
 
@@ -98,7 +97,6 @@ pub fn update_frontmatter(
         last_used_tick: strategy_file.frontmatter.last_used_tick,
         created_tick: strategy_file.frontmatter.created_tick,
         deprecated: strategy_file.frontmatter.deprecated,
-        motivation_delta: strategy_file.frontmatter.motivation_delta,
         content: strategy_file.content.clone(),
     };
 

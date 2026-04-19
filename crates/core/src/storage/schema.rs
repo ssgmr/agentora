@@ -11,7 +11,6 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
             name TEXT NOT NULL,
             position_x INTEGER NOT NULL,
             position_y INTEGER NOT NULL,
-            motivation_vector BLOB NOT NULL,
             health INTEGER NOT NULL DEFAULT 100,
             max_health INTEGER NOT NULL DEFAULT 100,
             age INTEGER NOT NULL DEFAULT 0,
@@ -68,7 +67,6 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
             tick INTEGER NOT NULL,
             action_type TEXT NOT NULL,
             result TEXT NOT NULL,
-            motivation_delta BLOB,
             FOREIGN KEY (strategy_id) REFERENCES strategies(id)
         );
 

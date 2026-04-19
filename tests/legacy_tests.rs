@@ -7,14 +7,12 @@ use agentora_core::{
     ActionType, Action,
     legacy::{Legacy, LegacyEvent},
     types::LegacyInteraction,
-    motivation::MotivationVector,
 };
 use std::collections::HashMap;
 
 /// 单 Agent 死亡测试
 #[test]
 fn test_agent_death_creates_legacy() {
-    // 6.1 单 Agent 死亡测试
     let seed = WorldSeed::default();
     let mut world = World::new(&seed);
 
@@ -59,7 +57,6 @@ fn test_agent_death_creates_legacy() {
 /// 多 Agent 遗产交互测试
 #[test]
 fn test_multi_agent_legacy_interaction() {
-    // 6.2 多 Agent 遗产交互测试
     let seed = WorldSeed::default();
     let mut world = World::new(&seed);
 
@@ -95,20 +92,13 @@ fn test_multi_agent_legacy_interaction() {
         params: HashMap::new(),
         build_type: None,
         direction: None,
-        motivation_delta: [0.0; 6],
     };
 
     let result = world.apply_action(&agent2_id, &worship_action);
     assert!(matches!(result, agentora_core::world::ActionResult::Success),
             "祭拜动作应该成功");
 
-    let agent2 = world.agents.get(&agent2_id).unwrap();
-    println!("祭拜后动机：认知={:.2}, 传承={:.2}",
-             agent2.motivation.get(2), agent2.motivation.get(5));
-    assert!(agent2.motivation.get(2) > 0.5, "认知动机应该增加");
-    assert!(agent2.motivation.get(5) > 0.5, "传承动机应该增加");
-
-    println!("✅ 祭拜动作成功，动机得到激励");
+    println!("✅ 祭拜动作成功");
 
     // 测试探索动作
     let explore_action = Action {
@@ -121,24 +111,18 @@ fn test_multi_agent_legacy_interaction() {
         params: HashMap::new(),
         build_type: None,
         direction: None,
-        motivation_delta: [0.0; 6],
     };
 
     let result = world.apply_action(&agent2_id, &explore_action);
     assert!(matches!(result, agentora_core::world::ActionResult::Success),
             "探索动作应该成功");
 
-    let agent2 = world.agents.get(&agent2_id).unwrap();
-    println!("探索后认知动机：{:.2}", agent2.motivation.get(2));
-    assert!(agent2.motivation.get(2) > 0.55, "探索后认知动机应该继续增加");
-
-    println!("✅ 探索动作成功，认知动机得到激励");
+    println!("✅ 探索动作成功");
 }
 
 /// 遗产广播正确性验证
 #[test]
 fn test_legacy_broadcast_format() {
-    // 6.3 验证遗产广播正确性
     let legacy = Legacy {
         id: "test-legacy-001".to_string(),
         position: Position::new(50, 50),
@@ -171,19 +155,15 @@ fn test_legacy_broadcast_format() {
     println!("✅ 遗产事件序列化/反序列化成功");
 }
 
-/// 动机反馈效果验证
+/// 遗产交互效果验证
 #[test]
-fn test_motivation_feedback_from_legacy() {
-    // 6.4 验证动机的反馈效果
+fn test_legacy_interaction_effects() {
     let seed = WorldSeed::default();
     let mut world = World::new(&seed);
 
     let agent_id = AgentId::new("test-agent");
     let position = Position::new(20, 20);
     let mut agent = Agent::new(agent_id.clone(), "Test Agent".to_string(), position);
-
-    // 设置初始动机为中性值
-    agent.motivation = agentora_core::motivation::MotivationVector::new();
     world.agents.insert(agent_id.clone(), agent);
 
     // 创建测试遗产
@@ -200,10 +180,9 @@ fn test_motivation_feedback_from_legacy() {
     };
     world.legacies.push(legacy);
 
-    println!("=== 动机反馈效果验证 ===");
-    let initial_cognitive = world.agents.get(&agent_id).unwrap().motivation.get(2);
-    let initial_legacy = world.agents.get(&agent_id).unwrap().motivation.get(5);
-    println!("初始动机：认知={:.2}, 传承={:.2}", initial_cognitive, initial_legacy);
+    println!("=== 遗产交互效果验证 ===");
+    let initial_interacts = world.total_legacy_interacts;
+    println!("初始交互次数：{}", initial_interacts);
 
     // 执行祭拜动作
     let worship_action = Action {
@@ -216,31 +195,15 @@ fn test_motivation_feedback_from_legacy() {
         params: HashMap::new(),
         build_type: None,
         direction: None,
-        motivation_delta: [0.0; 6],
     };
 
-    world.apply_action(&agent_id, &worship_action);
+    let result = world.apply_action(&agent_id, &worship_action);
+    assert!(matches!(result, agentora_core::world::ActionResult::Success),
+            "祭拜动作应该成功");
 
-    let agent = world.agents.get(&agent_id).unwrap();
-    let final_cognitive = agent.motivation.get(2);
-    let final_legacy = agent.motivation.get(5);
+    // 验证交互计数器增加
+    assert!(world.total_legacy_interacts > initial_interacts,
+            "交互次数应该增加");
 
-    println!("祭拜后动机：认知={:.2}, 传承={:.2}", final_cognitive, final_legacy);
-    println!("认知增加：{:.2}, 传承增加：{:.2}",
-             final_cognitive - initial_cognitive,
-             final_legacy - initial_legacy);
-
-    // 验证动机增加
-    assert!(final_cognitive > initial_cognitive, "认知动机应该增加");
-    assert!(final_legacy > initial_legacy, "传承动机应该增加");
-
-    // 验证增加量约为 0.05
-    let cognitive_delta = final_cognitive - initial_cognitive;
-    let legacy_delta = final_legacy - initial_legacy;
-    assert!(cognitive_delta >= 0.04 && cognitive_delta <= 0.06,
-            "认知动机增加应约为 0.05");
-    assert!(legacy_delta >= 0.04 && legacy_delta <= 0.06,
-            "传承动机增加应约为 0.05");
-
-    println!("✅ 动机反馈效果符合预期");
+    println!("✅ 遗产交互效果符合预期");
 }

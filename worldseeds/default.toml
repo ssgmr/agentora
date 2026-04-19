@@ -22,19 +22,6 @@ spawn_strategy = "scattered"
 # P2P种子节点地址（留空表示单机模式）
 seed_peers = []
 
-# 动机模板 (格式: name.v = [生存, 社交, 认知, 表达, 权力, 传承])
-[motivation_templates.gatherer]
-v = [0.8, 0.4, 0.3, 0.2, 0.3, 0.2]
-
-[motivation_templates.trader]
-v = [0.5, 0.8, 0.4, 0.3, 0.7, 0.3]
-
-[motivation_templates.explorer]
-v = [0.4, 0.3, 0.9, 0.6, 0.3, 0.4]
-
-[motivation_templates.builder]
-v = [0.6, 0.5, 0.4, 0.8, 0.4, 0.3]
-
 # 压力池配置
 [pressure_config]
 # 压力事件触发间隔范围 (tick)

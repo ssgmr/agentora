@@ -3,10 +3,9 @@
 //! 测试 handle_gather, handle_build, handle_attack, handle_trade_*, handle_ally_* 以及错误叙事生成
 
 use agentora_core::legacy::Legacy;
-use agentora_core::types::{AgentId, Direction, Position, ResourceType, StructureType, Action, ActionType, LegacyInteraction};
+use agentora_core::types::{AgentId, Position, ResourceType, StructureType, Action, ActionType, LegacyInteraction};
 use agentora_core::world::{World, ActionResult, PendingTrade, TradeStatus};
 use agentora_core::agent::Agent;
-use agentora_core::motivation::MotivationVector;
 use agentora_core::rule_engine::{RuleEngine, WorldState};
 use agentora_core::vision::NearbyAgentInfo;
 use std::collections::HashMap;
@@ -52,7 +51,6 @@ fn test_gather_success() {
         params: HashMap::new(),
         build_type: None,
         direction: None,
-        motivation_delta: [0.0; 6],
     };
 
     let result = world.apply_action(&agent_id, &action);
@@ -77,7 +75,6 @@ fn test_gather_no_resource_node() {
         params: HashMap::new(),
         build_type: None,
         direction: None,
-        motivation_delta: [0.0; 6],
     };
 
     let result = world.apply_action(&agent_id, &action);
@@ -103,7 +100,6 @@ fn test_gather_wrong_resource_type() {
         params: HashMap::new(),
         build_type: None,
         direction: None,
-        motivation_delta: [0.0; 6],
     };
 
     let result = world.apply_action(&agent_id, &action);
@@ -129,7 +125,6 @@ fn test_gather_depleted_node() {
         params: HashMap::new(),
         build_type: None,
         direction: None,
-        motivation_delta: [0.0; 6],
     };
 
     let result = world.apply_action(&agent_id, &action);
@@ -152,7 +147,6 @@ fn test_build_fence_success() {
         params: HashMap::new(),
         build_type: Some(StructureType::Fence),
         direction: None,
-        motivation_delta: [0.0; 6],
     };
 
     let result = world.apply_action(&agent_id, &action);
@@ -180,7 +174,6 @@ fn test_build_camp_success() {
         params: HashMap::new(),
         build_type: Some(StructureType::Camp),
         direction: None,
-        motivation_delta: [0.0; 6],
     };
 
     let result = world.apply_action(&agent_id, &action);
@@ -210,7 +203,6 @@ fn test_build_insufficient_resources() {
         params: HashMap::new(),
         build_type: Some(StructureType::Warehouse),
         direction: None,
-        motivation_delta: [0.0; 6],
     };
 
     let result = world.apply_action(&agent_id, &action);
@@ -235,7 +227,6 @@ fn test_build_existing_structure() {
         params: HashMap::new(),
         build_type: Some(StructureType::Fence),
         direction: None,
-        motivation_delta: [0.0; 6],
     };
     world.apply_action(&agent_id, &action1);
 
@@ -247,7 +238,6 @@ fn test_build_existing_structure() {
         params: HashMap::new(),
         build_type: Some(StructureType::Fence),
         direction: None,
-        motivation_delta: [0.0; 6],
     };
 
     let result = world.apply_action(&agent_id, &action2);
@@ -273,7 +263,6 @@ fn test_attack_success() {
         params: HashMap::new(),
         build_type: None,
         direction: None,
-        motivation_delta: [0.0; 6],
     };
 
     let result = world.apply_action(&attacker_id, &action);
@@ -306,7 +295,6 @@ fn test_attack_kills_target() {
         params: HashMap::new(),
         build_type: None,
         direction: None,
-        motivation_delta: [0.0; 6],
     };
 
     let result = world.apply_action(&attacker_id, &action);
@@ -334,7 +322,6 @@ fn test_attack_dead_target() {
         params: HashMap::new(),
         build_type: None,
         direction: None,
-        motivation_delta: [0.0; 6],
     };
 
     let result = world.apply_action(&attacker_id, &action);
@@ -367,7 +354,6 @@ fn test_trade_offer_success() {
         params: HashMap::new(),
         build_type: None,
         direction: None,
-        motivation_delta: [0.0; 6],
     };
 
     let result = world.apply_action(&proposer_id, &action);
@@ -402,7 +388,6 @@ fn test_trade_offer_insufficient_resources() {
         params: HashMap::new(),
         build_type: None,
         direction: None,
-        motivation_delta: [0.0; 6],
     };
 
     let result = world.apply_action(&proposer_id, &action);
@@ -432,7 +417,6 @@ fn test_trade_offer_dead_target() {
         params: HashMap::new(),
         build_type: None,
         direction: None,
-        motivation_delta: [0.0; 6],
     };
 
     let result = world.apply_action(&proposer_id, &action);
@@ -484,7 +468,6 @@ fn test_trade_accept_success() {
         params: HashMap::new(),
         build_type: None,
         direction: None,
-        motivation_delta: [0.0; 6],
     };
 
     let result = world.apply_action(&acceptor_id, &action);
@@ -522,7 +505,6 @@ fn test_trade_accept_no_pending() {
         params: HashMap::new(),
         build_type: None,
         direction: None,
-        motivation_delta: [0.0; 6],
     };
 
     let result = world.apply_action(&agent_id, &action);
@@ -558,7 +540,6 @@ fn test_trade_reject_success() {
         params: HashMap::new(),
         build_type: None,
         direction: None,
-        motivation_delta: [0.0; 6],
     };
 
     let result = world.apply_action(&acceptor_id, &action);
@@ -590,7 +571,6 @@ fn test_ally_propose_success() {
         params: HashMap::new(),
         build_type: None,
         direction: None,
-        motivation_delta: [0.0; 6],
     };
 
     let result = world.apply_action(&proposer_id, &action);
@@ -619,7 +599,6 @@ fn test_ally_propose_low_trust() {
         params: HashMap::new(),
         build_type: None,
         direction: None,
-        motivation_delta: [0.0; 6],
     };
 
     let result = world.apply_action(&proposer_id, &action);
@@ -643,7 +622,6 @@ fn test_ally_propose_no_relation() {
         params: HashMap::new(),
         build_type: None,
         direction: None,
-        motivation_delta: [0.0; 6],
     };
 
     let result = world.apply_action(&proposer_id, &action);
@@ -668,7 +646,6 @@ fn test_ally_accept_success() {
         params: HashMap::new(),
         build_type: None,
         direction: None,
-        motivation_delta: [0.0; 6],
     };
 
     let result = world.apply_action(&acceptor_id, &action);
@@ -699,7 +676,6 @@ fn test_ally_reject_success() {
         params: HashMap::new(),
         build_type: None,
         direction: None,
-        motivation_delta: [0.0; 6],
     };
 
     let result = world.apply_action(&acceptor_id, &action);
@@ -722,7 +698,6 @@ fn test_error_narrative_gather_no_resource() {
         params: HashMap::new(),
         build_type: None,
         direction: None,
-        motivation_delta: [0.0; 6],
     };
 
     world.apply_action(&agent_id, &action);
@@ -754,7 +729,6 @@ fn test_error_narrative_build_existing_structure() {
         params: HashMap::new(),
         build_type: Some(StructureType::Fence),
         direction: None,
-        motivation_delta: [0.0; 6],
     };
 
     world.apply_action(&agent_id, &action);
@@ -783,7 +757,6 @@ fn test_error_narrative_attack_dead_target() {
         params: HashMap::new(),
         build_type: None,
         direction: None,
-        motivation_delta: [0.0; 6],
     };
 
     world.apply_action(&attacker_id, &action);
@@ -809,7 +782,6 @@ fn test_no_error_narrative_on_success() {
         params: HashMap::new(),
         build_type: None,
         direction: None,
-        motivation_delta: [0.0; 6],
     };
 
     world.apply_action(&agent_id, &action);
@@ -833,7 +805,6 @@ fn test_rule_engine_select_target_attack() {
         name: "近敌".into(),
         position: Position::new(11, 10),
         distance: 1,
-        motivation_summary: [0.5; 6],
         relation_type: agentora_core::agent::RelationType::Neutral,
         trust: 0.5,
     });
@@ -842,7 +813,6 @@ fn test_rule_engine_select_target_attack() {
         name: "远敌".into(),
         position: Position::new(15, 10),
         distance: 5,
-        motivation_summary: [0.5; 6],
         relation_type: agentora_core::agent::RelationType::Neutral,
         trust: 0.8,
     });
@@ -865,7 +835,6 @@ fn test_rule_engine_select_target_ally() {
         name: "信任".into(),
         position: Position::new(15, 10),
         distance: 5,
-        motivation_summary: [0.5; 6],
         relation_type: agentora_core::agent::RelationType::Ally,
         trust: 0.9,
     });
@@ -874,7 +843,6 @@ fn test_rule_engine_select_target_ally() {
         name: "怀疑".into(),
         position: Position::new(11, 10),
         distance: 1,
-        motivation_summary: [0.5; 6],
         relation_type: agentora_core::agent::RelationType::Neutral,
         trust: 0.2,
     });
@@ -896,85 +864,113 @@ fn test_rule_engine_select_target_empty() {
 }
 
 #[test]
-fn test_rule_engine_select_build_type_survival() {
+fn test_rule_engine_filter_build_sufficient() {
     let mut world_state = WorldState::default();
-    // 提供足够资源建造 Warehouse (10 wood + 5 stone)
-    world_state.agent_inventory.insert(ResourceType::Wood, 15);
-    world_state.agent_inventory.insert(ResourceType::Stone, 10);
+    // 提供足够资源建造 Fence (需要 2 wood)
+    world_state.agent_inventory.insert(ResourceType::Wood, 5);
 
     let engine = RuleEngine::new();
-    let build_type = engine.select_build_type(0, &world_state); // 0 = 生存
+    let candidates = engine.filter_hard_constraints(&world_state);
 
-    assert!(build_type.is_some());
-    assert!(matches!(build_type.unwrap(), StructureType::Warehouse));
+    assert!(candidates.iter().any(|a| matches!(a, ActionType::Build { structure: StructureType::Fence })));
 }
 
 #[test]
-fn test_rule_engine_select_build_type_survival_low_resources() {
+fn test_rule_engine_filter_build_insufficient() {
     let mut world_state = WorldState::default();
-    // 只够建 Fence
-    world_state.agent_inventory.insert(ResourceType::Wood, 3);
+    // 只有1个木材，不够建任何建筑
+    world_state.agent_inventory.insert(ResourceType::Wood, 1);
 
     let engine = RuleEngine::new();
-    let build_type = engine.select_build_type(0, &world_state); // 0 = 生存
+    let candidates = engine.filter_hard_constraints(&world_state);
 
-    // Warehouse 和 Camp 都不够，返回 None
-    assert!(build_type.is_none());
+    assert!(!candidates.iter().any(|a| matches!(a, ActionType::Build { .. })));
 }
 
 #[test]
-fn test_rule_engine_select_build_type_no_resources() {
+fn test_rule_engine_filter_build_no_resources() {
     let world_state = WorldState::default();
     let engine = RuleEngine::new();
-    let build_type = engine.select_build_type(4, &world_state); // 4 = 权力
-    assert!(build_type.is_none());
+    let candidates = engine.filter_hard_constraints(&world_state);
+
+    assert!(!candidates.iter().any(|a| matches!(a, ActionType::Build { .. })));
 }
 
 #[test]
-fn test_rule_engine_fallback_trade_offer() {
-    // 社交动机最高且有附近 Agent → AllyPropose
+fn test_rule_engine_fallback_social() {
+    // 有附近 Agent 时，rule engine 应能生成 Talk 动作
     let mut world_state = WorldState::default();
+    world_state.existing_agents.insert(AgentId::new("friend"));
     world_state.nearby_agents.push(NearbyAgentInfo {
         id: AgentId::new("friend"),
         name: "朋友".into(),
         position: Position::new(11, 10),
         distance: 1,
-        motivation_summary: [0.5; 6],
         relation_type: agentora_core::agent::RelationType::Ally,
         trust: 0.8,
     });
 
-    let motivation = MotivationVector::from_array([0.1, 0.9, 0.1, 0.1, 0.1, 0.1]);
     let engine = RuleEngine::new();
-    let action = engine.fallback_action(&motivation, &world_state);
+    let candidates = engine.filter_hard_constraints(&world_state);
 
-    assert!(matches!(action.action_type, ActionType::AllyPropose { .. }));
+    assert!(candidates.iter().any(|a| matches!(a, ActionType::Talk { .. })));
 }
 
 #[test]
-fn test_rule_engine_fallback_power_attack() {
+fn test_rule_engine_fallback_attack_exists() {
+    // 有敌对 Agent 时，rule engine 应能生成 Attack 动作
     let mut world_state = WorldState::default();
+    world_state.existing_agents.insert(AgentId::new("enemy"));
     world_state.nearby_agents.push(NearbyAgentInfo {
         id: AgentId::new("enemy"),
         name: "敌人".into(),
         position: Position::new(11, 10),
         distance: 1,
-        motivation_summary: [0.5; 6],
         relation_type: agentora_core::agent::RelationType::Enemy,
         trust: 0.1,
     });
 
-    let motivation = MotivationVector::from_array([0.1, 0.1, 0.1, 0.1, 0.9, 0.1]);
     let engine = RuleEngine::new();
-    let action = engine.fallback_action(&motivation, &world_state);
+    let candidates = engine.filter_hard_constraints(&world_state);
 
-    assert!(matches!(action.action_type, ActionType::Attack { .. }));
+    assert!(candidates.iter().any(|a| matches!(a, ActionType::Attack { .. })));
 }
 
-// ===== handle_wait 测试 =====
+// ===== handle_wait / handle_eat / handle_drink 测试 =====
 
 #[test]
-fn test_wait_restores_satiety() {
+fn test_wait_does_not_restore_satiety() {
+    let mut world = create_test_world();
+    let pos = Position::new(5, 5);
+    let (agent_id, mut agent) = create_test_agent("a1", "等待者", pos);
+    agent.satiety = 50;
+    agent.hydration = 50;
+    agent.inventory.insert("food".to_string(), 5);
+    agent.inventory.insert("water".to_string(), 5);
+    world.insert_agent_at(agent_id.clone(), agent);
+
+    let action = Action {
+        reasoning: "单纯等待".into(),
+        action_type: ActionType::Wait,
+        target: None,
+        params: HashMap::new(),
+        build_type: None,
+        direction: None,
+    };
+
+    let result = world.apply_action(&agent_id, &action);
+    assert_eq!(result, ActionResult::Success);
+
+    let agent = world.agents.get(&agent_id).unwrap();
+    // Wait 不再自动进食/饮水
+    assert_eq!(agent.satiety, 50);
+    assert_eq!(agent.hydration, 50);
+    assert_eq!(agent.inventory.get("food").copied().unwrap_or(0), 5);
+    assert_eq!(agent.inventory.get("water").copied().unwrap_or(0), 5);
+}
+
+#[test]
+fn test_eat_restores_satiety() {
     let mut world = create_test_world();
     let pos = Position::new(5, 5);
     let (agent_id, mut agent) = create_test_agent("a1", "饥饿者", pos);
@@ -985,13 +981,12 @@ fn test_wait_restores_satiety() {
     world.insert_agent_at(agent_id.clone(), agent);
 
     let action = Action {
-        reasoning: "休息进食".into(),
-        action_type: ActionType::Wait,
+        reasoning: "进食".into(),
+        action_type: ActionType::Eat,
         target: None,
         params: HashMap::new(),
         build_type: None,
         direction: None,
-        motivation_delta: [0.0; 6],
     };
 
     let result = world.apply_action(&agent_id, &action);
@@ -999,9 +994,83 @@ fn test_wait_restores_satiety() {
 
     let agent = world.agents.get(&agent_id).unwrap();
     assert_eq!(agent.satiety, 80); // 50 + 30
-    assert_eq!(agent.hydration, 75); // 50 + 25
+    assert_eq!(agent.hydration, 50); // 饮水不变
     assert_eq!(agent.inventory.get("food").copied().unwrap_or(0), 4);
-    assert_eq!(agent.inventory.get("water").copied().unwrap_or(0), 4);
+    assert_eq!(agent.inventory.get("water").copied().unwrap_or(0), 5); // 水不变
+}
+
+#[test]
+fn test_drink_restores_hydration() {
+    let mut world = create_test_world();
+    let pos = Position::new(5, 5);
+    let (agent_id, mut agent) = create_test_agent("a1", "口渴者", pos);
+    agent.satiety = 50;
+    agent.hydration = 40;
+    agent.inventory.insert("food".to_string(), 5);
+    agent.inventory.insert("water".to_string(), 3);
+    world.insert_agent_at(agent_id.clone(), agent);
+
+    let action = Action {
+        reasoning: "饮水".into(),
+        action_type: ActionType::Drink,
+        target: None,
+        params: HashMap::new(),
+        build_type: None,
+        direction: None,
+    };
+
+    let result = world.apply_action(&agent_id, &action);
+    assert_eq!(result, ActionResult::Success);
+
+    let agent = world.agents.get(&agent_id).unwrap();
+    assert_eq!(agent.satiety, 50); // 饱食度不变
+    assert_eq!(agent.hydration, 65); // 40 + 25
+    assert_eq!(agent.inventory.get("food").copied().unwrap_or(0), 5);
+    assert_eq!(agent.inventory.get("water").copied().unwrap_or(0), 2);
+}
+
+#[test]
+fn test_eat_without_food_fails() {
+    let mut world = create_test_world();
+    let pos = Position::new(5, 5);
+    let (agent_id, mut agent) = create_test_agent("a1", "无粮者", pos);
+    agent.satiety = 30;
+    agent.inventory = HashMap::new(); // 没有食物
+    world.insert_agent_at(agent_id.clone(), agent);
+
+    let action = Action {
+        reasoning: "尝试进食".into(),
+        action_type: ActionType::Eat,
+        target: None,
+        params: HashMap::new(),
+        build_type: None,
+        direction: None,
+    };
+
+    let result = world.apply_action(&agent_id, &action);
+    assert_eq!(result, ActionResult::Blocked("背包中没有食物".into()));
+}
+
+#[test]
+fn test_drink_without_water_fails() {
+    let mut world = create_test_world();
+    let pos = Position::new(5, 5);
+    let (agent_id, mut agent) = create_test_agent("a1", "无水者", pos);
+    agent.hydration = 20;
+    agent.inventory = HashMap::new(); // 没有水
+    world.insert_agent_at(agent_id.clone(), agent);
+
+    let action = Action {
+        reasoning: "尝试饮水".into(),
+        action_type: ActionType::Drink,
+        target: None,
+        params: HashMap::new(),
+        build_type: None,
+        direction: None,
+    };
+
+    let result = world.apply_action(&agent_id, &action);
+    assert_eq!(result, ActionResult::Blocked("背包中没有水源".into()));
 }
 
 #[test]
@@ -1020,7 +1089,6 @@ fn test_wait_full_health() {
         params: HashMap::new(),
         build_type: None,
         direction: None,
-        motivation_delta: [0.0; 6],
     };
 
     world.apply_action(&agent_id, &action);
@@ -1045,7 +1113,6 @@ fn test_explore_moves() {
         params: HashMap::new(),
         build_type: None,
         direction: None,
-        motivation_delta: [0.0; 6],
     };
 
     let result = world.apply_action(&agent_id, &action);
@@ -1089,7 +1156,6 @@ fn test_legacy_pickup_success() {
         params: HashMap::new(),
         build_type: None,
         direction: None,
-        motivation_delta: [0.0; 6],
     };
 
     let result = world.apply_action(&agent_id, &action);
@@ -1131,7 +1197,6 @@ fn test_legacy_pickup_empty() {
         params: HashMap::new(),
         build_type: None,
         direction: None,
-        motivation_delta: [0.0; 6],
     };
 
     let result = world.apply_action(&agent_id, &action);
@@ -1169,7 +1234,6 @@ fn test_legacy_worship() {
         params: HashMap::new(),
         build_type: None,
         direction: None,
-        motivation_delta: [0.0; 6],
     };
 
     let result = world.apply_action(&agent_id, &action);
@@ -1184,12 +1248,11 @@ fn test_apply_action_invalid_agent() {
     let fake_id = AgentId::new("nonexistent");
     let action = Action {
         reasoning: "移动".into(),
-        action_type: ActionType::Move { direction: Direction::East },
+        action_type: ActionType::MoveToward { target: Position::new(6, 5) },
         target: None,
         params: HashMap::new(),
         build_type: None,
-        direction: Some(Direction::East),
-        motivation_delta: [0.0; 6],
+        direction: None,
     };
 
     let result = world.apply_action(&fake_id, &action);
@@ -1206,12 +1269,11 @@ fn test_apply_action_dead_agent() {
 
     let action = Action {
         reasoning: "移动".into(),
-        action_type: ActionType::Move { direction: Direction::East },
+        action_type: ActionType::MoveToward { target: Position::new(6, 5) },
         target: None,
         params: HashMap::new(),
         build_type: None,
-        direction: Some(Direction::East),
-        motivation_delta: [0.0; 6],
+        direction: None,
     };
 
     let result = world.apply_action(&agent_id, &action);

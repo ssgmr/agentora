@@ -1,33 +1,33 @@
-//! 单元测试 - Agent 模块 (阶段3新功能)
+//! 单元测试 - Agent 模块
 //!
-//! 5.1 临时偏好系统 | 5.2 交易逻辑 | 5.3 战斗逻辑 | 5.4 perceive_nearby
+//! 临时偏好系统 | 交易逻辑 | 战斗逻辑
 
 use agentora_core::agent::Agent;
 use agentora_core::agent::trade::TradeOffer;
 use agentora_core::types::{AgentId, Position, ResourceType};
 use std::collections::HashMap;
 
-// ===== 5.1 Agent 临时偏好系统 =====
+// ===== 临时偏好系统 =====
 
 #[test]
 fn test_inject_preference_new() {
     let mut agent = Agent::new(AgentId::default(), "test".into(), Position::new(0, 0));
     assert!(agent.temp_preferences.is_empty());
 
-    agent.inject_preference(2, 0.3, 10);
+    agent.inject_preference("food_bias", 0.3, 10);
 
     assert_eq!(agent.temp_preferences.len(), 1);
     let pref = &agent.temp_preferences[0];
-    assert_eq!(pref.dimension, 2);
+    assert_eq!(pref.key, "food_bias");
     assert!((pref.boost - 0.3).abs() < f32::EPSILON);
     assert_eq!(pref.remaining_ticks, 10);
 }
 
 #[test]
-fn test_inject_preference_stack_same_dimension() {
+fn test_inject_preference_stack_same_key() {
     let mut agent = Agent::new(AgentId::default(), "test".into(), Position::new(0, 0));
-    agent.inject_preference(2, 0.3, 10);
-    agent.inject_preference(2, 0.2, 5);
+    agent.inject_preference("food_bias", 0.3, 10);
+    agent.inject_preference("food_bias", 0.2, 5);
 
     assert_eq!(agent.temp_preferences.len(), 1);
     let pref = &agent.temp_preferences[0];
@@ -38,7 +38,7 @@ fn test_inject_preference_stack_same_dimension() {
 #[test]
 fn test_tick_preferences_expire() {
     let mut agent = Agent::new(AgentId::default(), "test".into(), Position::new(0, 0));
-    agent.inject_preference(1, 0.3, 2);
+    agent.inject_preference("food_bias", 0.3, 2);
 
     agent.tick_preferences();
     assert_eq!(agent.temp_preferences.len(), 1);
@@ -48,28 +48,7 @@ fn test_tick_preferences_expire() {
     assert!(agent.temp_preferences.is_empty());
 }
 
-#[test]
-fn test_effective_motivation_with_preference() {
-    let mut agent = Agent::new(AgentId::default(), "test".into(), Position::new(0, 0));
-    agent.inject_preference(0, 0.3, 5);
-
-    let effective = agent.effective_motivation();
-    // 基础生存=0.5, boost=0.3
-    assert!((effective[0] - 0.8).abs() < f32::EPSILON);
-    // 其他维度不受影响
-    assert!((effective[1] - 0.5).abs() < f32::EPSILON);
-}
-
-#[test]
-fn test_effective_motivation_clamp() {
-    let mut agent = Agent::new(AgentId::default(), "test".into(), Position::new(0, 0));
-    agent.inject_preference(0, 0.8, 5); // 0.5 + 0.8 = 1.3 → clamp to 1.0
-
-    let effective = agent.effective_motivation();
-    assert!((effective[0] - 1.0).abs() < f32::EPSILON);
-}
-
-// ===== 5.2 交易逻辑 =====
+// ===== 交易逻辑 =====
 
 fn make_test_trade(offer: ResourceType, offer_amount: u32, want: ResourceType, want_amount: u32) -> TradeOffer {
     let mut offer_map = HashMap::new();
@@ -123,7 +102,7 @@ fn test_accept_trade_fraud_detection() {
     assert!(!acceptor.accept_trade(&trade, &proposer_inv));
 }
 
-// ===== 5.3 战斗逻辑 =====
+// ===== 战斗逻辑 =====
 
 #[test]
 fn test_attack_deals_damage() {
@@ -172,40 +151,3 @@ fn test_attack_no_negative_health() {
 
     assert_eq!(target.health, 0); // saturating_sub 不会溢出到负数
 }
-
-// ===== 5.4 perceive_nearby =====
-// TODO: perceive_nearby 方法未实现，测试暂时禁用
-
-// #[test]
-// fn test_perceive_resources_in_range() {
-//     let agent = Agent::new(AgentId::default(), "agent".into(), Position::new(50, 50));
-//     let resource_data = |pos: &Position| -> Option<(ResourceType, u32)> {
-//         if pos.x == 52 && pos.y == 50 { Some((ResourceType::Food, 5)) }
-//         else if pos.x == 48 && pos.y == 51 { Some((ResourceType::Water, 3)) }
-//         else { None }
-//     };
-//     let result = agent.perceive_nearby::<_, _, ()>(|_| None, resource_data, 256);
-//     assert_eq!(result.nearby_resources.len(), 2);
-//     assert_eq!(result.position, Position::new(50, 50));
-// }
-
-// #[test]
-// fn test_perceive_resources_out_of_range() {
-//     let agent = Agent::new(AgentId::default(), "agent".into(), Position::new(50, 50));
-//     let resource_data = |pos: &Position| -> Option<(ResourceType, u32)> {
-//         if pos.x == 60 && pos.y == 50 { Some((ResourceType::Food, 5)) }
-//         else { None }
-//     };
-//     let result = agent.perceive_nearby::<_, _, ()>(|_| None, resource_data, 256);
-//     assert_eq!(result.nearby_resources.len(), 0);
-// }
-
-// #[test]
-// fn test_perceive_map_boundary_respected() {
-//     let agent = Agent::new(AgentId::default(), "agent".into(), Position::new(253, 253));
-//     let resource_data = |pos: &Position| -> Option<(ResourceType, u32)> {
-//         Some((ResourceType::Iron, 1))
-//     };
-//     let result = agent.perceive_nearby::<_, _, ()>(|_| None, resource_data, 256);
-//     assert_eq!(result.nearby_resources.len(), 63);
-// }

@@ -24,6 +24,9 @@ rotation = "daily"
 # 单文件最大大小（MB），仅在 rotation=never 时生效
 max_file_size_mb = 100
 
+# 日志时区：local / utc（默认 local）
+timezone = "local"
+
 # 按模块名设置不同级别（覆盖全局）
 # 例如：agentora_bridge=debug, agentora_core::decision=trace
 [log.targets]

@@ -1,6 +1,6 @@
 # MilestonePanel - 里程碑进度面板
 # 显示已达成和未达成的文明里程碑
-extends VBoxContainer
+extends PanelContainer
 
 # 里程碑定义（与 Rust 端保持一致）
 const MILESTONES = {
@@ -15,17 +15,26 @@ const MILESTONES = {
 
 var _achieved_milestones: Dictionary = {}  # name -> {display_name, tick}
 var _milestone_labels: Dictionary = {}  # name -> Label
+var _content_vbox: VBoxContainer
 
 
 func _ready() -> void:
 	# 面板背景
 	var panel_bg = StyleBoxFlat.new()
-	panel_bg.bg_color = Color(0, 0, 0, 0.7)
-	panel_bg.content_margin_left = 8
-	panel_bg.content_margin_right = 8
-	panel_bg.content_margin_top = 6
-	panel_bg.content_margin_bottom = 6
+	panel_bg.bg_color = Color(0, 0, 0, 0.6)
+	panel_bg.content_margin_left = 6
+	panel_bg.content_margin_right = 6
+	panel_bg.content_margin_top = 4
+	panel_bg.content_margin_bottom = 4
 	add_theme_stylebox_override("panel", panel_bg)
+
+	# 最小尺寸
+	custom_minimum_size = Vector2(300, 120)
+
+	# 内容容器
+	_content_vbox = VBoxContainer.new()
+	_content_vbox.add_theme_constant_override("separation", 2)
+	add_child(_content_vbox)
 
 	_setup_ui()
 
@@ -40,7 +49,7 @@ func _setup_ui() -> void:
 	var title = Label.new()
 	title.text = "文明里程碑"
 	title.add_theme_font_size_override("font_size", 13)
-	add_child(title)
+	_content_vbox.add_child(title)
 
 	# 创建每个里程碑的状态行
 	for milestone_name in MILESTONES.keys():
@@ -56,14 +65,17 @@ func _setup_ui() -> void:
 		hbox.add_child(icon_label)
 
 		# 名称和状态
-		var status_label = Label.new()
+		var status_label = RichTextLabel.new()
+		status_label.bbcode_enabled = true
+		status_label.fit_content = true
+		status_label.custom_minimum_size = Vector2(200, 16)
 		status_label.text = "%s [color=gray]未达成[/color]" % data.name
-		status_label.add_theme_font_size_override("font_size", 10)
+		status_label.add_theme_font_size_override("normal_font_size", 10)
 		status_label.tooltip_text = data.desc
 		hbox.add_child(status_label)
 		_milestone_labels[milestone_name] = status_label
 
-		add_child(hbox)
+		_content_vbox.add_child(hbox)
 
 
 func _on_world_updated(snapshot: Dictionary) -> void:
@@ -85,12 +97,12 @@ func _on_world_updated(snapshot: Dictionary) -> void:
 
 
 func _update_milestone_display(name_str: String, display_name: String, tick: int) -> void:
-	var label: Label = _milestone_labels.get(name_str)
+	var label: RichTextLabel = _milestone_labels.get(name_str)
 	if label:
 		var _data = MILESTONES.get(name_str, {"icon": "✓"})
 		label.text = "%s [color=green]✓ 已达成[/color] (tick %d)" % [display_name, tick]
 		# 高亮颜色
-		label.add_theme_color_override("font_color", Color(0.4, 0.9, 0.4))
+		label.add_theme_color_override("default_color", Color(0.4, 0.9, 0.4))
 
 
 func _show_milestone_notification(name_str: String, display_name: String) -> void:

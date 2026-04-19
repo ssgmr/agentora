@@ -16,7 +16,6 @@ impl World {
         if let Some(agent) = self.agents.get(agent_id) {
             let agent_name = agent.name.clone();
             let action_name = match action_type {
-                ActionType::Move { .. } => "移动",
                 ActionType::MoveToward { .. } => "导航移动",
                 ActionType::Gather { .. } => "采集",
                 ActionType::Build { .. } => "建造",
@@ -30,6 +29,8 @@ impl World {
                 ActionType::AllyAccept { .. } => "结盟接受",
                 ActionType::AllyReject { .. } => "结盟拒绝",
                 ActionType::Wait => "休息",
+                ActionType::Eat => "进食",
+                ActionType::Drink => "饮水",
                 ActionType::InteractLegacy { .. } => "遗产交互",
             };
             self.record_event(agent_id, &agent_name, "error",
@@ -37,33 +38,46 @@ impl World {
         }
     }
 
-    // ===== Move =====
-    pub fn handle_move(&mut self, agent_id: &AgentId, direction: Direction) -> ActionResult {
-        // 先提取必要信息，避免后续双重借用
-        let (agent_name, old_pos) = {
+    // ===== MoveToward =====
+    /// 处理 MoveToward 动作：Agent 自主指定移动到相邻格
+    ///
+    /// Agent 直接输出要移动到的目标坐标（必须与当前位置相邻，曼哈顿距离=1）。
+    /// 系统只校验合法性：边界、地形通行性、Fence 碰撞。
+    pub fn handle_move_toward(&mut self, agent_id: &AgentId, target: Position) -> ActionResult {
+        let (agent_name, current_pos) = {
             let agent = self.agents.get(agent_id).unwrap();
             (agent.name.clone(), agent.position)
         };
-        let (dx, dy) = direction.delta();
-        let new_x = old_pos.x as i32 + dx;
-        let new_y = old_pos.y as i32 + dy;
 
-        if new_x < 0 || new_y < 0 {
-            return ActionResult::Blocked("移动超出地图边界".into());
+        // 如果已在目标位置，无操作，记录反馈让 LLM 知道需要选择其他动作
+        if current_pos == target {
+            self.record_event(agent_id, &agent_name, "move_toward",
+                &format!("{} 已在目标位置 ({},{})，无需移动", agent_name, target.x, target.y), "#888888");
+            // 记录特殊反馈，让 LLM 知道需要选择其他动作
+            if let Some(agent) = self.agents.get_mut(agent_id) {
+                agent.last_action_result = Some(format!("你已经在 ({},{})，不需要再移动到此处。请选择其他动作（如采集附近资源、探索其他方向等）", target.x, target.y));
+            }
+            return ActionResult::Success;
         }
 
-        let new_pos = Position::new(new_x as u32, new_y as u32);
-        if !self.map.is_valid(new_pos) {
+        // 校验：目标必须与当前位置相邻（曼哈顿距离 = 1）
+        let dist = current_pos.manhattan_distance(&target);
+        if dist != 1 {
+            return ActionResult::Blocked(
+                format!("目标位置 ({},{}) 不相邻（距离 {} 格），MoveToward 每次只能移动 1 格",
+                    target.x, target.y, dist));
+        }
+
+        // 边界检查
+        if target.x >= self.map.size().0 || target.y >= self.map.size().1 {
             return ActionResult::OutOfBounds;
         }
 
-        let terrain = self.map.get_terrain(new_pos);
-        if !terrain.is_passable() {
-            return ActionResult::Blocked(format!("{:?} 地形不可通行", terrain));
-        }
+        // 地形通行性检查（所有地形均可通行）
+        let _terrain = self.map.get_terrain(target);
 
-        // Fence 碰撞检查：目标格有 Fence 且 Agent 与所有者为 Enemy → 阻挡
-        if let Some(fence) = self.structures.get(&new_pos) {
+        // Fence 碰撞检查
+        if let Some(fence) = self.structures.get(&target) {
             if fence.structure_type == StructureType::Fence {
                 if let Some(ref owner_id) = fence.owner_id {
                     let is_enemy = self.agents.get(agent_id)
@@ -77,57 +91,17 @@ impl World {
             }
         }
 
-        // 更新位置
-        self.agents.get_mut(agent_id).unwrap().position = new_pos;
-        self.record_event(agent_id, &agent_name, "move",
-            &format!("{} 移动至 ({},{})", agent_name, new_pos.x, new_pos.y), "#888888");
+        // 执行移动（记录上次位置用于检测振荡）
+        let agent = self.agents.get_mut(agent_id).unwrap();
+        agent.last_position = Some(agent.position);
+        agent.position = target;
+
+        // 反馈移动结果给 LLM
+        agent.last_action_result = Some(format!("成功移动到 ({}, {})", target.x, target.y));
+
+        self.record_event(agent_id, &agent_name, "move_toward",
+            &format!("{} 自主移动到 ({},{})", agent_name, target.x, target.y), "#88AA88");
         ActionResult::Success
-    }
-
-    // ===== MoveToward =====
-    /// 处理 MoveToward 动作：导航到目标位置（单步移动）
-    ///
-    /// 每次只移动一格，朝向目标位置的方向移动
-    /// 使用 calculate_direction 计算最优方向
-    pub fn handle_move_toward(&mut self, agent_id: &AgentId, target: Position) -> ActionResult {
-        let (agent_name, current_pos) = {
-            let agent = self.agents.get(agent_id).unwrap();
-            (agent.name.clone(), agent.position)
-        };
-
-        // 如果已在目标位置，无操作
-        if current_pos == target {
-            self.record_event(agent_id, &agent_name, "move_toward",
-                &format!("{} 已在目标位置 ({},{})", agent_name, target.x, target.y), "#888888");
-            return ActionResult::Success;
-        }
-
-        // 计算方向
-        let direction = match crate::vision::calculate_direction(&current_pos, &target) {
-            Some(d) => d,
-            None => {
-                // 已在目标位置（理论上不会到达这里）
-                return ActionResult::Success;
-            }
-        };
-
-        // 记录当前位置，用于计算移动后与目标的距离
-        let old_distance = current_pos.manhattan_distance(&target);
-
-        // 复用现有的移动逻辑
-        let result = self.handle_move(agent_id, direction);
-
-        // 更新叙事描述
-        if let ActionResult::Success = result {
-            let new_pos = self.agents.get(agent_id).unwrap().position;
-            let new_distance = new_pos.manhattan_distance(&target);
-
-            self.record_event(agent_id, &agent_name, "move_toward",
-                &format!("{} 向目标 ({},{}) 移动，当前距离 {} 格 → {} 格",
-                    agent_name, target.x, target.y, old_distance, new_distance), "#88AA88");
-        }
-
-        result
     }
 
     // ===== Gather =====
@@ -171,11 +145,21 @@ impl World {
             let agent = self.agents.get_mut(agent_id).unwrap();
             let resource_key = resource.as_str().to_string();
             let current = *agent.inventory.get(&resource_key).unwrap_or(&0);
-            if current + gathered > (effective_limit as u32).min(99) {
-                // 库存已满
+            let limit = effective_limit as u32;
+            if current + gathered > limit {
+                // 库存已满，回退资源
+                node.current_amount += gathered;
+                if let Some(agent_mut) = self.agents.get_mut(agent_id) {
+                    agent_mut.last_action_result = Some(format!("采集失败：背包已满（当前上限 {}），无法采集更多资源。需要先使用 Eat/Drink 消耗资源或使用仓库建筑", limit));
+                }
                 return ActionResult::Blocked("背包已满，无法采集更多资源".into());
             }
             agent.inventory.insert(resource_key.clone(), current + gathered);
+
+            // 记录采集结果反馈给 LLM
+            if let Some(agent_mut) = self.agents.get_mut(agent_id) {
+                agent_mut.last_action_result = Some(format!("成功采集了 {} 个 {}，当前位置该资源剩余 {} 个", gathered, resource_key, node.current_amount));
+            }
 
             self.record_event(agent_id, &agent_name, "gather",
                 &format!("{} 采集了 {} 个 {}", agent_name, gathered, resource_key), "#88CC44");
@@ -190,9 +174,16 @@ impl World {
         let agent = self.agents.get_mut(agent_id).unwrap();
         let agent_name = agent.name.clone();
 
-        // Wait 动作改为饮食恢复：尝试消耗食物和水
-        let mut ate = false;
-        let mut drank = false;
+        agent.last_action_result = Some("等待了一回合，什么都没有做".to_string());
+        self.record_event(agent_id, &agent_name, "wait",
+            &format!("{} 等待了一回合", agent_name), "#CCCCCC");
+        ActionResult::Success
+    }
+
+    // ===== Eat =====
+    pub fn handle_eat(&mut self, agent_id: &AgentId) -> ActionResult {
+        let agent = self.agents.get_mut(agent_id).unwrap();
+        let agent_name = agent.name.clone();
 
         // 消耗 1 Food → satiety +30
         if agent.inventory.get("food").copied().unwrap_or(0) > 0 {
@@ -201,8 +192,20 @@ impl World {
                 agent.inventory.remove("food");
             }
             agent.satiety = (agent.satiety + 30).min(100);
-            ate = true;
+            agent.last_action_result = Some(format!("进食成功，饱食度恢复至 {}/100", agent.satiety));
+            self.record_event(agent_id, &agent_name, "eat",
+                &format!("{} 进食，恢复饱食度 (+30)", agent_name), "#88CC44");
+            ActionResult::Success
+        } else {
+            agent.last_action_result = Some("进食失败：背包中没有食物".to_string());
+            ActionResult::Blocked("背包中没有食物".into())
         }
+    }
+
+    // ===== Drink =====
+    pub fn handle_drink(&mut self, agent_id: &AgentId) -> ActionResult {
+        let agent = self.agents.get_mut(agent_id).unwrap();
+        let agent_name = agent.name.clone();
 
         // 消耗 1 Water → hydration +25
         if agent.inventory.get("water").copied().unwrap_or(0) > 0 {
@@ -211,21 +214,14 @@ impl World {
                 agent.inventory.remove("water");
             }
             agent.hydration = (agent.hydration + 25).min(100);
-            drank = true;
-        }
-
-        let desc = if ate && drank {
-            format!("{} 进食并饮水，恢复体力", agent_name)
-        } else if ate {
-            format!("{} 进食恢复体力，但缺少饮水", agent_name)
-        } else if drank {
-            format!("{} 饮水恢复体力，但缺少食物", agent_name)
+            agent.last_action_result = Some(format!("饮水成功，水分度恢复至 {}/100", agent.hydration));
+            self.record_event(agent_id, &agent_name, "drink",
+                &format!("{} 饮水，恢复水分度 (+25)", agent_name), "#44AAFF");
+            ActionResult::Success
         } else {
-            format!("{} 休息中，但背包没有食物和水源", agent_name)
-        };
-
-        self.record_event(agent_id, &agent_name, "wait", &desc, "#CCCCCC");
-        ActionResult::Success
+            agent.last_action_result = Some("饮水失败：背包中没有水源".to_string());
+            ActionResult::Blocked("背包中没有水源".into())
+        }
     }
 
     // ===== Build =====
@@ -258,6 +254,10 @@ impl World {
         // 创建 Structure
         let structure_obj = Structure::new(pos, structure, Some(agent_id.clone()), self.tick);
         self.structures.insert(pos, structure_obj);
+
+        if let Some(agent_mut) = self.agents.get_mut(agent_id) {
+            agent_mut.last_action_result = Some(format!("成功在 ({},{}) 建造了 {:?}", pos.x, pos.y, structure));
+        }
 
         self.record_event(agent_id, &agent_name, "build",
             &format!("{} 在 ({},{}) 建造了 {:?}", agent_name, pos.x, pos.y, structure), "#FF44AA");
@@ -649,15 +649,10 @@ impl World {
 
         match interaction {
             crate::types::LegacyInteraction::Worship => {
-                let agent = self.agents.get_mut(agent_id).unwrap();
-                agent.motivation[2] = (agent.motivation[2] + 0.05).clamp(0.0, 1.0);
-                agent.motivation[5] = (agent.motivation[5] + 0.05).clamp(0.0, 1.0);
                 self.total_legacy_interacts += 1;
                 ActionResult::Success
             }
             crate::types::LegacyInteraction::Explore => {
-                let agent = self.agents.get_mut(agent_id).unwrap();
-                agent.motivation[2] = (agent.motivation[2] + 0.1).clamp(0.0, 1.0);
                 self.total_legacy_interacts += 1;
                 ActionResult::Success
             }

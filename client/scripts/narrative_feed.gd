@@ -2,7 +2,7 @@
 # RichTextLabel滚动显示Agent决策叙事
 extends PanelContainer
 
-@export var max_events: int = 100
+@export var max_events: int = 200
 @export var auto_scroll: bool = true
 
 var _text_box: RichTextLabel
@@ -22,6 +22,7 @@ const EVENT_COLORS = {
 	"pressure_start": "#FF9800",  # 橙色 - 压力开始
 	"pressure_end": "#8BC34A",    # 浅绿 - 压力结束
 	"milestone": "#FFD700",  # 金色 - 里程碑
+	"level_up": "#FF6B35",   # 橙色 - 升级
 	"legacy": "#9C27B0",    # 紫色 - 遗产
 	"death": "#9C27B0",
 	"healed": "#4CAF50",    # 绿色 - 治愈（营地效果）

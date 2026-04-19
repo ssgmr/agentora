@@ -20,7 +20,6 @@ cargo build --release
 cargo test
 
 # 运行单个测试文件
-cargo test --test motivation_tests
 cargo test --test decision_tests
 cargo test --test crdt_tests
 cargo test --test json_parse_tests
@@ -30,7 +29,7 @@ cargo test --test legacy_tests
 cargo test --test agent_tests
 
 # 运行单个测试用例
-cargo test --test motivation_tests -- --test specific_test_name
+cargo test --test decision_tests -- --test specific_test_name
 
 # 运行集成测试（需要LLM服务）
 cargo test --test single_agent
@@ -67,7 +66,7 @@ godot --path client --export-release "Windows Desktop" agentora_windows.exe
 ### Crate结构
 ```
 crates/
-├── core/      # 核心引擎：动机、决策、世界、Agent、记忆、策略、存储
+├── core/      # 核心引擎：决策、世界、Agent、记忆、策略、存储
 ├── ai/        # LLM接入层：Provider trait、OpenAI/Anthropic/本地、降级链、JSON解析
 ├── network/   # P2P网络：libp2p、GossipSub、区域订阅、Codec
 ├── sync/      # CRDT同步：LWW、G-Counter、OR-Set、签名、Merkle
@@ -108,18 +107,19 @@ Godot 4 GDScript客户端，负责渲染和交互：
 - `world_renderer.gd` — TileMap世界渲染
 - `camera_controller.gd` — 相机控制
 - `narrative_feed.gd` — 叙事流面板
-- `motivation_radar.gd` — 6维动机雷达图
 - `guide_panel.gd` — 引导面板
+- `agent_detail_panel.gd` — Agent详情面板
+- `milestone_panel.gd` — 文明里程碑面板
 
-**注意**：`simulation_bridge.gd` 是已废弃的占位文件（生成随机假数据），场景中的 `SimulationBridge` 节点使用 Rust GDExtension 类型，与该脚本无关。应删除。
 
 #### Godot可执行文件
 - 使用 `godot` 命令（需安装Godot并添加到PATH）
 - macOS: 创建符号链接 `ln -sf /Applications/Godot.app/Contents/MacOS/Godot ~/.local/bin/godot`
 - Windows: 将Godot安装目录添加到系统PATH环境变量
 - 运行命令：`godot --path client`
+- Godot需要编辑器模式（而非运行模式）来触发重新导入资源。
 
-#### UI布局验证：自动截图
+#### UI布局验证：自动截图（优先使用godot MCP）
 外部屏幕截图工具（nircmd、snipping tool、Windows.Graphics.Capture等）无法捕获Godot窗口（Vulkan渲染器绕过GDI）。**必须使用Godot内部截图**。
 
 **关键陷阱：`.godot/imported/` 缓存损坏**
@@ -177,16 +177,9 @@ AutoScreenshot="*res://scripts/auto_screenshot.gd"
 - `openspec/config.yaml` — OpenSpec配置
 - 使用`/opsx:new`创建新变更，`/opsx:apply`实施，`/opsx:archive`归档
 
-### 依赖关系
-- `core` → `ai`, `sync` (决策需要LLM、状态需要CRDT类型)
-- `network` → `sync` (广播CRDT操作)
-- `bridge` → `core` (桥接核心引擎到Godot)
-- 根包 → 所有crates (集成测试)
-
 ### Core Crate顶层模块 (`crates/core/src/`)
 - **`types.rs`** — 核心类型：AgentId, Position, Direction, ResourceType, TerrainType, StructureType, ActionType(13种), Action, PersonalitySeed, PeerId
-- **`motivation.rs`** — 6维动机向量（生存/社交/认知/表达/权力/传承），惯性衰减（alpha=0.99），缺口计算
-- **`decision.rs`** — DecisionPipeline：Spark生成 → 硬约束过滤 → Prompt构建 → LLM调用 → 规则校验 → Softmax选择
+- **`decision.rs`** — DecisionPipeline：Prompt构建 → LLM调用 → 规则校验 → 执行
 - **`rule_engine.rs`** — 规则引擎：硬约束过滤 + 动作校验 + LLM失败兜底
 - **`prompt.rs`** — PromptBuilder：分级截断（策略→记忆→感知），最大2500 tokens，中文感知估算
 - **`seed.rs`** — WorldSeed配置加载
@@ -235,7 +228,6 @@ AutoScreenshot="*res://scripts/auto_screenshot.gd"
 - **`patch.rs`** — 策略改进/Patch
 - **`decay.rs`** — 衰减清理
 - **`retrieve.rs`** — Spark类型匹配检索
-- **`motivation_link.rs`** — 动机联动反馈
 
 ### 依赖关系
 - `core` → `ai`, `sync` (决策需要LLM、状态需要CRDT类型)
@@ -246,8 +238,9 @@ AutoScreenshot="*res://scripts/auto_screenshot.gd"
 ### Bridge架构 (`crates/bridge/src/`)
 GDExtension桥接Rust核心引擎到Godot客户端（单文件1000+行）：
 - **`SimulationBridge`** — Godot Node扩展，通过mpsc通道与模拟线程通信
-- **`SimCommand`** — 控制命令枚举（Start/Pause/SetTickInterval/AdjustMotivation/InjectPreference）
+- **`SimCommand`** — 控制命令枚举（Start/Pause/SetTickInterval/InjectPreference）
 - **`SimConfig`** — 从`config/sim.toml`加载模拟配置（Agent数量/NPC数量/决策间隔）
+- **日志系统** — `config/log.toml`配置，tracing-subscriber输出，控制台+文件双通道，支持按模块设置级别
 - **多Agent独立心跳** — 每个Agent独立tokio task运行决策循环，不等待其他Agent
 - **双通道推送** — delta通道（实时动作推送）+ snapshot通道（5秒完整状态兜底）
 - **`run_agent_loop`** — 每个Agent独立决策task，LLM调用有60s超时保护
@@ -257,17 +250,12 @@ GDExtension桥接Rust核心引擎到Godot客户端（单文件1000+行）：
 - **读写分离** — 决策不持锁，Apply阶段串行获取写权限
 - **NPC系统** — 规则引擎快速决策（无LLM），独立决策间隔（`npc_decision_interval_secs=5`）
 - **记忆记录** — 动作自动记录到Agent记忆，带情感标签和重要性评分
-- 产物为`cdylib`动态库（macOS: `.dylib`, Linux: `.so`, Windows: `.dll`），复制到`client/bin/`
+- 产物为`cdylib`动态库（macOS: `.dylib`, Linux: `.so`, Windows: `.dll`），每次重新构建后，必须复制到`client/bin/`
 - **线程安全**：`godot_print!` 等 godot-rust 引擎 API 只能在主线程调用，在异步 task（如 `run_sim_thread`）中调用会导致 panic `attempted to access binding from different thread`，应改用 `eprintln!`
 - **WorldSeed 加载**：Bridge 不应硬编码 WorldSeed 参数，必须从 `worldseeds/default.toml` 通过 `WorldSeed::load()` 加载，配置变更后需重新编译 bridge
 
-**动机引擎** (`crates/core/src/motivation.rs`)
-- 6维向量：生存/社交/认知/表达/权力/传承
-- 惯性衰减公式：`new = old * 0.99 + 0.5 * 0.01`（alpha=0.99）
-- 缺口计算 → Spark触发决策
-
 **决策管道** (`crates/core/src/decision.rs`)
-- 火花生成 → 硬约束过滤 → Prompt构建 → LLM调用 → 规则校验 → 动机加权选择
+- LLM调用 → 规则校验 → 执行
 
 **规则引擎** (`crates/core/src/rule_engine.rs`)
 - `RuleEngine`：硬约束过滤 + 动作校验 + LLM失败兜底
@@ -283,7 +271,7 @@ GDExtension桥接Rust核心引擎到Godot客户端（单文件1000+行）：
 
 **策略库** (`crates/core/src/strategy/`)
 - 自我创建、Patch改进、衰减清理
-- Spark类型匹配检索，动机联动反馈
+- Spark类型匹配检索
 - 基于YAML frontmatter的STRATEGY.md文件加载
 
 **Prompt构建** (`crates/core/src/prompt.rs`)
@@ -298,7 +286,7 @@ GDExtension桥接Rust核心引擎到Godot客户端（单文件1000+行）：
 
 ### 核心循环：Spark → Act → Echo → Legacy
 - Spark: 环境压力/社会压力/内部压力感知
-- Act: 6维动机权重计算 → 策略生成（合作/探索/创造/规避/竞争）
+- Act: 状态评估 → LLM决策 → 规则校验 → 策略生成（合作/探索/创造/规避/竞争）
 - Echo: 世界反馈（物理/社会/记忆/系统四层）
 - Legacy: 死亡沉淀为遗产，广播至P2P网络成为新Spark
 
@@ -307,13 +295,13 @@ GDExtension桥接Rust核心引擎到Godot客户端（单文件1000+行）：
 agentora/
 ├── Cargo.toml                  # Workspace定义
 ├── crates/
-│   ├── core/                   # 动机引擎 + 决策管道 + 世界模型 + Agent交互 + 记忆 + 策略 + 存储
+│   ├── core/                   # 决策管道 + 世界模型 + Agent交互 + 记忆 + 策略 + 存储
 │   ├── ai/                     # LLM接入层：Provider trait、OpenAI/Anthropic/本地推理、降级链
 │   ├── network/                # P2P网络：libp2p、GossipSub、区域订阅
 │   ├── sync/                   # CRDT同步：LWW、G-Counter、OR-Set、签名、Merkle
 │   └── bridge/                 # Godot GDExtension：SimulationBridge、WorldSnapshot
-├── client/                     # Godot 4客户端：TileMap渲染、Agent Sprite、叙事流面板
-├── config/                     # 配置文件：llm.toml
+├── client/                     # Godot 4客户端：TileMap渲染、Agent Sprite、叙事流面板、Agent详情、文明里程碑
+├── config/                     # 配置文件：llm.toml, sim.toml, log.toml
 ├── worldseeds/                 # 世界种子：default.toml
 ├── tests/                      # 测试：单元测试 + 集成测试
 ├── scripts/                    # 脚本：多节点启动、打包说明
@@ -329,7 +317,7 @@ agentora/
 - **存储**: SQLite (热/温) + FAISS-lite (向量索引) + IPFS/Arweave (冷数据)
 
 ### 测试结构 (`tests/`)
-- **单元测试**：`motivation_tests`, `decision_tests`, `crdt_tests`, `json_parse_tests`, `strategy_tests`, `memory_tests`, `legacy_tests`, `agent_tests`
+- **单元测试**：`decision_tests`, `crdt_tests`, `json_parse_tests`, `strategy_tests`, `memory_tests`, `legacy_tests`, `agent_tests`
 - **集成测试**（需要LLM服务运行）：`single_agent`, `multi_agent`, `multi_node`, `llm_local_test`
 - 集成测试通过`tempfile`创建临时数据库，测试后自动清理
 
@@ -343,22 +331,35 @@ agentora/
 - 主Provider默认使用OpenAI兼容端点（localhost:1234，兼容LM Studio等）
 - 支持Anthropic兼容端点作为备用
 - 决策max_tokens=500，temperature=0.7
+- 默认模型：`gemma-4-e2b-it`
 - 记忆系统配置在 `[memory]` section，包含预算/存储/检索/容量/Prompt约束等参数
   - `total_budget=1800` chars, `chronicle_budget=800`, `db_budget=600`, `strategy_budget=400`
+  - 检索层：`importance_threshold=0.5`, `search_limit=5`, `snippet_max_chars=200`
+  - 短期记忆容量：`short_term_capacity=5`
 
 **模拟配置** (`config/sim.toml`)
-- `initial_agent_count=3`, `npc_count=3`
+- `initial_agent_count=1`, `npc_count=0`（实际玩家只有一个Agent，NPC为开发测试用）
 - `npc_decision_interval_secs=5`, `player_decision_interval_secs=2`
+
+**日志配置** (`config/log.toml`)
+- 日志目录：`../logs`（相对于Godot工作目录）
+- 全局日志级别：`debug`
+- 支持控制台和文件双输出，文件日志支持按日/小时轮转
+- 可按模块设置不同日志级别（`[log.targets]`）
 
 **世界种子** (`worldseeds/default.toml`)
 - 地图256×256，区域16×16
 - 地形比例：plains 0.5 / forest 0.25 / mountain 0.1 / water 0.1 / desert 0.05
-- 初始Agent=5，资源密度=0.15
-- 动机模板：gatherer/trader/explorer/builder
-- 环境压力系统配置（pressure section）
+- 初始Agent=5，资源密度=0.02
+- 生成策略：scattered（分散）
+- 压力池配置：资源波动0.3、气候事件概率0.1、封锁持续10-30tick
 
 ## Conventions
 
 - 代码注释和文档使用中文
 - 许可证：MIT License
-- 改动后需主动运行客户端，通过日志信息、截图等方式验证、修复问题
+- 改动后需主动运行客户端，通过日志文件信息（logs目录）、截图等方式验证、修复问题
+- 客户端测试、调试、验证首选 Godot MCP 工具（场景树查询、属性读写、输入模拟、截图等），而非手动操作，调试后记得关闭godot客户端
+- Agent的LLM决策和规则引擎是两套独立的决策系统，本系统的目标是给Agent充分的自主性，规则引擎只是用来兜底和测试的
+- 应该给Agent充分的自主性，少在代码里做动作执行兜底，Agent决策、行动的结果，应该让LLM都感知到，才能更好优化下一步动作
+- 6维动机向量：生存/社交/认知/表达/权力/传承这是指导玩法设计的理念，但不是实现的具体手段

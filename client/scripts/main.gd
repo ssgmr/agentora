@@ -9,7 +9,7 @@ var selected_agent_id: String = ""
 @onready var agent_count_label: Label = $UI/TopBar/AgentCount
 @onready var world_tick_label: Label = $UI/RightPanel/WorldInfo/TickLabel
 @onready var world_agent_count_label: Label = $UI/RightPanel/WorldInfo/AgentCount
-@onready var status_label: Label = $UI/RightPanel/AgentDetail/StatusLabel
+@onready var status_label: Label = $UI/RightPanel/AgentDetail/VBoxContent/StatusLabel
 @onready var speed_control: OptionButton = $UI/TopBar/SpeedControl
 
 
@@ -36,7 +36,7 @@ func _ready() -> void:
 
 
 func _init_name_label() -> void:
-	var agent_detail = get_node_or_null("UI/RightPanel/AgentDetail")
+	var agent_detail = get_node_or_null("UI/RightPanel/AgentDetail/VBoxContent")
 	if agent_detail:
 		# NameLabel 可能在场景加载时被跳过，动态创建
 		name_label = agent_detail.get_node_or_null("AgentNameLabel")
@@ -126,19 +126,16 @@ func _update_agent_detail(data: Dictionary) -> void:
 		name_label.text = data.get("name", "Unknown")
 
 	if status_label:
-		var health: int = data.get("health", 100)
-		var max_health: int = data.get("max_health", 100)
 		var age: int = data.get("age", 0)
 		var current_action: String = data.get("current_action", "等待")
-		# 动作描述过长时截断，避免撑坏布局
-		if current_action.length() > 60:
-			current_action = current_action.substr(0, 57) + "..."
-
+		var action_result: String = data.get("action_result", "")
 		var is_alive: bool = data.get("is_alive", true)
+		var level: int = data.get("level", 1)
 
-		var status_text = "状态：%s\n" % ("活动中" if is_alive else "已死亡")
+		var status_text = "状态：%s  LV%d\n" % [("活动中" if is_alive else "已死亡"), level]
 		status_text += "动作：%s\n" % current_action
-		status_text += "健康：%d/%d\n" % [health, max_health]
+		if action_result != "":
+			status_text += "结果：%s\n" % action_result
 		status_text += "年龄：%d" % age
 		status_label.text = status_text
 

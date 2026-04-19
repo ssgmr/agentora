@@ -100,7 +100,7 @@ impl ChronicleDB {
         let mut stmt = self.conn.prepare(
             "SELECT id, tick, text_summary, emotion_tag, event_type, importance, created_at
              FROM memory_fragments
-             WHERE memory_fts MATCH ?1
+             WHERE id IN (SELECT rowid FROM memory_fts WHERE memory_fts MATCH ?1)
              AND importance > ?2
              ORDER BY importance DESC
              LIMIT ?3"

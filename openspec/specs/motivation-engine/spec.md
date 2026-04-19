@@ -56,6 +56,25 @@
 - **THEN** "生存与资源"维度 SHALL 增加0.10~0.20
 - **AND** "社会与关系"维度对攻击者方向 SHALL 降低
 
+### Requirement: 生存压力驱动动机
+
+当Agent的satiety ≤ 30或hydration ≤ 30时，生存动机维度(维度0) SHALL 临时提升0.3。当satiety = 0或hydration = 0时 SHALL 临时提升0.5。此加成在effective_motivation()计算中体现，两者叠加取最大值（不叠加）。
+
+#### Scenario: 低饱食度驱动
+
+- **WHEN** Agent satiety = 25, hydration = 80
+- **THEN** effective_motivation()[0] 包含 +0.3 生存加成
+
+#### Scenario: 零水分度强驱动
+
+- **WHEN** Agent hydration = 0
+- **THEN** effective_motivation()[0] 包含 +0.5 生存加成
+
+#### Scenario: 两者叠加取最大
+
+- **WHEN** Agent satiety = 0, hydration = 0
+- **THEN** effective_motivation()[0] 加成取 max(food_boost, water_boost) = 0.5（不叠加）
+
 ### Requirement: 动机缺口计算（Spark）
 
 系统 SHALL 每tick计算动机缺口：`gap = max(0, dimension - current_satisfaction)`，其中 current_satisfaction 由Agent当前资源/关系/知识等状态决定。缺口最大的1-2个维度成为本次tick的Spark。

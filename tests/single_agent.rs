@@ -4,8 +4,6 @@
 
 use agentora_core::{
     Agent, AgentId, Position, World, WorldSeed,
-    MotivationVector, Spark,
-    motivation::DIMENSION_NAMES,
 };
 use agentora_ai::{LlmProvider, LlmRequest, OpenAiProvider, parse_action_json, ResponseFormat};
 use serde_json::Value;
@@ -25,10 +23,9 @@ async fn test_single_agent_decision_loop() {
     let position = Position::new(128, 128);
     let agent = Agent::new(agent_id.clone(), "探索者Alice".to_string(), position);
 
-    // 设置生存型动机和库存
+    // 设置库存
     {
         let mut agent = world.agents.entry(agent_id.clone()).or_insert(agent);
-        agent.motivation = MotivationVector::from_array([0.8, 0.4, 0.3, 0.2, 0.3, 0.2]);
         agent.inventory.insert("food".to_string(), 50);
         agent.inventory.insert("water".to_string(), 30);
     }
@@ -37,23 +34,14 @@ async fn test_single_agent_decision_loop() {
 
     println!("=== 单Agent决策循环测试 ===");
     println!("Agent: {} @ ({}, {})", agent.name, agent.position.x, agent.position.y);
-    println!("动机向量:");
-    for (i, name) in DIMENSION_NAMES.iter().enumerate() {
-        println!("  {}: {:.2}", name, agent.motivation[i]);
-    }
     println!("库存: {:?}", agent.inventory);
 
-    // 3. 计算Spark
-    let satisfaction = [0.4, 0.5, 0.5, 0.5, 0.5, 0.5]; // 生存满足度低
-    let spark = Spark::from_gap(&agent.motivation, &satisfaction);
-    println!("\n当前压力: {} (缺口 {:.2})", spark.description, spark.gap_value);
-
-    // 4. 构建决策Prompt
-    let prompt = build_decision_prompt(&agent, &spark, &world);
+    // 3. 构建决策Prompt
+    let prompt = build_decision_prompt(&agent, &world);
     println!("\n=== 决策Prompt ===");
     println!("{}", prompt);
 
-    // 5. 调用LLM进行决策
+    // 4. 调用LLM进行决策
     let provider = OpenAiProvider::new(
         API_BASE.to_string(),
         "".to_string(),
@@ -76,13 +64,13 @@ async fn test_single_agent_decision_loop() {
             println!("✅ LLM响应成功!");
             println!("原始响应: {}", response.raw_text);
 
-            // 6. 解析动作
+            // 5. 解析动作
             match parse_action_json(&response.raw_text) {
                 Ok(action_json) => {
                     println!("\n✅ JSON解析成功!");
                     println!("解析后的动作: {}", action_json);
 
-                    // 7. 验证动作
+                    // 6. 验证动作
                     let has_reasoning = action_json.get("reasoning").and_then(|v| v.as_str()).is_some();
                     let has_action_type = action_json.get("action_type").and_then(|v| v.as_str()).is_some();
 
@@ -99,7 +87,7 @@ async fn test_single_agent_decision_loop() {
                     println!("目标: {}", target);
                     println!("理由: {}", reasoning);
 
-                    // 8. 模拟执行动作
+                    // 7. 模拟执行动作
                     execute_action(&mut world, &agent_id, &action_json);
                     println!("\n✅ 动作执行完成");
                 }
@@ -121,7 +109,7 @@ async fn test_single_agent_decision_loop() {
 }
 
 /// 构建决策Prompt
-fn build_decision_prompt(agent: &Agent, spark: &Spark, world: &World) -> String {
+fn build_decision_prompt(agent: &Agent, world: &World) -> String {
     let mut prompt = String::new();
 
     prompt.push_str("你是一个自主决策的AI Agent，在一个共享世界中生存。\n\n");
@@ -130,19 +118,6 @@ fn build_decision_prompt(agent: &Agent, spark: &Spark, world: &World) -> String 
     prompt.push_str(&format!(
         "【当前状态】\n- 名称: {}\n- 位置: ({}, {})\n- 健康值: {}/{}\n\n",
         agent.name, agent.position.x, agent.position.y, agent.health, agent.max_health
-    ));
-
-    // 动机向量
-    prompt.push_str("【动机向量】\n");
-    for (i, name) in DIMENSION_NAMES.iter().enumerate() {
-        prompt.push_str(&format!("- {}: {:.2}\n", name, agent.motivation[i]));
-    }
-    prompt.push_str("\n");
-
-    // Spark压力
-    prompt.push_str(&format!(
-        "【当前压力】\n- 类型: {}\n- 缺口值: {:.2}\n- 描述: {}\n\n",
-        spark.spark_type.name(), spark.gap_value, spark.description
     ));
 
     // 库存
@@ -213,29 +188,19 @@ fn execute_action(world: &mut World, agent_id: &AgentId, action: &Value) {
 
 /// Fallback决策（规则引擎）
 fn fallback_decision(agent: &Agent) -> Value {
-    // 生存动机最高时，优先采集
-    if agent.motivation[0] > 0.6 {
-        let food = agent.inventory.get("food").unwrap_or(&0);
-        if *food < 30 {
-            serde_json::json!({
-                "action_type": "Gather",
-                "target": "food",
-                "reasoning": "食物储备不足，需要采集",
-                "params": {"resource": "food"}
-            })
-        } else {
-            serde_json::json!({
-                "action_type": "Explore",
-                "target": "未知区域",
-                "reasoning": "探索寻找更多资源",
-                "params": {}
-            })
-        }
+    let food = agent.inventory.get("food").unwrap_or(&0);
+    if *food < 30 {
+        serde_json::json!({
+            "action_type": "Gather",
+            "target": "food",
+            "reasoning": "食物储备不足，需要采集",
+            "params": {"resource": "food"}
+        })
     } else {
         serde_json::json!({
-            "action_type": "Wait",
-            "target": "",
-            "reasoning": "观察环境变化",
+            "action_type": "Explore",
+            "target": "未知区域",
+            "reasoning": "探索寻找更多资源",
             "params": {}
         })
     }
@@ -251,10 +216,11 @@ async fn test_multi_turn_decision_loop() {
     let position = Position::new(100, 100);
     let agent = Agent::new(agent_id.clone(), "采集者Bob".to_string(), position);
 
-    // 直接插入并配置
+    // 直接插入并配置库存
     {
         let mut entry = world.agents.entry(agent_id.clone()).or_insert(agent);
-        entry.motivation = MotivationVector::from_array([0.8, 0.3, 0.2, 0.1, 0.2, 0.1]);
+        entry.inventory.insert("food".to_string(), 20);
+        entry.inventory.insert("wood".to_string(), 10);
     }
 
     let provider = OpenAiProvider::new(
@@ -271,22 +237,7 @@ async fn test_multi_turn_decision_loop() {
         world.advance_tick();
 
         let agent = world.agents.get(&agent_id).unwrap();
-
-        // 更新satisfaction
-        let satisfaction = [
-            0.3 + round as f32 * 0.1, // 生存满足度逐渐提升
-            0.5, 0.5, 0.5, 0.5, 0.5,
-        ];
-        let spark = Spark::from_gap(&agent.motivation, &satisfaction);
-
-        // 动机衰减
-        {
-            let mut agent = world.agents.get_mut(&agent_id).unwrap();
-            agent.motivation.decay();
-        }
-
-        let agent = world.agents.get(&agent_id).unwrap();
-        let prompt = build_decision_prompt(agent, &spark, &world);
+        let prompt = build_decision_prompt(agent, &world);
 
         let request = LlmRequest {
             prompt,
@@ -303,7 +254,7 @@ async fn test_multi_turn_decision_loop() {
                 match parse_action_json(&response.raw_text) {
                     Ok(action) => {
                         let action_type = action["action_type"].as_str().unwrap_or("Wait");
-                        println!("决策: {} → {}", spark.description, action_type);
+                        println!("决策: {}", action_type);
                         execute_action(&mut world, &agent_id, &action);
                     }
                     Err(_) => {
@@ -320,13 +271,8 @@ async fn test_multi_turn_decision_loop() {
 
         // 打印Agent状态
         let agent = world.agents.get(&agent_id).unwrap();
-        let motivation_str = agent.motivation.as_array()
-            .iter()
-            .map(|v| format!("{:.2}", v))
-            .collect::<Vec<_>>()
-            .join(", ");
-        println!("状态: 位置({}, {}) 库存{:?} 动机[{}]",
-            agent.position.x, agent.position.y, agent.inventory, motivation_str);
+        println!("状态: 位置({}, {}) 库存{:?}",
+            agent.position.x, agent.position.y, agent.inventory);
     }
 
     println!("\n✅ 多轮决策测试完成");
