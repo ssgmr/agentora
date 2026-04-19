@@ -110,14 +110,19 @@ impl RuleEngine {
             });
         }
 
-        // 向资源移动：当视野内有资源但不在当前位置时，生成朝向最近资源的 MoveToward 候选
+        // 向资源移动：当视野内有资源但不在当前位置时，生成朝向最近资源的单步 MoveToward 候选
         if !world_state.resources_at.is_empty()
             && world_state.resources_at.get(&world_state.agent_position).is_none()
         {
             if let Some(nearest_resource_pos) = self.find_nearest_resource(&world_state.agent_position, &world_state.resources_at) {
                 if let Some(direction) = self.direction_toward(&world_state.agent_position, &nearest_resource_pos) {
                     if self.check_move_valid(direction, world_state) {
-                        candidates.push(ActionType::MoveToward { target: nearest_resource_pos });
+                        // 计算单步移动位置（相邻格），而不是直接跳到资源位置
+                        let delta = direction.delta();
+                        let step_x = start_pos.x as i32 + delta.0;
+                        let step_y = start_pos.y as i32 + delta.1;
+                        let step_pos = Position::new(step_x as u32, step_y as u32);
+                        candidates.push(ActionType::MoveToward { target: step_pos });
                     }
                 }
             }
@@ -454,18 +459,36 @@ impl RuleEngine {
             });
         }
 
-        // 3. 视野有资源 → 向最近资源移动
+        // 3. 视野有资源 → 向最近资源方向移动（单步）
         if !world_state.resources_at.is_empty() {
             if let Some(nearest_pos) = self.find_nearest_resource(&world_state.agent_position, &world_state.resources_at) {
-                // 只考虑可通行的资源（排除 Water 地形）
-                if let Some(terrain) = world_state.terrain_at.get(&nearest_pos) {
-                    if terrain.is_passable() {
-                        return Some(ActionCandidate {
-                            reasoning: format!("LLM 不可用，向资源({},{})移动", nearest_pos.x, nearest_pos.y),
-                            action_type: ActionType::MoveToward { target: nearest_pos },
-                            target: None,
-                            params: HashMap::new(),
-                        });
+                // 计算朝向资源的方向，只移动一步到相邻格
+                if let Some(direction) = self.direction_toward(&world_state.agent_position, &nearest_pos) {
+                    let delta = direction.delta();
+                    let step_x = world_state.agent_position.x as i32 + delta.0;
+                    let step_y = world_state.agent_position.y as i32 + delta.1;
+                    // 边界检查
+                    if step_x >= 0 && step_y >= 0 && step_x < world_state.map_size as i32 && step_y < world_state.map_size as i32 {
+                        let step_pos = Position::new(step_x as u32, step_y as u32);
+                        // 地形检查
+                        if let Some(terrain) = world_state.terrain_at.get(&step_pos) {
+                            if terrain.is_passable() {
+                                return Some(ActionCandidate {
+                                    reasoning: format!("LLM 不可用，向资源({},{})方向移动一步到({},{})", nearest_pos.x, nearest_pos.y, step_pos.x, step_pos.y),
+                                    action_type: ActionType::MoveToward { target: step_pos },
+                                    target: None,
+                                    params: HashMap::new(),
+                                });
+                            }
+                        } else {
+                            // 未知地形默认可通行
+                            return Some(ActionCandidate {
+                                reasoning: format!("LLM 不可用，向资源({},{})方向移动一步到({},{})", nearest_pos.x, nearest_pos.y, step_pos.x, step_pos.y),
+                                action_type: ActionType::MoveToward { target: step_pos },
+                                target: None,
+                                params: HashMap::new(),
+                            });
+                        }
                     }
                 }
             }

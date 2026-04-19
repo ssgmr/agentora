@@ -2,13 +2,13 @@
 
 [simulation]
 # LLM 驱动 Agent 数量（走完整决策管道，耗时较长，建议 1-5）
-initial_agent_count = 1
+initial_agent_count = 2
 
 # NPC 数量（规则引擎快速决策，不阻塞 LLM Agent）
-npc_count = 0
+npc_count = 2
 
 # NPC 决策间隔（秒）
-npc_decision_interval_secs = 5
+npc_decision_interval_secs = 3
 
 # 玩家 Agent 决策间隔（秒）
 player_decision_interval_secs = 2
