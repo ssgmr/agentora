@@ -4,7 +4,6 @@ use agentora_core::memory::{
     chronicle_store::ChronicleStore,
     chronicle_db::ChronicleDB,
     token_budget::{TokenBudget, BudgetComponent},
-    MemoryEvent,
 };
 use agentora_core::decision::SparkType;
 use std::fs;
@@ -27,7 +26,7 @@ fn test_chronicle_store_load() {
     fs::write(&world_seed_path, "§[tick 1] 世界认知 1\n").unwrap();
 
     // 创建 store 并直接设置 base_path
-    let mut store = ChronicleStore::new(agent_id);
+    let _store = ChronicleStore::new(agent_id);
     // 手动加载文件内容（因为路径已经正确）
     let chronicle_content = fs::read_to_string(&chronicle_path).unwrap();
     let world_seed_content = fs::read_to_string(&world_seed_path).unwrap();

@@ -115,6 +115,7 @@ impl EchoLog {
     }
 
     /// 解析 LLM JSON 响应
+    #[allow(dead_code)]
     fn parse_llm_response(response: &str) -> (String, Vec<String>, Vec<String>) {
         match serde_json::from_str::<serde_json::Value>(response) {
             Ok(json) => {

@@ -69,7 +69,7 @@ fn test_multi_agent_legacy_interaction() {
     agent1.age = agent1.max_age;
     world.agents.insert(agent1_id.clone(), agent1);
 
-    let mut agent2 = Agent::new(agent2_id.clone(), "Agent Two".to_string(), Position::new(10, 10));
+    let agent2 = Agent::new(agent2_id.clone(), "Agent Two".to_string(), Position::new(10, 10));
     world.agents.insert(agent2_id.clone(), agent2);
 
     // 推进 tick，让 agent1 死亡产生遗产
@@ -95,7 +95,7 @@ fn test_multi_agent_legacy_interaction() {
     };
 
     let result = world.apply_action(&agent2_id, &worship_action);
-    assert!(matches!(result, agentora_core::world::ActionResult::Success),
+    assert!(matches!(result, agentora_core::world::ActionResult::SuccessWithDetail(_)),
             "祭拜动作应该成功");
 
     println!("✅ 祭拜动作成功");
@@ -114,7 +114,7 @@ fn test_multi_agent_legacy_interaction() {
     };
 
     let result = world.apply_action(&agent2_id, &explore_action);
-    assert!(matches!(result, agentora_core::world::ActionResult::Success),
+    assert!(matches!(result, agentora_core::world::ActionResult::SuccessWithDetail(_)),
             "探索动作应该成功");
 
     println!("✅ 探索动作成功");
@@ -163,7 +163,7 @@ fn test_legacy_interaction_effects() {
 
     let agent_id = AgentId::new("test-agent");
     let position = Position::new(20, 20);
-    let mut agent = Agent::new(agent_id.clone(), "Test Agent".to_string(), position);
+    let agent = Agent::new(agent_id.clone(), "Test Agent".to_string(), position);
     world.agents.insert(agent_id.clone(), agent);
 
     // 创建测试遗产
@@ -198,7 +198,7 @@ fn test_legacy_interaction_effects() {
     };
 
     let result = world.apply_action(&agent_id, &worship_action);
-    assert!(matches!(result, agentora_core::world::ActionResult::Success),
+    assert!(matches!(result, agentora_core::world::ActionResult::SuccessWithDetail(_)),
             "祭拜动作应该成功");
 
     // 验证交互计数器增加

@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(cargo build:*)",
-      "Bash(cargo test:*)"
+      "Bash(cargo test:*)",
+      "Bash(rm -rf .git/objects/info/alternates)",
+      "Bash(git gc:*)"
     ]
   }
 }

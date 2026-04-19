@@ -167,7 +167,6 @@ impl World {
 
     /// 生成地形
     fn generate_terrain(map: &mut map::CellGrid, seed: &WorldSeed) {
-        use rand::Rng;
         let mut rng = rand::thread_rng();
         let (width, height) = map.size();
 
@@ -306,6 +305,7 @@ impl World {
     }
 
     /// 查找同一格的存活 Agent（排除自己）
+    #[allow(dead_code)]
     fn find_alive_at(&self, agent_id: &AgentId) -> Vec<AgentId> {
         let agent = match self.agents.get(agent_id) {
             Some(a) => a,
@@ -320,6 +320,7 @@ impl World {
     }
 
     /// 查找待处理交易
+    #[allow(dead_code)]
     fn find_pending_trade(&self, proposer_id: &AgentId, acceptor_id: &AgentId) -> Option<usize> {
         self.pending_trades.iter().position(|t| {
             (t.proposer_id == *proposer_id && t.acceptor_id == *acceptor_id)
@@ -625,7 +626,7 @@ impl World {
     }
 
     /// 解析成功详情，生成人类可读反馈
-    fn parse_success_detail(&self, detail: &str, action_type: &ActionType, old_position: Option<Position>) -> String {
+    fn parse_success_detail(&self, detail: &str, action_type: &ActionType, _old_position: Option<Position>) -> String {
         // detail 格式: "动作类型:具体数据"
         // 如 "move:121,113→(131,142)" 或 "gather:waterx2,remain:184"
 
@@ -931,7 +932,6 @@ impl World {
 
     /// 建筑效果 tick
     fn structure_effects_tick(&mut self) {
-        use crate::world::structure::Structure;
         use crate::types::StructureType;
 
         // Camp 回血效果：曼哈顿距离 ≤ 1 的存活 Agent HP +2

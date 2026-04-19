@@ -37,7 +37,7 @@ pub fn patch_strategy(
     };
 
     // 执行 find/replace
-    let mut patch_log = String::new();
+    let patch_log;
     if strategy_file.content.contains(find) {
         strategy_file.content = strategy_file.content.replace(find, replace);
         patch_log = format!("Replaced '{}' with '{}'", find, replace);

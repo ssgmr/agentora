@@ -25,7 +25,7 @@ async fn test_single_agent_decision_loop() {
 
     // 设置库存
     {
-        let mut agent = world.agents.entry(agent_id.clone()).or_insert(agent);
+        let agent = world.agents.entry(agent_id.clone()).or_insert(agent);
         agent.inventory.insert("food".to_string(), 50);
         agent.inventory.insert("water".to_string(), 30);
     }
@@ -109,7 +109,7 @@ async fn test_single_agent_decision_loop() {
 }
 
 /// 构建决策Prompt
-fn build_decision_prompt(agent: &Agent, world: &World) -> String {
+fn build_decision_prompt(agent: &Agent, _world: &World) -> String {
     let mut prompt = String::new();
 
     prompt.push_str("你是一个自主决策的AI Agent，在一个共享世界中生存。\n\n");
@@ -218,7 +218,7 @@ async fn test_multi_turn_decision_loop() {
 
     // 直接插入并配置库存
     {
-        let mut entry = world.agents.entry(agent_id.clone()).or_insert(agent);
+        let entry = world.agents.entry(agent_id.clone()).or_insert(agent);
         entry.inventory.insert("food".to_string(), 20);
         entry.inventory.insert("wood".to_string(), 10);
     }

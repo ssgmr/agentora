@@ -7,7 +7,7 @@ pub mod dialogue;
 pub mod combat;
 pub mod alliance;
 
-use crate::types::{AgentId, Position, PersonalitySeed, Action, ActionType};
+use crate::types::{AgentId, Position, PersonalitySeed};
 use crate::memory::MemorySystem;
 use crate::strategy::StrategyHub;
 use std::collections::HashMap;

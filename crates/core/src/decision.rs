@@ -614,7 +614,7 @@ impl DecisionPipeline {
 
     /// 解析动作类型
     fn parse_action_type(&self, type_str: &str, json: &serde_json::Value, agent_pos: Position) -> Option<ActionType> {
-        use crate::types::{Direction, ResourceType, StructureType};
+        use crate::types::{ResourceType, StructureType};
 
         match type_str {
             "Move" | "move" | "移动" => {

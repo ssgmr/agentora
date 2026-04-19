@@ -174,7 +174,7 @@ impl LogConfig {
 
 // 核心引擎类型
 use agentora_core::{World, WorldSeed, Agent, Position, WorldSnapshot, AgentId, Action};
-use agentora_core::snapshot::{AgentSnapshot, NarrativeEvent as CoreNarrativeEvent};
+use agentora_core::snapshot::AgentSnapshot;
 use agentora_core::decision::{DecisionPipeline, infer_state_mode};
 use agentora_core::rule_engine::WorldState;
 use agentora_core::vision::scan_vision;
@@ -1009,7 +1009,7 @@ async fn create_npc_agents(
         let (mut x, mut y) = npc_positions[i];
 
         // 确保出生位置可通行，如果不可通行则找附近可通行位置
-        let mut pos = Position::new(x, y);
+        let pos = Position::new(x, y);
         if !world.map.get_terrain(pos).is_passable() {
             // 在附近 5x5 范围内找可通行位置
             let mut found = false;

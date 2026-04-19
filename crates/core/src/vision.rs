@@ -1,6 +1,6 @@
 //! 视觉感知模块：圆形视野扫描，填充地形/资源/Agent/结构/遗产数据
 
-use crate::agent::{Agent, RelationType};
+use crate::agent::RelationType;
 use crate::types::{AgentId, Direction, Position, TerrainType, ResourceType, StructureType};
 use crate::world::World;
 use crate::legacy::LegacyType;

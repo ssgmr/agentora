@@ -15,15 +15,15 @@ if "%1"=="release" (
     set FLAGS=
 )
 
-echo >>> 编译 agentora-bridge (%PROFILE%)...
+echo [INFO] 编译 agentora-bridge (%PROFILE%)...
 cd /d %REPO_DIR%
 call cargo build -p agentora-bridge %FLAGS%
 if %errorlevel% neq 0 exit /b %errorlevel%
 
-echo >>> 复制产物到 client\bin\...
+echo [INFO] 复制产物到 client\bin\...
 copy /Y "target\%PROFILE%\agentora_bridge.dll" "client\bin\agentora_bridge.dll"
 if exist "target\%PROFILE%\agentora_bridge.pdb" (
     copy /Y "target\%PROFILE%\agentora_bridge.pdb" "client\bin\agentora_bridge.pdb"
 )
 
-echo >>> 完成！client\bin\agentora_bridge.dll 已更新
+echo [INFO] 完成！client\bin\agentora_bridge.dll 已更新

@@ -29,7 +29,7 @@ impl SyncState {
     }
 
     /// 应用CRDT操作
-    pub fn apply_op(&mut self, op: &CrdtOp, peer_id: &PeerId) {
+    pub fn apply_op(&mut self, op: &CrdtOp, _peer_id: &PeerId) {
         match op {
             CrdtOp::LwwSet { key, value, timestamp, peer_id } => {
                 let register = self.agent_states.entry(key.clone()).or_insert(
@@ -46,7 +46,7 @@ impl SyncState {
                     self.event_log.add(element.clone(), &PeerId::new(&tag.0), tag.1);
                 }
             }
-            CrdtOp::OrSetRemove { key, tag } => {
+            CrdtOp::OrSetRemove { key: _, tag: _ } => {
                 // TODO: 实现删除
             }
         }

@@ -13,6 +13,7 @@ use std::fs;
 
 /// 策略库
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct StrategyHub {
     strategies: Vec<Strategy>,
     agent_id: String,

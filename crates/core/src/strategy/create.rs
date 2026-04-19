@@ -65,9 +65,9 @@ pub fn scan_strategy_content(content: &str) -> Result<(), String> {
 /// strategy 工具接口（create action）
 pub fn strategy_create(
     hub: &StrategyHub,
-    name: &str,
+    _name: &str,
     content: &str,
-    tick: u32,
+    _tick: u32,
 ) -> std::io::Result<Strategy> {
     let frontmatter = match parse_frontmatter(content) {
         Some(fm) => fm,

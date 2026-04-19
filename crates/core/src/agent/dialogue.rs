@@ -1,7 +1,5 @@
 //! 对话系统
 
-use crate::agent::RelationType;
-
 impl crate::agent::Agent {
     /// 发起对话
     pub fn talk(&self, message: &str, world_tick: u32) -> DialogueMessage {

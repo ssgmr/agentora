@@ -2,7 +2,7 @@
 //!
 //! 测试规则校验、LLM 兜底、Prompt 构建
 
-use agentora_core::decision::{ActionCandidate, DecisionPipeline};
+use agentora_core::decision::ActionCandidate;
 use agentora_core::rule_engine::RuleEngine;
 use agentora_core::types::{ActionType, Position, TerrainType, ResourceType, AgentId};
 use std::collections::HashMap;
@@ -121,7 +121,7 @@ fn test_survival_fallback_default_wait() {
 
 #[test]
 fn test_filter_build_insufficient_resources() {
-    let mut world_state = agentora_core::rule_engine::WorldState::default();
+    let world_state = agentora_core::rule_engine::WorldState::default();
     // 没有资源，不能建造
     let engine = RuleEngine::new();
     let filtered = engine.filter_hard_constraints(&world_state);
@@ -211,7 +211,7 @@ fn test_validate_action_invalid_attack_target() {
 
 #[test]
 fn test_validate_action_trade_insufficient_resources() {
-    let mut world_state = agentora_core::rule_engine::WorldState::default();
+    let world_state = agentora_core::rule_engine::WorldState::default();
     // 没有资源却要交易
     let mut offer = HashMap::new();
     offer.insert(ResourceType::Wood, 10);
@@ -266,8 +266,6 @@ fn test_validate_action_wait_always_valid() {
 fn test_prompt_token_estimation() {
     use agentora_core::prompt::PromptBuilder;
 
-    let builder = PromptBuilder::new();
-
     // 纯英文字符串
     let english = "Hello world, this is a test";
     let en_tokens = PromptBuilder::estimate_tokens(english);
@@ -295,6 +293,7 @@ fn test_prompt_truncation_under_limit() {
         "曾经采集过资源",
         Some("优先采集食物"),
         None,
+        10, // stack_limit
     );
 
     let estimated = PromptBuilder::estimate_tokens(&prompt);
@@ -315,6 +314,7 @@ fn test_prompt_memory_truncation() {
         &long_memory,
         Some("策略提示"),
         None,
+        10, // stack_limit
     );
 
     let estimated = PromptBuilder::estimate_tokens(&prompt);

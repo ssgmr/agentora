@@ -123,7 +123,7 @@ impl PromptBuilder {
         let mut memory_tokens = Self::estimate_tokens(&parts.memory);
         let mut strategy_tokens = Self::estimate_tokens(&parts.strategy);
         let mut perception_tokens = Self::estimate_tokens(&parts.perception);
-        let mut action_feedback_tokens = Self::estimate_tokens(&parts.action_feedback);
+        let action_feedback_tokens = Self::estimate_tokens(&parts.action_feedback);
 
         let fixed_tokens = system_tokens + output_tokens;
         let mut total = fixed_tokens + perception_tokens + memory_tokens + strategy_tokens + action_feedback_tokens;

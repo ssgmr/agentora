@@ -2,7 +2,6 @@
 //!
 //! 测试 handle_gather, handle_build, handle_attack, handle_trade_*, handle_ally_* 以及错误叙事生成
 
-use agentora_core::legacy::Legacy;
 use agentora_core::types::{AgentId, Position, ResourceType, StructureType, Action, ActionType, LegacyInteraction};
 use agentora_core::world::{World, ActionResult, PendingTrade, TradeStatus};
 use agentora_core::agent::Agent;
@@ -54,7 +53,7 @@ fn test_gather_success() {
     };
 
     let result = world.apply_action(&agent_id, &action);
-    assert_eq!(result, ActionResult::Success);
+    assert!(matches!(result, ActionResult::SuccessWithDetail(_)));
 
     // 验证背包增加了资源
     let agent = world.agents.get(&agent_id).unwrap();
@@ -150,7 +149,7 @@ fn test_build_fence_success() {
     };
 
     let result = world.apply_action(&agent_id, &action);
-    assert_eq!(result, ActionResult::Success);
+    assert!(matches!(result, ActionResult::SuccessWithDetail(_)));
 
     // 验证建筑已创建
     assert!(world.structures.contains_key(&pos));
@@ -177,7 +176,7 @@ fn test_build_camp_success() {
     };
 
     let result = world.apply_action(&agent_id, &action);
-    assert_eq!(result, ActionResult::Success);
+    assert!(matches!(result, ActionResult::SuccessWithDetail(_)));
     assert!(world.structures.contains_key(&pos));
 
     // Camp 需要 5 wood + 2 stone
@@ -266,7 +265,7 @@ fn test_attack_success() {
     };
 
     let result = world.apply_action(&attacker_id, &action);
-    assert_eq!(result, ActionResult::Success);
+    assert!(matches!(result, ActionResult::SuccessWithDetail(_)));
 
     // 验证目标受到伤害
     let target = world.agents.get(&target_id).unwrap();
@@ -298,7 +297,7 @@ fn test_attack_kills_target() {
     };
 
     let result = world.apply_action(&attacker_id, &action);
-    assert_eq!(result, ActionResult::Success);
+    assert!(matches!(result, ActionResult::SuccessWithDetail(_)));
 
     let target = world.agents.get(&target_id).unwrap();
     assert_eq!(target.health, 0);
@@ -357,7 +356,7 @@ fn test_trade_offer_success() {
     };
 
     let result = world.apply_action(&proposer_id, &action);
-    assert_eq!(result, ActionResult::Success);
+    assert!(matches!(result, ActionResult::SuccessWithDetail(_)));
 
     // 验证待处理交易已创建
     assert_eq!(world.pending_trades.len(), 1);
@@ -471,7 +470,7 @@ fn test_trade_accept_success() {
     };
 
     let result = world.apply_action(&acceptor_id, &action);
-    assert_eq!(result, ActionResult::Success);
+    assert!(matches!(result, ActionResult::SuccessWithDetail(_)));
 
     // 验证交易已移除
     assert!(world.pending_trades.is_empty());
@@ -543,7 +542,7 @@ fn test_trade_reject_success() {
     };
 
     let result = world.apply_action(&acceptor_id, &action);
-    assert_eq!(result, ActionResult::Success);
+    assert!(matches!(result, ActionResult::SuccessWithDetail(_)));
     assert!(world.pending_trades.is_empty());
 }
 
@@ -574,7 +573,7 @@ fn test_ally_propose_success() {
     };
 
     let result = world.apply_action(&proposer_id, &action);
-    assert_eq!(result, ActionResult::Success);
+    assert!(matches!(result, ActionResult::SuccessWithDetail(_)));
 }
 
 #[test]
@@ -649,7 +648,7 @@ fn test_ally_accept_success() {
     };
 
     let result = world.apply_action(&acceptor_id, &action);
-    assert_eq!(result, ActionResult::Success);
+    assert!(matches!(result, ActionResult::SuccessWithDetail(_)));
 
     // 验证双方都建立了联盟关系
     let acceptor = world.agents.get(&acceptor_id).unwrap();
@@ -679,7 +678,7 @@ fn test_ally_reject_success() {
     };
 
     let result = world.apply_action(&acceptor_id, &action);
-    assert_eq!(result, ActionResult::Success);
+    assert!(matches!(result, ActionResult::SuccessWithDetail(_)));
 }
 
 // ===== 错误叙事生成测试 =====
@@ -959,7 +958,7 @@ fn test_wait_does_not_restore_satiety() {
     };
 
     let result = world.apply_action(&agent_id, &action);
-    assert_eq!(result, ActionResult::Success);
+    assert!(matches!(result, ActionResult::SuccessWithDetail(_)));
 
     let agent = world.agents.get(&agent_id).unwrap();
     // Wait 不再自动进食/饮水
@@ -990,7 +989,7 @@ fn test_eat_restores_satiety() {
     };
 
     let result = world.apply_action(&agent_id, &action);
-    assert_eq!(result, ActionResult::Success);
+    assert!(matches!(result, ActionResult::SuccessWithDetail(_)));
 
     let agent = world.agents.get(&agent_id).unwrap();
     assert_eq!(agent.satiety, 80); // 50 + 30
@@ -1020,7 +1019,7 @@ fn test_drink_restores_hydration() {
     };
 
     let result = world.apply_action(&agent_id, &action);
-    assert_eq!(result, ActionResult::Success);
+    assert!(matches!(result, ActionResult::SuccessWithDetail(_)));
 
     let agent = world.agents.get(&agent_id).unwrap();
     assert_eq!(agent.satiety, 50); // 饱食度不变
@@ -1116,7 +1115,7 @@ fn test_explore_moves() {
     };
 
     let result = world.apply_action(&agent_id, &action);
-    assert_eq!(result, ActionResult::Success);
+    assert!(matches!(result, ActionResult::SuccessWithDetail(_)));
 }
 
 // ===== handle_legacy_interaction 测试 =====
@@ -1159,7 +1158,7 @@ fn test_legacy_pickup_success() {
     };
 
     let result = world.apply_action(&agent_id, &action);
-    assert_eq!(result, ActionResult::Success);
+    assert!(matches!(result, ActionResult::SuccessWithDetail(_)));
 
     let agent = world.agents.get(&agent_id).unwrap();
     assert!(*agent.inventory.get("wood").unwrap_or(&0) > 0);
@@ -1237,7 +1236,7 @@ fn test_legacy_worship() {
     };
 
     let result = world.apply_action(&agent_id, &action);
-    assert_eq!(result, ActionResult::Success);
+    assert!(matches!(result, ActionResult::SuccessWithDetail(_)));
 }
 
 // ===== apply_action 前置校验测试 =====

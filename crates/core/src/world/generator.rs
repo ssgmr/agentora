@@ -2,7 +2,7 @@
 
 use crate::seed::WorldSeed;
 use crate::types::{Position, TerrainType, ResourceType};
-use crate::world::{World, map::CellGrid, region::Region, resource::ResourceNode};
+use crate::world::{World, region::Region, resource::ResourceNode};
 use crate::agent::Agent;
 use crate::types::AgentId;
 
@@ -32,7 +32,6 @@ impl WorldGenerator {
     /// 生成地形（简单随机分布）
     fn generate_terrain(world: &mut World, seed: &WorldSeed) {
         let (width, height) = world.map.size();
-        use rand::Rng;
         let mut rng = rand::thread_rng();
 
         for y in 0..height {

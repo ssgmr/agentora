@@ -5,12 +5,10 @@
 
 use crate::agent::{Relation, RelationType};
 use crate::types::{
-    Action, ActionType, AgentId, Direction, Position, ResourceType, StructureType
+    ActionType, AgentId, Direction, Position, ResourceType, StructureType
 };
 use crate::world::{ActionResult, World, PendingTrade, TradeStatus};
-use crate::world::resource::ResourceNode;
 use crate::world::structure::Structure;
-use crate::snapshot::NarrativeEvent;
 use crate::narrative::{NarrativeBuilder, EventType, action_type_display};
 use std::collections::HashMap;
 
@@ -374,7 +372,6 @@ impl World {
         use rand::Rng;
         let mut rng = rand::thread_rng();
         let agent_name = self.agents.get(agent_id).unwrap().name.clone();
-        let builder = NarrativeBuilder::new(agent_name.clone());
 
         let steps = rng.gen_range(1..=3);
         let dir_idx = rng.gen_range(0..4);

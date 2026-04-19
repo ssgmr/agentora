@@ -14,7 +14,7 @@ pub struct TradeOffer {
 
 impl crate::agent::Agent {
     /// 发起交易提议
-    pub fn propose_trade(&self, target: AgentId, offer: HashMap<ResourceType, u32>, want: HashMap<ResourceType, u32>) -> TradeOffer {
+    pub fn propose_trade(&self, _target: AgentId, offer: HashMap<ResourceType, u32>, want: HashMap<ResourceType, u32>) -> TradeOffer {
         TradeOffer {
             proposer_id: self.id.clone(),
             offer,
