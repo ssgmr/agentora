@@ -170,12 +170,8 @@ impl RulesManual {
         // 核心规则（始终注入）
         section.push_str("【世界规则数值表】\n");
 
-        // 生存消耗
-        section.push_str(&format!(
-            "- 饱食度每tick下降{}，水分度每tick下降{}\n",
-            self.survival.satiety_decay_per_tick,
-            self.survival.hydration_decay_per_tick
-        ));
+        // 生存消耗（tick 间隔可配置，默认 5 秒）
+        section.push_str("- 饱食度每tick下降1，水分度每tick下降1（默认5秒/tick）\n");
         section.push_str("- 饱食度或水分度归零时，HP每tick扣减1\n");
 
         // Eat/Drink规则

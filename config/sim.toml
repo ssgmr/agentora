@@ -7,6 +7,10 @@ initial_agent_count = 2
 # NPC 数量（规则引擎快速决策，不阻塞 LLM Agent）
 npc_count = 2
 
+# 世界 tick 间隔（秒），控制状态衰减和世界时间推进速度
+# 默认 5 秒一个 tick，给 Agent 充足的决策时间
+tick_interval_secs = 5
+
 # NPC 决策间隔（秒）
 npc_decision_interval_secs = 3
 

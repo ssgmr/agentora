@@ -122,10 +122,11 @@ impl ChronicleDB {
     }
 
     /// 根据 Spark 类型构建 FTS5 查询
+    /// 注意：FTS5 的 NOT 是二元操作符，语法为 "A NOT B"（匹配 A 但排除 B）
     pub fn build_query_for_spark(&self, spark_type: SparkType) -> &'static str {
         match spark_type {
             SparkType::ResourcePressure => "resource AND (gather OR trade OR explore OR find)",
-            SparkType::SocialPressure => "(alliance OR trade OR trust OR talk) AND NOT attack",
+            SparkType::SocialPressure => "(alliance OR trade OR trust OR talk) NOT attack",
             SparkType::CognitivePressure => "learn OR discover OR understand OR explore",
             SparkType::ExpressivePressure => "create OR build OR express OR write",
             SparkType::PowerPressure => "lead OR command OR control OR influence",

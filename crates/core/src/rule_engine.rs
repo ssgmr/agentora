@@ -422,68 +422,83 @@ impl RuleEngine {
     /// LLM 不可用时的生存兜底
     ///
     /// 优先级：
-    /// 1. satiety/hydration 极低且有食物/水 → Eat/Drink
-    /// 2. 脚下有资源 → Gather
-    /// 3. 视野有资源 → MoveToward 最近资源
-    /// 4. 否则 → Wait
+    /// 1. 水分度极低且有水 → Drink
+    /// 2. 饱食度极低且有食物 → Eat
+    /// 3. 有足够资源建造 → Build
+    /// 4. 脚下有资源且堆叠可采集 → Gather
+    /// 5. 视野有可采集资源 → MoveToward
+    /// 6. 随机探索 → 移动
+    /// 7. 否则 → Wait
     pub fn survival_fallback(&self, world_state: &WorldState) -> Option<ActionCandidate> {
-        // 1. 背包有食物/水且状态低 → 直接进食/饮水
-        if world_state.agent_satiety <= 30 {
-            if world_state.agent_inventory.get(&ResourceType::Food).copied().unwrap_or(0) > 0 {
-                return Some(ActionCandidate {
-                    reasoning: "LLM 不可用，背包有食物，直接进食恢复饱食度".to_string(),
-                    action_type: ActionType::Eat,
-                    target: None,
-                    params: HashMap::new(),
-                });
-            }
-        }
+        let inventory_config = crate::agent::inventory::get_config();
+        const GATHER_AMOUNT: u32 = 2; // 每次采集获得2个资源
+
+        // 1. 生存危急：优先饮水/进食
         if world_state.agent_hydration <= 30 {
             if world_state.agent_inventory.get(&ResourceType::Water).copied().unwrap_or(0) > 0 {
                 return Some(ActionCandidate {
-                    reasoning: "LLM 不可用，背包有水源，直接饮水恢复水分度".to_string(),
+                    reasoning: "生存危急，背包有水，优先饮水".to_string(),
                     action_type: ActionType::Drink,
                     target: None,
                     params: HashMap::new(),
                 });
             }
         }
+        if world_state.agent_satiety <= 30 {
+            if world_state.agent_inventory.get(&ResourceType::Food).copied().unwrap_or(0) > 0 {
+                return Some(ActionCandidate {
+                    reasoning: "生存危急，背包有食物，优先进食".to_string(),
+                    action_type: ActionType::Eat,
+                    target: None,
+                    params: HashMap::new(),
+                });
+            }
+        }
 
-        // 2. 脚下有资源 → 采集
-        if let Some((resource_type, _amount)) = world_state.resources_at.get(&world_state.agent_position) {
+        // 2. 有足够资源时建造Camp
+        let wood_count = world_state.agent_inventory.get(&ResourceType::Wood).copied().unwrap_or(0);
+        let stone_count = world_state.agent_inventory.get(&ResourceType::Stone).copied().unwrap_or(0);
+        let food_count = world_state.agent_inventory.get(&ResourceType::Food).copied().unwrap_or(0);
+        let water_count = world_state.agent_inventory.get(&ResourceType::Water).copied().unwrap_or(0);
+
+        // Camp需要 wood×5 + stone×2，有食物水储备时优先建造
+        if wood_count >= 5 && stone_count >= 2 && food_count >= 2 && water_count >= 2 {
             return Some(ActionCandidate {
-                reasoning: format!("LLM 不可用，采集脚下的 {:?}", resource_type),
-                action_type: ActionType::Gather { resource: *resource_type },
+                reasoning: "资源充足，建造Camp获得HP恢复能力".to_string(),
+                action_type: ActionType::Build { structure: StructureType::Camp },
                 target: None,
                 params: HashMap::new(),
             });
         }
 
-        // 3. 视野有资源 → 向最近资源方向移动（单步）
-        if !world_state.resources_at.is_empty() {
-            if let Some(nearest_pos) = self.find_nearest_resource(&world_state.agent_position, &world_state.resources_at) {
-                // 计算朝向资源的方向，只移动一步到相邻格
-                if let Some(direction) = self.direction_toward(&world_state.agent_position, &nearest_pos) {
-                    let delta = direction.delta();
-                    let step_x = world_state.agent_position.x as i32 + delta.0;
-                    let step_y = world_state.agent_position.y as i32 + delta.1;
-                    // 边界检查
-                    if step_x >= 0 && step_y >= 0 && step_x < world_state.map_size as i32 && step_y < world_state.map_size as i32 {
-                        let step_pos = Position::new(step_x as u32, step_y as u32);
-                        // 地形检查
-                        if let Some(terrain) = world_state.terrain_at.get(&step_pos) {
-                            if terrain.is_passable() {
-                                return Some(ActionCandidate {
-                                    reasoning: format!("LLM 不可用，向资源({},{})方向移动一步到({},{})", nearest_pos.x, nearest_pos.y, step_pos.x, step_pos.y),
-                                    action_type: ActionType::MoveToward { target: step_pos },
-                                    target: None,
-                                    params: HashMap::new(),
-                                });
-                            }
-                        } else {
-                            // 未知地形默认可通行
+        // 3. 脚下有资源且堆叠可采集（采集后不超限） → 采集
+        if let Some((resource_type, _)) = world_state.resources_at.get(&world_state.agent_position) {
+            let current_amount = world_state.agent_inventory.get(resource_type).copied().unwrap_or(0);
+            // 检查采集后是否超出堆叠上限
+            if current_amount + GATHER_AMOUNT <= inventory_config.max_stack_size {
+                return Some(ActionCandidate {
+                    reasoning: format!("采集脚下的 {:?}", resource_type),
+                    action_type: ActionType::Gather { resource: *resource_type },
+                    target: None,
+                    params: HashMap::new(),
+                });
+            }
+        }
+
+        // 4. 视野内有可采集资源 → 移动靠近
+        for (pos, (resource_type, _)) in &world_state.resources_at {
+            let current_amount = world_state.agent_inventory.get(resource_type).copied().unwrap_or(0);
+            // 检查采集后是否超出堆叠上限
+            if current_amount + GATHER_AMOUNT <= inventory_config.max_stack_size {
+                if let Some(direction) = self.direction_toward(&world_state.agent_position, pos) {
+                    if self.check_move_valid(direction, world_state) {
+                        let delta = direction.delta();
+                        let step_x = world_state.agent_position.x as i32 + delta.0;
+                        let step_y = world_state.agent_position.y as i32 + delta.1;
+                        if step_x >= 0 && step_y >= 0 && step_x < world_state.map_size as i32 && step_y < world_state.map_size as i32 {
+                            let step_pos = Position::new(step_x as u32, step_y as u32);
                             return Some(ActionCandidate {
-                                reasoning: format!("LLM 不可用，向资源({},{})方向移动一步到({},{})", nearest_pos.x, nearest_pos.y, step_pos.x, step_pos.y),
+                                reasoning: format!("向 {:?} 资源方向移动", resource_type),
                                 action_type: ActionType::MoveToward { target: step_pos },
                                 target: None,
                                 params: HashMap::new(),
@@ -494,9 +509,29 @@ impl RuleEngine {
             }
         }
 
-        // 4. 兜底 → Wait
+        // 5. 没有可采集资源 → 随机探索移动
+        use crate::types::Direction;
+        let directions = [Direction::North, Direction::South, Direction::East, Direction::West];
+        for dir in &directions {
+            if self.check_move_valid(*dir, world_state) {
+                let delta = dir.delta();
+                let step_x = world_state.agent_position.x as i32 + delta.0;
+                let step_y = world_state.agent_position.y as i32 + delta.1;
+                if step_x >= 0 && step_y >= 0 && step_x < world_state.map_size as i32 && step_y < world_state.map_size as i32 {
+                    let step_pos = Position::new(step_x as u32, step_y as u32);
+                    return Some(ActionCandidate {
+                        reasoning: "探索新区域寻找资源".to_string(),
+                        action_type: ActionType::MoveToward { target: step_pos },
+                        target: None,
+                        params: HashMap::new(),
+                    });
+                }
+            }
+        }
+
+        // 6. 兜底 → Wait
         Some(ActionCandidate {
-            reasoning: "LLM 不可用，无明确行动目标，原地等待".to_string(),
+            reasoning: "无法移动，原地等待".to_string(),
             action_type: ActionType::Wait,
             target: None,
             params: HashMap::new(),

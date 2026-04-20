@@ -118,6 +118,29 @@ impl TerrainType {
     pub fn is_passable(&self) -> bool {
         true
     }
+
+    /// 地形转数字索引（用于地形网格压缩传输）
+    pub fn to_index(&self) -> u8 {
+        match self {
+            TerrainType::Plains => 0,
+            TerrainType::Forest => 1,
+            TerrainType::Mountain => 2,
+            TerrainType::Water => 3,
+            TerrainType::Desert => 4,
+        }
+    }
+
+    /// 数字索引转地形字符串（用于Godot渲染）
+    pub fn from_index(index: u8) -> &'static str {
+        match index {
+            0 => "plains",
+            1 => "forest",
+            2 => "mountain",
+            3 => "water",
+            4 => "desert",
+            _ => "plains",
+        }
+    }
 }
 
 /// 结构类型枚举

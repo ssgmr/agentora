@@ -10,6 +10,17 @@ use std::collections::HashMap;
 pub struct WorldSnapshot {
     pub tick: u64,
     pub agents: Vec<AgentSnapshot>,
+    /// 完整地形网格（可选，仅初始snapshot包含，用数字索引压缩存储）
+    /// 地形映射: 0=plains, 1=forest, 2=mountain, 3=water, 4=desert
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terrain_grid: Option<Vec<u8>>,
+    /// 地图宽（与 terrain_grid 配套）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terrain_width: Option<u32>,
+    /// 地图高（与 terrain_grid 配套）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terrain_height: Option<u32>,
+    /// 单元格变化（仅包含资源/建筑变化的格子）
     pub map_changes: Vec<CellChange>,
     pub events: Vec<NarrativeEvent>,
     pub legacies: Vec<LegacyEvent>,

@@ -298,6 +298,8 @@ pub struct SimConfig {
     pub initial_agent_count: usize,
     /// NPC 数量（规则引擎快速决策，不阻塞）
     pub npc_count: usize,
+    /// 世界 tick 间隔（秒），控制状态衰减和世界时间推进速度
+    pub tick_interval_secs: u64,
     /// NPC 决策间隔（秒）
     pub npc_decision_interval_secs: u64,
     /// 玩家 Agent 决策间隔（秒）
@@ -317,6 +319,7 @@ impl Default for SimConfig {
         Self {
             initial_agent_count: 3,
             npc_count: 3,
+            tick_interval_secs: 5, // 默认 5 秒一个 tick
             npc_decision_interval_secs: 1,
             player_decision_interval_secs: 2,
             vision_radius: 10,
@@ -342,6 +345,9 @@ impl SimConfig {
                             if let Some(v) = sim.get("npc_count").and_then(|v| v.as_integer()) {
                                 cfg.npc_count = v as usize;
                             }
+                            if let Some(v) = sim.get("tick_interval_secs").and_then(|v| v.as_integer()) {
+                                cfg.tick_interval_secs = v as u64;
+                            }
                             if let Some(v) = sim.get("npc_decision_interval_secs").and_then(|v| v.as_integer()) {
                                 cfg.npc_decision_interval_secs = v as u64;
                             }
@@ -363,8 +369,8 @@ impl SimConfig {
                                 cfg.inventory_warehouse_multiplier = v as u32;
                             }
                         }
-                        tracing::info!("[SimConfig] 配置加载成功 [agents={} npc={} npc_interval={}s player_interval={}s vision_radius={} inv_slots={} inv_stack={} warehouse_mult={}]",
-                            cfg.initial_agent_count, cfg.npc_count, cfg.npc_decision_interval_secs, cfg.player_decision_interval_secs, cfg.vision_radius,
+                        tracing::info!("[SimConfig] 配置加载成功 [agents={} npc={} tick_interval={}s npc_interval={}s player_interval={}s vision_radius={} inv_slots={} inv_stack={} warehouse_mult={}]",
+                            cfg.initial_agent_count, cfg.npc_count, cfg.tick_interval_secs, cfg.npc_decision_interval_secs, cfg.player_decision_interval_secs, cfg.vision_radius,
                             cfg.inventory_max_slots, cfg.inventory_max_stack_size, cfg.inventory_warehouse_multiplier);
                         cfg
                     }
@@ -521,8 +527,21 @@ impl INode for SimulationBridge {
                 }
                 snapshot_dict.set("map_changes", &map_changes_array.to_variant());
 
+                // 发送地形网格数据（完整地形快照）
+                if let (Some(grid), Some(w), Some(h)) = (&snapshot.terrain_grid, &snapshot.terrain_width, &snapshot.terrain_height) {
+                    let grid_packed = PackedByteArray::from(grid.as_slice());
+                    snapshot_dict.set("terrain_grid", &grid_packed.to_variant());
+                    snapshot_dict.set("terrain_width", &(Variant::from(*w as i64)));
+                    snapshot_dict.set("terrain_height", &(Variant::from(*h as i64)));
+                }
+
                 let mc_count = snapshot.map_changes.len();
-                godot::global::print(&[format!("[SimulationBridge] physics_process: 发送 snapshot 含 {} 个 map_changes", mc_count).to_variant()]);
+                let terrain_info = if snapshot.terrain_grid.is_some() {
+                    format!("含 terrain_grid {}x{}", snapshot.terrain_width.unwrap_or(0), snapshot.terrain_height.unwrap_or(0))
+                } else {
+                    "无 terrain_grid".to_string()
+                };
+                godot::global::print(&[format!("[SimulationBridge] physics_process: 发送 snapshot 含 {} 个 map_changes, {}", mc_count, terrain_info).to_variant()]);
                 self.base_mut().emit_signal("world_updated", &[snapshot_dict.to_variant()]);
                 godot::global::print(&[Variant::from("[SimulationBridge] world_updated 信号已发出")]);
             }
@@ -953,7 +972,7 @@ async fn run_simulation_async(
     // 世界时间推进循环（tick loop）
     let w_tick = world_arc.clone();
     let pause_tick = is_paused.clone();
-    let tick_interval_secs = 1u64; // 默认 1 秒推进一次
+    let tick_interval_secs = sim_config.tick_interval_secs;
     let _tick_handle = tokio::spawn(async move {
         run_tick_loop(w_tick, pause_tick, tick_interval_secs).await;
     });
@@ -1229,7 +1248,7 @@ async fn run_agent_loop(
         if let Some(action) = action {
             let events = {
                 let mut w = world.lock().await;
-                w.advance_tick();
+                // 不在这里推进tick，tick由独立的tick_loop统一推进
                 w.apply_action(&agent_id, &action);
 
                 // 记录到 Agent 记忆系统

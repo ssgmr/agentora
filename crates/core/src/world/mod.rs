@@ -975,9 +975,20 @@ impl World {
             }
         }).collect();
 
+        // 构建地形网格数据（完整地形快照，用于Godot客户端渲染）
+        let (width, height) = self.map.size();
+        let terrain_grid: Vec<u8> = (0..height).flat_map(|y| {
+            (0..width).map(|x| {
+                self.map.get_terrain(Position::new(x, y)).to_index()
+            }).collect::<Vec<_>>()
+        }).collect();
+
         WorldSnapshot {
             tick: self.tick,
             agents,
+            terrain_grid: Some(terrain_grid),
+            terrain_width: Some(width),
+            terrain_height: Some(height),
             map_changes,
             events,
             legacies,
@@ -991,12 +1002,13 @@ impl World {
     }
 
     /// 生存消耗 tick：饱食度和水分度衰减，耗尽时掉血
+    /// 每 tick 衰减 1 点（tick 间隔由配置决定，默认 5 秒）
     fn survival_consumption_tick(&mut self) {
         for (_, agent) in self.agents.iter_mut() {
             if !agent.is_alive {
                 continue;
             }
-            // 每 tick 衰减（降低消耗速度）
+            // 每 tick 衰减 1 点
             agent.satiety = agent.satiety.saturating_sub(1);
             agent.hydration = agent.hydration.saturating_sub(1);
 

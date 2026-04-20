@@ -51,6 +51,7 @@ const STRUCTURE_TEXTURE_MAP = {
 
 var _tile_size: int = 16
 var _map_size: int = 256
+# 地图数据字典 (key "x_y" -> terrain string)，由后端 snapshot 填充
 var _map_data: Dictionary = {}
 var _needs_redraw: bool = true
 var _debug_print_done: bool = false
@@ -132,52 +133,12 @@ func _load_resource_textures() -> void:
 			print("[WorldRenderer] 资源纹理不存在，使用颜色回退: %s" % res_type)
 
 
+# 生成地图数据（初始为默认平原，等待后端 snapshot 填充真实地形）
 func _generate_map_data() -> void:
 	for x in range(_map_size):
 		for y in range(_map_size):
-			var terrain = _get_terrain_for_position(x, y)
-			_map_data["%d_%d" % [x, y]] = terrain
-
-
-func _get_terrain_for_position(x: int, y: int) -> String:
-	var noise = _fractal_noise(x, y, 4)
-
-	if noise < 0.28:
-		return "water"
-	elif noise < 0.45:
-		return "plains"
-	elif noise < 0.65:
-		return "forest"
-	elif noise < 0.82:
-		return "mountain"
-	else:
-		return "desert"
-
-
-# 多层噪声叠加，产生自然地形的斑块效果
-func _fractal_noise(x: int, y: int, octaves: int) -> float:
-	var value = 0.0
-	var amplitude = 1.0
-	var frequency = 1.0
-	var max_value = 0.0
-
-	for i in range(octaves):
-		var nx = x * 0.02 * frequency
-		var ny = y * 0.02 * frequency
-		# 使用多个角度的正弦波叠加
-		value += amplitude * (
-			sin(nx * 1.2 + ny * 0.7 + i * 3.1) * 0.35 +
-			sin(ny * 1.5 - nx * 0.5 + i * 2.3) * 0.35 +
-			cos((nx + ny) * 0.8 + i * 1.7) * 0.3
-		)
-		max_value += amplitude
-		amplitude *= 0.5
-		frequency *= 2.1
-
-	# 归一化到 [0, 1]
-	value = value / max_value
-	value = value * 0.5 + 0.5  # 从 [-1, 1] 映射到 [0, 1]
-	return clampf(value, 0.0, 1.0)
+			var key = "%d_%d" % [x, y]
+			_map_data[key] = "plains"  # 默认值，会被 snapshot 覆盖
 
 
 func _draw() -> void:
@@ -345,7 +306,22 @@ func _process(_delta: float) -> void:
 
 
 func _on_world_updated(snapshot: Dictionary) -> void:
-	# 从 snapshot 加载建筑和资源信息（兜底同步）
+	# 从 snapshot 加载地形、建筑和资源信息（兜底同步）
+
+	# 处理地形网格数据（优先使用，包含全图地形）
+	if snapshot.has("terrain_grid") and snapshot.has("terrain_width") and snapshot.has("terrain_height"):
+		var grid: PackedByteArray = snapshot.terrain_grid
+		var tw: int = snapshot.terrain_width
+		var th: int = snapshot.terrain_height
+		_decode_terrain_grid(grid, tw, th)
+	elif snapshot.has("map_changes"):
+		# 回退：从 map_changes 解析地形（只包含有资源/建筑的格子）
+		for change in snapshot.map_changes:
+			var key = "%d_%d" % [change.x, change.y]
+			if change.has("terrain") and change.terrain != null and change.terrain != "":
+				_map_data[key] = change.terrain.to_lower()
+
+	# 处理建筑和资源
 	if snapshot.has("map_changes"):
 		var resource_count = 0
 		var structure_count = 0
@@ -367,10 +343,28 @@ func _on_world_updated(snapshot: Dictionary) -> void:
 				_resources.erase(key)
 
 		print("[WorldRenderer] Snapshot 处理: %d 个资源, %d 个建筑 (总计 %d 个 map_changes)" % [resource_count, structure_count, snapshot.map_changes.size()])
-		print("[WorldRenderer] _resources 字典大小: %d" % _resources.size())
+
+	print("[WorldRenderer] _resources 字典大小: %d" % _resources.size())
 
 	_needs_redraw = true
 	queue_redraw()
+
+
+# 解码地形网格数据（0=plains, 1=forest, 2=mountain, 3=water, 4=desert）
+const _TERRAIN_NAMES = ["plains", "forest", "mountain", "water", "desert"]
+
+func _decode_terrain_grid(grid: PackedByteArray, width: int, height: int) -> void:
+	_map_data.clear()
+	for y in range(height):
+		for x in range(width):
+			var idx = y * width + x
+			var terrain_idx = grid[idx]
+			var key = "%d_%d" % [x, y]
+			if terrain_idx < _TERRAIN_NAMES.size():
+				_map_data[key] = _TERRAIN_NAMES[terrain_idx]
+			else:
+				_map_data[key] = "plains"
+	print("[WorldRenderer] 地形网格解码: %dx%d = %d 格" % [width, height, _map_data.size()])
 
 
 # ===== Tier 2: Delta 事件处理 =====
