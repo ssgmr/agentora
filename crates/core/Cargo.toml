@@ -17,6 +17,7 @@ async-trait.workspace = true
 chrono.workspace = true
 uuid.workspace = true
 rand.workspace = true
+noise.workspace = true
 
 agentora-ai = { workspace = true }
 agentora-sync = { workspace = true }

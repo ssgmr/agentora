@@ -29,7 +29,11 @@ anti_aliasing/quality/msaa_3d=2
 
 [autoload]
 
-McpInteractionServer="*res://mcp_interaction_server.gd"
+
+
+
+
+
 
 
 

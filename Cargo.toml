@@ -89,6 +89,9 @@ libp2p-autonat = "0.15"
 ed25519-dalek = { version = "2.1", features = ["rand_core"] }
 rand = "0.8"
 
+# 噪声生成（地形生成）
+noise = "0.9"
+
 # Godot GDExtension (bridge crate)
 godot = { version = "0.5", features = ["api-4-6"] }
 
