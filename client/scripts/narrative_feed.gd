@@ -46,9 +46,8 @@ func _ready() -> void:
 	else:
 		_setup_styling()
 
-	# 连接信号
-	# NarrativeFeed 在 UI 下，SimulationBridge 在 Main 下，需要上两层
-	var bridge = get_node_or_null("../../SimulationBridge")
+	# 连接信号（使用 BridgeAccessor）
+	var bridge = BridgeAccessor.get_bridge()
 	if bridge:
 		print("[NarrativeFeed] 找到 bridge，检查信号...")
 		print("[NarrativeFeed] 有 narrative_event 信号: ", bridge.has_signal("narrative_event"))
@@ -56,7 +55,7 @@ func _ready() -> void:
 		bridge.narrative_event.connect(_on_narrative_event)
 		print("[NarrativeFeed] narrative_event 信号已连接")
 	else:
-		printerr("[NarrativeFeed] 未找到 SimulationBridge! 当前路径: ", get_path())
+		printerr("[NarrativeFeed] 未找到 SimulationBridge!")
 
 
 func _setup_styling() -> void:

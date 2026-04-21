@@ -43,7 +43,7 @@ func _ready() -> void:
 	_setup_ui()
 
 	# 连接信号
-	var bridge = get_node_or_null("/root/Main/SimulationBridge")
+	var bridge = BridgeAccessor.get_bridge()
 	if bridge:
 		bridge.agent_selected.connect(_on_agent_selected)
 		bridge.world_updated.connect(_on_world_updated)
@@ -292,7 +292,7 @@ func _update_display() -> void:
 		visible = false
 		return
 
-	var bridge = get_node_or_null("/root/Main/SimulationBridge")
+	var bridge = BridgeAccessor.get_bridge()
 	if not bridge:
 		return
 
@@ -386,14 +386,14 @@ func _update_bar_color(bar: ProgressBar, value: int, high_color: Color, mid_colo
 func _inject_guide(key: String) -> void:
 	"""注入引导偏好"""
 	if not _selected_agent_id.is_empty():
-		var bridge = get_node_or_null("/root/Main/SimulationBridge")
+		var bridge = BridgeAccessor.get_bridge()
 		if bridge:
 			bridge.inject_preference(_selected_agent_id, key, 0.5, 15)
 
 
 func _toggle_pause() -> void:
 	"""切换暂停状态"""
-	var bridge = get_node_or_null("/root/Main/SimulationBridge")
+	var bridge = BridgeAccessor.get_bridge()
 	if bridge:
 		if bridge.is_paused:
 			bridge.start()

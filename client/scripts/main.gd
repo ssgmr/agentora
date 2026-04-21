@@ -13,8 +13,8 @@ var _map_bounds_set: bool = false  # 标记是否已设置地图边界
 func _ready() -> void:
 	print("[Main] 主场景初始化")
 
-	# 连接 SimulationBridge 信号
-	var bridge = get_node_or_null("SimulationBridge")
+	# 连接 SimulationBridge 信号（使用 BridgeAccessor）
+	var bridge = BridgeAccessor.get_bridge()
 	if bridge:
 		bridge.world_updated.connect(_on_world_updated)
 		bridge.agent_selected.connect(_on_agent_selected)
@@ -40,7 +40,7 @@ func _setup_speed_control() -> void:
 
 
 func _on_speed_changed(index: int) -> void:
-	var bridge = get_node_or_null("SimulationBridge")
+	var bridge = BridgeAccessor.get_bridge()
 	if not bridge:
 		return
 
@@ -85,7 +85,7 @@ func _on_world_updated(snapshot: Dictionary) -> void:
 			if agent_data.get("is_alive", false):
 				selected_agent_id = agent_data.get("id", "")
 				# 触发 agent_selected 信号，让 AgentDetailPanel 等组件响应
-				var bridge = get_node_or_null("SimulationBridge")
+				var bridge = BridgeAccessor.get_bridge()
 				if bridge:
 					bridge.select_agent(selected_agent_id)
 				break

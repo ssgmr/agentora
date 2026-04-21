@@ -93,9 +93,9 @@ func _ready() -> void:
 	add_child(_structure_sprites)
 
 	# 连接信号
-	var bridge = get_node_or_null("../SimulationBridge")
+	var bridge = BridgeAccessor.get_bridge()
 	if bridge:
-		print("[WorldRenderer] 找到 SimulationBridge 节点: %s" % bridge.get_path())
+		print("[WorldRenderer] 找到 SimulationBridge 节点")
 		bridge.world_updated.connect(_on_world_updated)
 		print("[WorldRenderer] world_updated 信号已连接")
 		# 连接 delta 信号（Tier 2）

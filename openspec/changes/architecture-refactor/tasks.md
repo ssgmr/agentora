@@ -156,9 +156,16 @@
 - [x] 移除 `UI/RightPanel/WorldInfo` 节点
 
 ### Task 4.3: 创建 BridgeAccessor Autoload
-- [ ] 创建 `client/scripts/bridge_accessor.gd`（可选优化）
-- [ ] 添加到 `project.godot` autoload 部分
-- [ ] 更新所有脚本使用 `BridgeAccessor.get_bridge()`
+- [x] 创建 `client/scripts/bridge_accessor.gd`
+- [x] 添加到 `project.godot` autoload 部分
+- [x] 更新所有脚本使用 `BridgeAccessor.get_bridge()`
+  - main.gd ✓
+  - world_renderer.gd ✓
+  - agent_manager.gd ✓
+  - agent_detail_panel.gd ✓
+  - milestone_panel.gd ✓
+  - narrative_feed.gd ✓
+  - camera_controller.gd ✓
 
 ### Task 4.4: 修复 world_renderer.gd 硬编码值
 - [x] 改为 `_map_size: int = -1`（等 snapshot）
@@ -185,7 +192,7 @@
 - [x] 使用 `ProjectSettings.globalize_path("res://")` 动态获取项目根目录
 - [x] 移除硬编码 Windows 路径（跨平台兼容）
 
-**验证**：客户端运行 ✓，地形渲染正确 ✓，Agent 可见 ✓，相机边界从后端获取 ✓
+**验证**：客户端运行 ✓，地形渲染正确 ✓，Agent 可见 ✓，相机边界从后端获取 ✓，BridgeAccessor 正常工作 ✓（有静态函数调用警告但不影响运行）
 
 ---
 
@@ -273,14 +280,15 @@
 ### Task 6.6: Agent 决策循环测试
 - [x] 观察 Agent 每隔决策间隔执行动作（规则引擎降级正常）
 - [x] 检查 narrative_feed 显示叙事事件（NPC 移动事件正常显示）
-- [ ] 验证 Agent 状态条（HP/饱食/水分）正确更新（需 LLM 服务）
-- [x] 等待至少 3 个决策周期完成（tick=2 已完成）
+- [x] 验证 Agent 状态条（HP/饱食/水分）正确更新（LLM 决策正常）
+- [x] 等待至少 3 个决策周期完成（tick=3 已完成）
+- [x] LLM Provider 链正常工作（gemma-4-e4b-it）
 
 ### Task 6.7: 引导交互测试
-- [ ] 点击选择一个 Agent
-- [ ] 点击引导按钮（进食/饮水/采集/探索）
-- [ ] 验证引导注入成功
-- [ ] 验证 Agent 执行对应动作
+- [ ] 点击选择一个 Agent（需手动测试）
+- [ ] 点击引导按钮（进食/饮水/采集/探索）（需手动测试）
+- [ ] 验证引导注入成功（需手动测试）
+- [ ] 验证 Agent 执行对应动作（需手动测试）
 
 ### Task 6.8: UI面板测试
 - [x] 验证 agent_detail_panel 正确显示选中 Agent 信息

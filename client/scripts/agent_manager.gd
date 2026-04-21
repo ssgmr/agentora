@@ -31,7 +31,7 @@ func _ready() -> void:
 		print("[AgentManager] Agent 纹理加载失败，使用颜色回退")
 
 	# 连接信号
-	var bridge = get_node_or_null("../../SimulationBridge")
+	var bridge = BridgeAccessor.get_bridge()
 	if bridge:
 		bridge.world_updated.connect(_on_world_updated)
 		bridge.agent_selected.connect(_on_agent_selected)
@@ -81,7 +81,7 @@ func _process_delta(delta_data: Dictionary) -> void:
 
 func _check_and_trigger_flash(agent_id: String) -> void:
 	"""检查 Agent 动作并触发闪烁效果"""
-	var bridge = get_node_or_null("../../SimulationBridge")
+	var bridge = BridgeAccessor.get_bridge()
 	if not bridge:
 		return
 
@@ -259,7 +259,7 @@ func _input(event: InputEvent) -> void:
 			var distance = agent_node.position.distance_to(mouse_pos)
 
 			if distance < AGENT_SIZE:
-				var bridge = get_node_or_null("../../SimulationBridge")
+				var bridge = BridgeAccessor.get_bridge()
 				if bridge:
 					bridge.select_agent(agent_id)
 				break
