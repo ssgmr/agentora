@@ -6,8 +6,9 @@ func _ready():
 	print("[AutoScreenshot] Taking screenshot now...")
 	var viewport = get_viewport()
 	var img = viewport.get_texture().get_image()
-	# 使用绝对路径直接保存
-	var abs_path = "D:/work/code/rust/agentora/screenshot_godot.png"
-	var err = img.save_png(abs_path)
-	print("[AutoScreenshot] Saved to: ", abs_path, " err=", err)
+	# 动态获取项目根目录路径（跨平台兼容）
+	var project_root = ProjectSettings.globalize_path("res://").rstrip("/")
+	var screenshot_path = project_root + "/screenshot_godot.png"
+	var err = img.save_png(screenshot_path)
+	print("[AutoScreenshot] Saved to: ", screenshot_path, " err=", err)
 	get_tree().quit()

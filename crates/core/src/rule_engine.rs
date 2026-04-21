@@ -2,7 +2,7 @@
 
 use crate::decision::ActionCandidate;
 use crate::types::{ActionType, AgentId, Position, TerrainType, ResourceType, StructureType, PersonalitySeed};
-use crate::vision::{NearbyAgentInfo, NearbyStructureInfo, NearbyLegacyInfo};
+use crate::world::vision::{NearbyAgentInfo, NearbyStructureInfo, NearbyLegacyInfo};
 use std::collections::{HashMap, HashSet};
 
 /// 世界状态快照（用于规则校验）

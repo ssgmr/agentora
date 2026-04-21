@@ -6,7 +6,7 @@ use agentora_core::types::{AgentId, Position, ResourceType, StructureType, Actio
 use agentora_core::world::{World, ActionResult, PendingTrade, TradeStatus};
 use agentora_core::agent::Agent;
 use agentora_core::rule_engine::{RuleEngine, WorldState};
-use agentora_core::vision::NearbyAgentInfo;
+use agentora_core::NearbyAgentInfo;
 use std::collections::HashMap;
 
 // ===== 辅助函数 =====
@@ -1122,7 +1122,7 @@ fn test_explore_moves() {
 
 #[test]
 fn test_legacy_pickup_success() {
-    use agentora_core::legacy::Legacy;
+    use agentora_core::Legacy;
     let mut world = create_test_world();
     let pos = Position::new(5, 5);
     let (agent_id, mut agent) = create_test_agent("a1", "拾取者", pos);
@@ -1135,7 +1135,7 @@ fn test_legacy_pickup_success() {
     let legacy = Legacy {
         id: "leg1".to_string(),
         position: pos,
-        legacy_type: agentora_core::legacy::LegacyType::Grave,
+        legacy_type: agentora_core::LegacyType::Grave,
         original_agent_id: AgentId::new("dead"),
         original_agent_name: "已故者".to_string(),
         items: legacy_items,
@@ -1166,7 +1166,7 @@ fn test_legacy_pickup_success() {
 
 #[test]
 fn test_legacy_pickup_empty() {
-    use agentora_core::legacy::Legacy;
+    use agentora_core::Legacy;
     let mut world = create_test_world();
     let pos = Position::new(5, 5);
     let (agent_id, agent) = create_test_agent("a1", "拾取者", pos);
@@ -1176,7 +1176,7 @@ fn test_legacy_pickup_empty() {
     let legacy = Legacy {
         id: "leg2".to_string(),
         position: pos,
-        legacy_type: agentora_core::legacy::LegacyType::Grave,
+        legacy_type: agentora_core::LegacyType::Grave,
         original_agent_id: AgentId::new("dead2"),
         original_agent_name: "已故者".to_string(),
         items: HashMap::new(),
@@ -1204,7 +1204,7 @@ fn test_legacy_pickup_empty() {
 
 #[test]
 fn test_legacy_worship() {
-    use agentora_core::legacy::Legacy;
+    use agentora_core::Legacy;
     let mut world = create_test_world();
     let pos = Position::new(5, 5);
     let (agent_id, agent) = create_test_agent("a1", "崇拜者", pos);
@@ -1213,7 +1213,7 @@ fn test_legacy_worship() {
     let legacy = Legacy {
         id: "leg3".to_string(),
         position: pos,
-        legacy_type: agentora_core::legacy::LegacyType::Grave,
+        legacy_type: agentora_core::LegacyType::Grave,
         original_agent_id: AgentId::new("dead3"),
         original_agent_name: "先贤".to_string(),
         items: HashMap::new(),

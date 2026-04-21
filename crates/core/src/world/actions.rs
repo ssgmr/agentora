@@ -11,6 +11,7 @@ use crate::world::{ActionResult, World, PendingTrade, TradeStatus};
 use crate::world::structure::Structure;
 use crate::narrative::{NarrativeBuilder, EventType, action_type_display};
 use std::collections::HashMap;
+use std::str::FromStr;
 
 impl World {
     /// 记录错误叙事（统一入口）
@@ -722,12 +723,5 @@ impl World {
 }
 
 fn str_to_resource(s: &str) -> Option<ResourceType> {
-    match s {
-        "iron" | "Iron" | "铁矿" => Some(ResourceType::Iron),
-        "food" | "Food" | "食物" => Some(ResourceType::Food),
-        "wood" | "Wood" | "木材" => Some(ResourceType::Wood),
-        "water" | "Water" | "水源" => Some(ResourceType::Water),
-        "stone" | "Stone" | "石材" => Some(ResourceType::Stone),
-        _ => None,
-    }
+    ResourceType::from_str(s).ok()
 }

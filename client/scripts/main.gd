@@ -3,11 +3,10 @@
 extends Node
 
 var selected_agent_id: String = ""
+var _map_bounds_set: bool = false  # 标记是否已设置地图边界
 
 @onready var tick_label: Label = $UI/TopBar/TickCounter
 @onready var agent_count_label: Label = $UI/TopBar/AgentCount
-@onready var world_tick_label: Label = $UI/RightPanel/WorldInfo/TickLabel
-@onready var world_agent_count_label: Label = $UI/RightPanel/WorldInfo/AgentCount
 @onready var speed_control: OptionButton = $UI/TopBar/SpeedControl
 
 
@@ -66,13 +65,19 @@ func _on_world_updated(snapshot: Dictionary) -> void:
 
 	if tick_label:
 		tick_label.text = "Tick: %d" % tick
-	if world_tick_label:
-		world_tick_label.text = "Tick: %d" % tick
 
 	if agent_count_label:
 		agent_count_label.text = "Agent: %d" % agents.size()
-	if world_agent_count_label:
-		world_agent_count_label.text = "Agent 数：%d" % agents.size()
+
+	# 设置相机边界（从后端获取地图尺寸）
+	if not _map_bounds_set and snapshot.has("terrain_width") and snapshot.has("terrain_height"):
+		var width: int = snapshot.terrain_width
+		var height: int = snapshot.terrain_height
+		var camera = get_node_or_null("Camera2D")
+		if camera and camera.has_method("set_map_bounds"):
+			camera.set_map_bounds(width, height, 16)
+			_map_bounds_set = true
+			print("[Main] 已设置相机边界: %dx%d" % [width, height])
 
 	# 如果没有选中 Agent，自动选第一个存活的
 	if selected_agent_id.is_empty():

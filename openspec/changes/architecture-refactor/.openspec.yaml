@@ -1,0 +1,27 @@
+schema: change
+version: 1.0.0
+name: architecture-refactor
+status: proposed
+created: 2026-04-20
+apply:
+  requires:
+    - proposal
+    - design
+    - tasks
+artifacts:
+  - id: proposal
+    type: proposal
+    status: pending
+    output: proposal.md
+  - id: design
+    type: design
+    status: pending
+    output: design.md
+    depends_on:
+      - proposal
+  - id: tasks
+    type: tasks
+    status: pending
+    output: tasks.md
+    depends_on:
+      - design

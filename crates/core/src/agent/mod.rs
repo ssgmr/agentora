@@ -1,9 +1,7 @@
 //! Agent核心实体与交互
 
-pub mod movement;
 pub mod inventory;
 pub mod trade;
-pub mod dialogue;
 pub mod combat;
 pub mod alliance;
 

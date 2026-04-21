@@ -3,7 +3,7 @@
 use crate::agent::RelationType;
 use crate::types::{AgentId, Direction, Position, TerrainType, ResourceType, StructureType};
 use crate::world::World;
-use crate::legacy::LegacyType;
+use crate::world::legacy::LegacyType;
 use std::collections::HashMap;
 
 /// 附近 Agent 信息
@@ -96,7 +96,7 @@ pub fn scan_vision(world: &World, agent_id: &AgentId, radius: u32) -> VisionScan
             let terrain = world.map.get_terrain(pos);
             terrain_at.insert(pos, terrain);
 
-            // 2. 资源：O(1) HashMap 查询
+            // 2. 源：O(1) HashMap 查询
             if let Some(node) = world.resources.get(&pos) {
                 resources_at.insert(pos, (node.resource_type, node.current_amount));
             }

@@ -5,7 +5,7 @@
 use agentora_core::{
     Agent, AgentId, Position, World, WorldSeed,
     ActionType, Action,
-    legacy::{Legacy, LegacyEvent},
+    Legacy, LegacyEvent,
     types::LegacyInteraction,
 };
 use std::collections::HashMap;
@@ -126,7 +126,7 @@ fn test_legacy_broadcast_format() {
     let legacy = Legacy {
         id: "test-legacy-001".to_string(),
         position: Position::new(50, 50),
-        legacy_type: agentora_core::legacy::LegacyType::Grave,
+        legacy_type: agentora_core::LegacyType::Grave,
         original_agent_id: AgentId::new("dead-agent"),
         original_agent_name: "Dead Agent".to_string(),
         items: HashMap::new(),
@@ -170,7 +170,7 @@ fn test_legacy_interaction_effects() {
     let legacy = Legacy {
         id: "test-legacy".to_string(),
         position,
-        legacy_type: agentora_core::legacy::LegacyType::Grave,
+        legacy_type: agentora_core::LegacyType::Grave,
         original_agent_id: AgentId::new("other-agent"),
         original_agent_name: "Other Agent".to_string(),
         items: HashMap::new(),

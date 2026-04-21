@@ -11,11 +11,24 @@ var _is_panning: bool = false
 var _pan_start_pos: Vector2 = Vector2.ZERO
 var _camera_start_pos: Vector2 = Vector2.ZERO
 
+# 地图边界（从后端获取）
+var _map_bounds: Rect2 = Rect2(0, 0, 99999, 99999)  # 默认无边界
+var _tile_size: int = 16
+
 
 func _ready() -> void:
 	zoom = Vector2(1.0, 1.0)
-	# 地图中心 (256*16/2 = 2048)
-	position = Vector2(2048, 2048)
+	# 初始位置等待后端 snapshot 设置
+	position = Vector2.ZERO
+
+
+func set_map_bounds(width: int, height: int, tile_size: int = 16) -> void:
+	# 从后端获取地图尺寸
+	_tile_size = tile_size
+	_map_bounds = Rect2(0, 0, width * tile_size, height * tile_size)
+	# 设置摄像机初始位置为地图中心
+	position = Vector2(width * tile_size / 2, height * tile_size / 2)
+	print("[CameraController] 地图边界设置: %dx%d (%d 像素) -> %s" % [width, height, tile_size, _map_bounds])
 
 
 func _input(event: InputEvent) -> void:
@@ -90,8 +103,8 @@ func focus_on_agent(agent_id: String) -> void:
 		var data = bridge.get_agent_data(agent_id)
 		var agent_pos: Vector2 = data.get("position", Vector2.ZERO)
 
-		# 世界坐标（TileMap格子 * 16像素）
-		var world_pos = agent_pos * 16
+		# 世界坐标（TileMap格子 * _tile_size）
+		var world_pos = agent_pos * _tile_size
 
 		# 平滑移动到Agent位置
 		var tween = create_tween()
@@ -103,12 +116,9 @@ func focus_on_agent(agent_id: String) -> void:
 
 # 边界限制（防止摄像机超出地图范围）
 func _process(_delta: float) -> void:
-	# 256×256地图，每格子16像素
-	var map_width = 256 * 16
-	var map_height = 256 * 16
-
+	# 使用后端提供的地图边界
 	var half_viewport = get_viewport_rect().size / 2 / zoom.x
 
 	# 限制摄像机位置
-	position.x = clamp(position.x, half_viewport.x, map_width - half_viewport.x)
-	position.y = clamp(position.y, half_viewport.y, map_height - half_viewport.y)
+	position.x = clamp(position.x, half_viewport.x, _map_bounds.size.x - half_viewport.x)
+	position.y = clamp(position.y, half_viewport.y, _map_bounds.size.y - half_viewport.y)

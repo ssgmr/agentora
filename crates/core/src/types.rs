@@ -103,6 +103,21 @@ impl ResourceType {
     }
 }
 
+impl std::str::FromStr for ResourceType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "iron" | "铁矿" => Ok(ResourceType::Iron),
+            "food" | "食物" => Ok(ResourceType::Food),
+            "wood" | "木材" => Ok(ResourceType::Wood),
+            "water" | "水源" => Ok(ResourceType::Water),
+            "stone" | "石材" => Ok(ResourceType::Stone),
+            _ => Err(format!("Unknown resource type: {}", s)),
+        }
+    }
+}
+
 /// 地形类型枚举
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TerrainType {

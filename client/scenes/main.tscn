@@ -23,10 +23,6 @@ script = ExtResource("world_renderer")
 [node name="Agents" type="Node2D" parent="WorldView"]
 script = ExtResource("agent_manager")
 
-[node name="Structures" type="Node2D" parent="WorldView"]
-
-[node name="Legacies" type="Node2D" parent="WorldView"]
-
 [node name="UI" type="CanvasLayer" parent="."]
 
 [node name="TopBar" type="HBoxContainer" parent="UI"]
@@ -57,23 +53,6 @@ anchor_bottom = 1.0
 offset_left = -320.0
 offset_top = 36.0
 offset_right = 0.0
-
-[node name="WorldInfo" type="PanelContainer" parent="UI/RightPanel"]
-layout_mode = 2
-size_flags_vertical = 0
-visible = false
-
-[node name="TickLabel" type="Label" parent="UI/RightPanel/WorldInfo"]
-layout_mode = 2
-text = "Tick: 0"
-
-[node name="AgentCount" type="Label" parent="UI/RightPanel/WorldInfo"]
-layout_mode = 2
-text = "Agent 数：5"
-
-[node name="PressureList" type="ItemList" parent="UI/RightPanel/WorldInfo"]
-layout_mode = 2
-size_flags_vertical = 1
 
 [node name="ScrollContainer" type="ScrollContainer" parent="UI/RightPanel"]
 layout_mode = 2

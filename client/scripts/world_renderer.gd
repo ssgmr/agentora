@@ -50,7 +50,7 @@ const STRUCTURE_TEXTURE_MAP = {
 }
 
 var _tile_size: int = 16
-var _map_size: int = 256
+var _map_size: int = -1  # 未知，等待 snapshot 到来
 # 地图数据字典 (key "x_y" -> terrain string)，由后端 snapshot 填充
 var _map_data: Dictionary = {}
 var _needs_redraw: bool = true
@@ -133,12 +133,11 @@ func _load_resource_textures() -> void:
 			print("[WorldRenderer] 资源纹理不存在，使用颜色回退: %s" % res_type)
 
 
-# 生成地图数据（初始为默认平原，等待后端 snapshot 填充真实地形）
+# 生成地图数据（初始为空，等待后端 snapshot 填充真实地形）
 func _generate_map_data() -> void:
-	for x in range(_map_size):
-		for y in range(_map_size):
-			var key = "%d_%d" % [x, y]
-			_map_data[key] = "plains"  # 默认值，会被 snapshot 覆盖
+	# 不再预生成，等待 snapshot 提供真实地图尺寸
+	_map_data.clear()
+	print("[WorldRenderer] 等待后端 snapshot 提供地图数据...")
 
 
 func _draw() -> void:
@@ -313,6 +312,8 @@ func _on_world_updated(snapshot: Dictionary) -> void:
 		var grid: PackedByteArray = snapshot.terrain_grid
 		var tw: int = snapshot.terrain_width
 		var th: int = snapshot.terrain_height
+		# 更新地图尺寸（从后端获取）
+		_map_size = tw
 		_decode_terrain_grid(grid, tw, th)
 	elif snapshot.has("map_changes"):
 		# 回退：从 map_changes 解析地形（只包含有资源/建筑的格子）
@@ -355,6 +356,7 @@ const _TERRAIN_NAMES = ["plains", "forest", "mountain", "water", "desert"]
 
 func _decode_terrain_grid(grid: PackedByteArray, width: int, height: int) -> void:
 	_map_data.clear()
+	_map_size = width  # 更新地图尺寸
 	for y in range(height):
 		for x in range(width):
 			var idx = y * width + x
@@ -364,7 +366,7 @@ func _decode_terrain_grid(grid: PackedByteArray, width: int, height: int) -> voi
 				_map_data[key] = _TERRAIN_NAMES[terrain_idx]
 			else:
 				_map_data[key] = "plains"
-	print("[WorldRenderer] 地形网格解码: %dx%d = %d 格" % [width, height, _map_data.size()])
+	print("[WorldRenderer] 地形网格解码: %dx%d = %d 格 (地图尺寸已更新)" % [width, height, _map_data.size()])
 
 
 # ===== Tier 2: Delta 事件处理 =====

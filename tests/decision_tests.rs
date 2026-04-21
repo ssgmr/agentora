@@ -75,7 +75,7 @@ fn test_survival_fallback_low_hydration_with_water() {
     assert!(action.is_some());
     let action = action.unwrap();
     assert!(matches!(action.action_type, ActionType::Drink));
-    assert!(action.reasoning.contains("水源"));
+    assert!(action.reasoning.contains("水"));  // 匹配 "背包有水" 或 "优先饮水"
 }
 
 #[test]
@@ -109,7 +109,10 @@ fn test_survival_fallback_nearby_resource() {
 
 #[test]
 fn test_survival_fallback_default_wait() {
-    let world_state = agentora_core::rule_engine::WorldState::default();
+    let mut world_state = agentora_core::rule_engine::WorldState::default();
+    // 设置在地图边界角落，所有方向都越界
+    world_state.agent_position = Position::new(0, 0);
+    world_state.map_size = 1;  // 1x1 的最小地图，所有相邻格都越界
 
     let engine = RuleEngine::new();
     let action = engine.survival_fallback(&world_state);
@@ -344,7 +347,7 @@ fn test_infer_state_mode_hunger() {
 #[test]
 fn test_infer_state_mode_social() {
     use agentora_core::decision::{infer_state_mode, SparkType};
-    use agentora_core::vision::NearbyAgentInfo;
+    use agentora_core::NearbyAgentInfo;
     use agentora_core::agent::RelationType;
 
     let mut world_state = agentora_core::rule_engine::WorldState::default();

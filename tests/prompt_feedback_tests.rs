@@ -402,7 +402,7 @@ fn test_validate_action_attack_distance_returns_distance() {
     world_state.agent_position = Position::new(10, 10);
     let target_id = AgentId::new("enemy");
     world_state.existing_agents.insert(target_id.clone());
-    world_state.nearby_agents.push(agentora_core::vision::NearbyAgentInfo {
+    world_state.nearby_agents.push(agentora_core::NearbyAgentInfo {
         id: target_id.clone(),
         name: "敌人".to_string(),
         position: Position::new(13, 10), // 距离3格

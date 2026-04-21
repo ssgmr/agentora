@@ -13,10 +13,9 @@ pub mod agent;
 pub mod memory;
 pub mod strategy;
 pub mod world;
-pub mod legacy;
 pub mod storage;
 pub mod snapshot;
-pub mod vision;
+pub mod simulation;
 
 // 重导出常用类型
 pub use types::*;
@@ -26,3 +25,8 @@ pub use world::World;
 pub use seed::WorldSeed;
 pub use snapshot::WorldSnapshot;
 pub use narrative::{NarrativeBuilder, EventType, action_type_display};
+pub use simulation::{SimConfig, AgentDelta};
+
+// 重导出 legacy 和 vision 类型（已移动到 world 模块）
+pub use world::legacy::{Legacy, LegacyType, EchoLog, LegacyInteractionType, LegacyInteractionResult, LegacyEvent};
+pub use world::vision::{scan_vision, calculate_direction, direction_description, VisionScanResult, NearbyAgentInfo, NearbyStructureInfo, NearbyLegacyInfo};

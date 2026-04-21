@@ -7,7 +7,7 @@ use crate::rule_engine::{RuleEngine, WorldState};
 use crate::prompt::PromptBuilder;
 use crate::strategy::retrieve::{retrieve_strategy, get_strategy_summary, wrap_strategy_for_prompt};
 use crate::strategy::StrategyHub;
-use crate::vision::direction_description;
+use crate::world::vision::direction_description;
 use agentora_ai::config::MemoryConfig;
 use agentora_ai::provider::LlmProvider;
 use agentora_ai::types::{LlmRequest, ResponseFormat};

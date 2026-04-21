@@ -104,12 +104,16 @@ crates/
 ### Godot客户端 (`client/`)
 Godot 4 GDScript客户端，负责渲染和交互：
 - `agent_manager.gd` — Agent生命周期和状态管理
-- `world_renderer.gd` — TileMap世界渲染
-- `camera_controller.gd` — 相机控制
+- `world_renderer.gd` — TileMap世界渲染（地图尺寸从后端 snapshot 获取）
+- `camera_controller.gd` — 相机控制（边界从后端 snapshot 动态设置）
 - `narrative_feed.gd` — 叙事流面板
-- `guide_panel.gd` — 引导面板
 - `agent_detail_panel.gd` — Agent详情面板
 - `milestone_panel.gd` — 文明里程碑面板
+
+**重要：客户端不硬编码配置值**
+- `_map_size` 从 `snapshot.terrain_width` 获取
+- 相机边界通过 `set_map_bounds(width, height, tile_size)` 设置
+- 所有配置来自后端 Core，客户端只负责渲染
 
 
 #### Godot可执行文件
@@ -186,6 +190,16 @@ AutoScreenshot="*res://scripts/auto_screenshot.gd"
 - **`snapshot.rs`** — WorldSnapshot/AgentSnapshot/CellChange/NarrativeEvent/LegacyEvent/PressureSnapshot（Godot序列化）
 - **`legacy.rs`** — 遗产系统（Agent死亡/遗产沉淀）
 - **`vision.rs`** — 视野扫描（附近Agent/资源扫描）
+
+### Simulation模块 (`crates/core/src/simulation/`)
+模拟编排层，管理 Agent 决策循环、世界时间推进、快照生成：
+- **`mod.rs`** — 模块导出，重导出 SimConfig、AgentDelta
+- **`config.rs`** — SimConfig 配置（Agent数量、决策间隔、视野半径等）
+- **`delta.rs`** — AgentDelta 增量事件（AgentMoved/AgentDied/StructureCreated等）
+- **`agent_loop.rs`** — Agent 决策循环（LLM调用 + 规则兜底 + delta推送）
+- **`tick_loop.rs`** — 世界时间推进（advance_tick、生存消耗）
+- **`snapshot_loop.rs`** — 定期快照生成（5秒完整状态兜底）
+- **`npc.rs`** — NPC Agent 创建（规则引擎快速决策）
 
 ### Agent模块 (`crates/core/src/agent/`)
 - **`mod.rs`** — Agent实体（信任关系/临时偏好）
