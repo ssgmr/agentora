@@ -59,6 +59,7 @@ pub fn load_agent(conn: &Connection, id: &AgentId) -> Result<Option<Agent>, rusq
             satiety: 100,
             hydration: 100,
             inventory: Default::default(),
+            frozen_inventory: Default::default(),
             memory: Default::default(),
             relations: Default::default(),
             strategies: Default::default(),
@@ -71,6 +72,7 @@ pub fn load_agent(conn: &Connection, id: &AgentId) -> Result<Option<Agent>, rusq
             last_action_type: None,
             last_action_result: None,
             last_position: None,
+            pending_trade_id: None,
         })
     });
 

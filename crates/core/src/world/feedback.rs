@@ -1,29 +1,34 @@
 //! 动作反馈生成
 //!
-//! 从 ActionResult 解析生成人类可读的反馈字符串。
+//! 从 ActionResultSchema 解析生成人类可读的反馈字符串。
 
 use crate::world::World;
-use crate::world::ActionResult;
+use crate::world::{ActionResult, ActionResultSchema};
 use crate::types::ActionType;
 use crate::types::Position;
 
 impl World {
-    /// 统一生成动作反馈（从 ActionResult 提取信息）
+    /// 统一生成动作反馈（通过 ActionResultSchema 转换）
     pub fn generate_action_feedback(&self, result: &ActionResult, action_type: &ActionType, old_position: Option<Position>) -> String {
-        match result {
-            ActionResult::SuccessWithDetail(detail) => {
-                // 解析 detail 格式，生成人类可读的反馈
-                self.parse_success_detail(detail, action_type, old_position)
+        // 先转换为 ActionResultSchema
+        let schema = ActionResultSchema::from_legacy(result);
+
+        // 对于 Success 类型，保留原有的详细解析逻辑
+        match &schema {
+            ActionResultSchema::Success { .. } => {
+                // 从旧结果中提取 detail，交给 parse_success_detail
+                if let ActionResult::SuccessWithDetail(detail) = result {
+                    return self.parse_success_detail(detail, action_type, old_position);
+                }
             }
-            ActionResult::AlreadyAtPosition(msg) => msg.clone(),
-            ActionResult::Blocked(reason) => {
-                format!("{} 失败：{}", self.action_type_name(action_type), reason)
+            _ => {
+                // 其他类型直接使用 Schema 的反馈
+                return schema.to_feedback_text();
             }
-            ActionResult::OutOfBounds => format!("{} 失败：超出地图边界", self.action_type_name(action_type)),
-            ActionResult::AgentDead => format!("{} 失败：Agent 已死亡", self.action_type_name(action_type)),
-            ActionResult::InvalidAgent => format!("{} 失败：Agent 不存在", self.action_type_name(action_type)),
-            ActionResult::NotImplemented => format!("{} 失败：未实现", self.action_type_name(action_type)),
         }
+
+        // 兜底
+        schema.to_feedback_text()
     }
 
     /// 将动作类型转换为简短描述（用于 UI 显示）

@@ -2,8 +2,8 @@
 //!
 //! 设计目标：
 //! - 所有叙事描述集中在一处，方便维护和修改
-//! - 颜色编码统一定义，与 Godot 端保持一致
-//! - 描述模板支持参数化，生成格式统一的事件文本
+//! - 颜色编码单一数据源：后端定义，通过 NarrativeEvent.color_code 传递给前端
+//! - 前端直接使用传来的颜色，不维护本地映射，确保一致性
 
 use crate::types::{ActionType, Direction, Position, ResourceType, StructureType};
 

@@ -111,27 +111,3 @@ impl WorldSnapshot {
         serde_json::to_vec(self).unwrap()
     }
 }
-
-/// 世界增量事件（实时推送到 Godot）
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum WorldDelta {
-    // 已有
-    AgentMoved { id: String, x: u32, y: u32 },
-    AgentDied { id: String },
-    AgentSpawned { id: String, x: u32, y: u32 },
-
-    // 新增：Tier 2
-    StructureCreated { x: u32, y: u32, structure_type: String, owner_id: String },
-    StructureDestroyed { x: u32, y: u32, structure_type: String },
-    ResourceChanged { x: u32, y: u32, resource_type: String, amount: u32 },
-    TradeCompleted { from_id: String, to_id: String, items: String },
-    AllianceFormed { id1: String, id2: String },
-    AllianceBroken { id1: String, id2: String, reason: String },
-
-    // 新增：Tier 2.5 生存+建筑+压力+里程碑
-    HealedByCamp { agent_id: String, hp_restored: u32 },
-    SurvivalStatus { agent_id: String, satiety: u32, hydration: u32, hp: u32 },
-    MilestoneReached { name: String, display_name: String, tick: u64 },
-    PressureStarted { pressure_type: String, description: String, duration: u32 },
-    PressureEnded { pressure_type: String, description: String },
-}

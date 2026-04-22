@@ -37,6 +37,7 @@ pub enum TradeStatus {
 /// 待处理交易
 #[derive(Debug, Clone)]
 pub struct PendingTrade {
+    pub trade_id: String,
     pub proposer_id: AgentId,
     pub acceptor_id: AgentId,
     pub offer_resources: HashMap<String, u32>,

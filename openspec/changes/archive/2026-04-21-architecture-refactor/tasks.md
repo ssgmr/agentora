@@ -17,9 +17,18 @@
 - [x] 添加序列化支持
 
 ### Task 1.4: 创建 simulation/mod.rs（Simulation 结构体）
-- [x] 定义 `Simulation` 结构体（模块导出已创建）
-- [ ] 实现完整的 Simulation API（start/pause/resume/inject_preference）
-- [ ] 实现 `subscribe_snapshot()`、`subscribe_delta()`
+- [x] 定义 `Simulation` 结构体（simulation.rs 已创建，273行）
+- [x] 实现完整的 Simulation API（new/start/pause/resume/inject_preference/set_tick_interval）
+- [x] 实现 sender() 方法供外部获取 snapshot/delta/narrative 通道
+- [x] Bridge 调用 Simulation API 而非直接编排循环
+
+### Task 1.10: Bridge 模块拆分（2026-04-21 新增）
+- [x] 创建 `bridge/logging.rs`（169行）— LogConfig + init_logging
+- [x] 创建 `bridge/conversion.rs`（178行）— delta_to_dict, agent_to_dict, snapshot_to_dict
+- [x] 创建 `bridge/bridge.rs`（372行）— SimulationBridge 节点 + API
+- [x] 删除旧的 lib.rs（800行单文件）
+- [x] 创建新的 lib.rs（23行）— 入口 + ExtensionLibrary
+- [x] Bridge 总行数从 800 行减少到 742 行（拆分为 4 个文件）
 
 ### Task 1.5: 创建 simulation/agent_loop.rs
 - [x] 从 `bridge/lib.rs`（第1090-1398行）移动 `run_agent_loop`

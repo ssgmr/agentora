@@ -4,35 +4,61 @@
 //!
 //! ## 模块结构
 //!
+//! - `simulation` — Simulation 结构体（封装完整编排逻辑）
 //! - `config` — SimConfig 配置加载（Agent数量、决策间隔、视野半径）
 //! - `delta` — AgentDelta 增量事件（实时推送到前端）
 //! - `agent_loop` — Agent 决策循环（LLM 或规则引擎）
 //! - `tick_loop` — 世界时间推进（advance_tick、生存消耗）
 //! - `snapshot_loop` — 定期快照生成（完整状态兜底）
 //! - `npc` — NPC Agent 创建（规则引擎快速决策）
+//! - `state_builder` — WorldStateBuilder（从 World 自动构建 WorldState）
+//! - `delta_emitter` — DeltaEmitter（构建和发送 delta）
+//! - `narrative_emitter` — NarrativeEmitter（提取和发送叙事事件）
+//! - `memory_recorder` — MemoryRecorder（记录动作到 Agent 记忆）
 //!
 //! ## 数据流
 //!
-//! World (Arc<Mutex>) -> agent_loop -> delta_tx -> Godot
-//! World -> snapshot_loop -> snapshot_tx -> Godot
-//! World -> tick_loop -> advance_tick
+//! Simulation::new() → start()
+//!   → spawn agent_loop / tick_loop / snapshot_loop
+//!   → delta_tx / snapshot_tx → Bridge → Godot
 //!
 //! ## 使用方式
 //!
-//! Bridge 通过以下函数调用本模块：
-//! - `SimConfig::load()` 加载配置
-//! - `agent_loop::run_agent_loop()` 运行 Agent 决策循环
-//! - `tick_loop::run_tick_loop()` 运行世界时间推进
-//! - `snapshot_loop::run_snapshot_loop()` 运行快照生成
-//! - `npc::create_npc_agents()` 创建 NPC Agent
+//! ```rust
+//! let sim = Simulation::new(config, seed, llm_provider, &llm_config);
+//! sim.start();
+//!
+//! // 获取通道订阅
+//! let snapshot_rx = sim.subscribe_snapshot();
+//! let delta_rx = sim.subscribe_delta();
+//!
+//! // 外部控制
+//! sim.toggle_pause();
+//! sim.inject_preference(agent_id, key, boost, duration);
+//! ```
 
+pub mod simulation;
 pub mod config;
 pub mod delta;
 pub mod agent_loop;
 pub mod tick_loop;
 pub mod snapshot_loop;
 pub mod npc;
+pub mod state_builder;
+pub mod delta_emitter;
+pub mod narrative_emitter;
+pub mod memory_recorder;
+pub mod delta_dispatcher;
+pub mod p2p_handler;
 
 // 重导出核心类型
-pub use config::SimConfig;
-pub use delta::AgentDelta;
+pub use simulation::Simulation;
+pub use config::{SimConfig, SimMode};
+pub use delta::{AgentDelta, DeltaEnvelope};
+pub use agent_loop::NarrativeEvent;
+pub use state_builder::WorldStateBuilder;
+pub use delta_emitter::DeltaEmitter;
+pub use narrative_emitter::NarrativeEmitter;
+pub use memory_recorder::MemoryRecorder;
+pub use delta_dispatcher::DeltaDispatcher;
+pub use p2p_handler::P2PMessageHandler;

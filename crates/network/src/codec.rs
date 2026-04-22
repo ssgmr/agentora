@@ -39,6 +39,19 @@ impl CrdtOp {
     }
 }
 
+/// Agent Delta 广播消息（P2P 模式）
+///
+/// 用于远程 Agent 状态同步
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentDeltaMessage {
+    /// Delta JSON（for_broadcast 格式）
+    pub delta_json: serde_json::Value,
+    /// 来源 peer ID
+    pub source_peer_id: String,
+    /// tick 时间戳
+    pub tick: u64,
+}
+
 /// 网络消息类型
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum NetworkMessage {
@@ -47,6 +60,8 @@ pub enum NetworkMessage {
     SyncResponse { ops: Vec<CrdtOp> },
     LegacyBroadcast(LegacyBroadcastMessage),
     PeerInfo { peer_id: String, position: (u32, u32) },
+    /// Agent Delta 广播（P2P 模式）
+    AgentDelta(AgentDeltaMessage),
 }
 
 /// 遗产广播消息

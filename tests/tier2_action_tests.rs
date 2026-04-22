@@ -443,6 +443,12 @@ fn test_trade_accept_success() {
     acceptor.inventory.insert("food".to_string(), 20);
     world.insert_agent_at(acceptor_id.clone(), acceptor);
 
+    // 先冻结发起方的资源（模拟 TradeOffer 流程）
+    let mut offer = std::collections::HashMap::new();
+    offer.insert(agentora_core::types::ResourceType::Wood, 3);
+    let proposer = world.agents.get_mut(&proposer_id).unwrap();
+    proposer.freeze_resources(offer.clone(), "test-trade-1");
+
     // 手动创建待处理交易
     let mut offer_resources = HashMap::new();
     offer_resources.insert("wood".to_string(), 3);
@@ -450,6 +456,7 @@ fn test_trade_accept_success() {
     want_resources.insert("food".to_string(), 2);
 
     world.pending_trades.push(PendingTrade {
+        trade_id: "test-trade-1".to_string(),
         proposer_id: proposer_id.clone(),
         acceptor_id: acceptor_id.clone(),
         offer_resources,
@@ -522,6 +529,7 @@ fn test_trade_reject_success() {
     world.insert_agent_at(acceptor_id.clone(), acceptor);
 
     world.pending_trades.push(PendingTrade {
+        trade_id: "test-trade-2".to_string(),
         proposer_id: proposer_id.clone(),
         acceptor_id: acceptor_id.clone(),
         offer_resources: HashMap::new(),

@@ -3,7 +3,6 @@
 //! 临时偏好系统 | 交易逻辑 | 战斗逻辑
 
 use agentora_core::agent::Agent;
-use agentora_core::agent::trade::TradeOffer;
 use agentora_core::types::{AgentId, Position, ResourceType};
 use std::collections::HashMap;
 
@@ -50,104 +49,145 @@ fn test_tick_preferences_expire() {
 
 // ===== 交易逻辑 =====
 
-fn make_test_trade(offer: ResourceType, offer_amount: u32, want: ResourceType, want_amount: u32) -> TradeOffer {
-    let mut offer_map = HashMap::new();
-    offer_map.insert(offer, offer_amount);
-    let mut want_map = HashMap::new();
-    want_map.insert(want, want_amount);
+#[test]
+fn test_freeze_resources_success() {
+    let mut agent = Agent::new(AgentId::default(), "test".into(), Position::new(0, 0));
+    // 初始已有 food=3
+    let mut offer = HashMap::new();
+    offer.insert(ResourceType::Food, 2);
 
-    let proposer = Agent::new(AgentId::default(), "proposer".into(), Position::new(0, 0));
-    proposer.propose_trade(AgentId::default(), offer_map, want_map)
+    let success = agent.freeze_resources(offer, "trade-123");
+    assert!(success);
+    assert_eq!(agent.inventory.get("food").copied().unwrap_or(0), 1);
+    assert_eq!(agent.frozen_inventory.get("food").copied().unwrap_or(0), 2);
+    assert_eq!(agent.pending_trade_id, Some("trade-123".to_string()));
 }
 
 #[test]
-fn test_accept_trade_sufficient_resources() {
-    let mut acceptor = Agent::new(AgentId::default(), "acceptor".into(), Position::new(0, 0));
-    // 给予足够资源来接受交易（初始已有 food=3，再加 10）
-    acceptor.gather(ResourceType::Food, 10);
+fn test_freeze_resources_insufficient() {
+    let mut agent = Agent::new(AgentId::default(), "test".into(), Position::new(0, 0));
+    // 初始已有 food=3
+    let mut offer = HashMap::new();
+    offer.insert(ResourceType::Food, 5);
 
-    let trade = make_test_trade(ResourceType::Wood, 5, ResourceType::Food, 3);
-
-    // 发起方有足够offer资源
-    let mut proposer_inv = HashMap::new();
-    proposer_inv.insert("wood".to_string(), 10);
-
-    assert!(acceptor.accept_trade(&trade, &proposer_inv));
-    // acceptor 初始 food=3, gather +10 = 13, 付出 3 后剩余 10
-    assert_eq!(acceptor.inventory.get("food").copied().unwrap_or(0), 10);
-    assert_eq!(acceptor.inventory.get("wood").copied().unwrap_or(0), 5);
+    let success = agent.freeze_resources(offer, "trade-123");
+    assert!(!success);
+    assert_eq!(agent.inventory.get("food").copied().unwrap_or(0), 3);
+    assert!(agent.frozen_inventory.is_empty());
 }
 
 #[test]
-fn test_accept_trade_insufficient_own_resources() {
-    let mut acceptor = Agent::new(AgentId::default(), "acceptor".into(), Position::new(0, 0));
-    // 没有足够资源
+fn test_cancel_trade_returns_resources() {
+    let mut agent = Agent::new(AgentId::default(), "test".into(), Position::new(0, 0));
+    let mut offer = HashMap::new();
+    offer.insert(ResourceType::Food, 2);
 
-    let trade = make_test_trade(ResourceType::Wood, 5, ResourceType::Food, 10);
+    agent.freeze_resources(offer.clone(), "trade-123");
+    assert_eq!(agent.inventory.get("food").copied().unwrap_or(0), 1);
 
-    let proposer_inv = HashMap::new();
-    assert!(!acceptor.accept_trade(&trade, &proposer_inv));
+    agent.cancel_trade(offer);
+    assert_eq!(agent.inventory.get("food").copied().unwrap_or(0), 3);
+    assert!(agent.frozen_inventory.is_empty());
+    assert!(agent.pending_trade_id.is_none());
 }
 
 #[test]
-fn test_accept_trade_fraud_detection() {
-    let mut acceptor = Agent::new(AgentId::default(), "acceptor".into(), Position::new(0, 0));
-    acceptor.gather(ResourceType::Food, 10);
+fn test_complete_trade_send() {
+    let mut proposer = Agent::new(AgentId::default(), "proposer".into(), Position::new(0, 0));
+    let mut offer = HashMap::new();
+    offer.insert(ResourceType::Food, 2);
+    let mut want = HashMap::new();
+    want.insert(ResourceType::Wood, 5);
 
-    let trade = make_test_trade(ResourceType::Wood, 10, ResourceType::Food, 3);
-    // 发起方实际只有5 wood，不足offer的10
-    let mut proposer_inv = HashMap::new();
-    proposer_inv.insert("wood".to_string(), 5);
+    proposer.freeze_resources(offer.clone(), "trade-123");
+    proposer.complete_trade_send(offer, want);
 
-    assert!(!acceptor.accept_trade(&trade, &proposer_inv));
+    // offer 从 frozen 实际扣减
+    assert!(proposer.frozen_inventory.is_empty());
+    // want 加到 inventory
+    assert_eq!(proposer.inventory.get("wood").copied().unwrap_or(0), 5);
+    assert!(proposer.pending_trade_id.is_none());
+}
+
+#[test]
+fn test_give_resources_success() {
+    let mut agent = Agent::new(AgentId::default(), "test".into(), Position::new(0, 0));
+    agent.gather(ResourceType::Food, 10);
+
+    let mut want = HashMap::new();
+    want.insert(ResourceType::Food, 5);
+
+    let success = agent.give_resources(want);
+    assert!(success);
+    assert_eq!(agent.inventory.get("food").copied().unwrap_or(0), 8); // 初始3 + 10 - 5
+}
+
+#[test]
+fn test_receive_resources() {
+    let mut agent = Agent::new(AgentId::default(), "test".into(), Position::new(0, 0));
+
+    let mut offer = HashMap::new();
+    offer.insert(ResourceType::Wood, 5);
+
+    agent.receive_resources(offer);
+    assert_eq!(agent.inventory.get("wood").copied().unwrap_or(0), 5);
 }
 
 // ===== 战斗逻辑 =====
 
 #[test]
-fn test_attack_deals_damage() {
-    let mut attacker = Agent::new(AgentId::default(), "attacker".into(), Position::new(0, 0));
+fn test_receive_attack_deals_damage() {
     let mut target = Agent::new(AgentId::default(), "target".into(), Position::new(0, 0));
     target.health = 100;
+    let attacker_id = AgentId::new("attacker");
 
-    let result = attacker.attack(&mut target, 25);
+    target.receive_attack(25, &attacker_id);
 
-    assert_eq!(result.damage, 25);
     assert_eq!(target.health, 75);
-    assert!(result.target_alive);
 }
 
 #[test]
-fn test_attack_kills_target() {
-    let mut attacker = Agent::new(AgentId::default(), "attacker".into(), Position::new(0, 0));
+fn test_receive_attack_kills_target() {
     let mut target = Agent::new(AgentId::default(), "target".into(), Position::new(0, 0));
     target.health = 10;
+    let attacker_id = AgentId::new("attacker");
 
-    let result = attacker.attack(&mut target, 15);
+    target.receive_attack(15, &attacker_id);
 
     assert_eq!(target.health, 0);
-    assert!(!result.target_alive);
 }
 
 #[test]
-fn test_attack_sets_enemy_relation() {
-    let mut attacker = Agent::new(AgentId::default(), "attacker".into(), Position::new(0, 0));
+fn test_receive_attack_sets_enemy_relation() {
     let mut target = Agent::new(AgentId::default(), "target".into(), Position::new(0, 0));
+    let attacker_id = AgentId::new("attacker");
 
-    attacker.attack(&mut target, 5);
+    target.receive_attack(5, &attacker_id);
 
-    // 双方互相标记为敌人
-    assert!(attacker.relations.get(&target.id).unwrap().trust == 0.0);
-    assert!(target.relations.get(&attacker.id).unwrap().trust == 0.0);
+    let rel = target.relations.get(&attacker_id).unwrap();
+    assert_eq!(rel.trust, 0.0);
+    assert!(rel.relation_type == agentora_core::agent::RelationType::Enemy);
+}
+
+#[test]
+fn test_initiate_attack_sets_enemy_relation() {
+    let mut attacker = Agent::new(AgentId::default(), "attacker".into(), Position::new(0, 0));
+    let target_id = AgentId::new("target");
+
+    attacker.initiate_attack(&target_id);
+
+    let rel = attacker.relations.get(&target_id).unwrap();
+    assert_eq!(rel.trust, 0.0);
+    assert!(rel.relation_type == agentora_core::agent::RelationType::Enemy);
 }
 
 #[test]
 fn test_attack_no_negative_health() {
-    let mut attacker = Agent::new(AgentId::default(), "attacker".into(), Position::new(0, 0));
     let mut target = Agent::new(AgentId::default(), "target".into(), Position::new(0, 0));
     target.health = 5;
+    let attacker_id = AgentId::new("attacker");
 
-    attacker.attack(&mut target, 100);
+    target.receive_attack(100, &attacker_id);
 
     assert_eq!(target.health, 0); // saturating_sub 不会溢出到负数
 }

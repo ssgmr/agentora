@@ -42,11 +42,14 @@ func _ready() -> void:
 
 	_setup_ui()
 
-	# 连接信号
+	# 订阅 StateManager 信号（统一状态分发）
+	StateManager.agent_changed.connect(_on_agent_changed)
+	StateManager.state_updated.connect(_on_state_updated)
+
+	# 连接 Bridge agent_selected 信号（用于高亮选择）
 	var bridge = BridgeAccessor.get_bridge()
 	if bridge:
 		bridge.agent_selected.connect(_on_agent_selected)
-		bridge.world_updated.connect(_on_world_updated)
 
 	# 初始隐藏
 	visible = false
@@ -283,7 +286,13 @@ func _on_agent_selected(agent_id: String) -> void:
 	_update_display()
 
 
-func _on_world_updated(_snapshot: Dictionary) -> void:
+func _on_agent_changed(agent_id: String, _agent_data: Dictionary) -> void:
+	# 如果是当前选中的 Agent，更新显示
+	if agent_id == _selected_agent_id:
+		_update_display()
+
+
+func _on_state_updated(_snapshot: Dictionary) -> void:
 	_update_display()
 
 
@@ -292,11 +301,8 @@ func _update_display() -> void:
 		visible = false
 		return
 
-	var bridge = BridgeAccessor.get_bridge()
-	if not bridge:
-		return
-
-	var data = bridge.get_agent_data(_selected_agent_id)
+	# 从 StateManager 获取 Agent 数据
+	var data = StateManager.get_agent_data(_selected_agent_id)
 	if data.is_empty():
 		return
 

@@ -8,27 +8,6 @@ extends PanelContainer
 var _text_box: RichTextLabel
 var _scroll_container: ScrollContainer
 
-# 事件颜色编码
-const EVENT_COLORS = {
-	"move": "#FFFFFF",      # 白色 - 动作
-	"gather": "#FFFFFF",
-	"wait": "#FFFFFF",
-	"trade": "#4CAF50",     # 绿色 - 交易
-	"trade_accept": "#4CAF50",
-	"talk": "#9E9E9E",      # 灰色 - 对话
-	"attack": "#F44336",    # 红色 - 攻击
-	"alliance": "#2196F3",  # 蓝色 - 结盟
-	"pressure": "#FFC107",  # 黄色 - 压力事件
-	"pressure_start": "#FF9800",  # 橙色 - 压力开始
-	"pressure_end": "#8BC34A",    # 浅绿 - 压力结束
-	"milestone": "#FFD700",  # 金色 - 里程碑
-	"level_up": "#FF6B35",   # 橙色 - 升级
-	"legacy": "#9C27B0",    # 紫色 - 遗产
-	"death": "#9C27B0",
-	"healed": "#4CAF50",    # 绿色 - 治愈（营地效果）
-	"survival": "#E91E63",  # 粉色 - 生存警告
-}
-
 
 func _ready() -> void:
 	# 给 PanelContainer 加半透明深色背景
@@ -46,16 +25,9 @@ func _ready() -> void:
 	else:
 		_setup_styling()
 
-	# 连接信号（使用 BridgeAccessor）
-	var bridge = BridgeAccessor.get_bridge()
-	if bridge:
-		print("[NarrativeFeed] 找到 bridge，检查信号...")
-		print("[NarrativeFeed] 有 narrative_event 信号: ", bridge.has_signal("narrative_event"))
-		# 只连接 narrative_event，不连接 world_updated（避免重复）
-		bridge.narrative_event.connect(_on_narrative_event)
-		print("[NarrativeFeed] narrative_event 信号已连接")
-	else:
-		printerr("[NarrativeFeed] 未找到 SimulationBridge!")
+	# 订阅 StateManager 信号（统一状态分发）
+	StateManager.narrative_added.connect(_on_narrative_added)
+	print("[NarrativeFeed] StateManager.narrative_added 信号已连接")
 
 
 func _setup_styling() -> void:
@@ -91,7 +63,7 @@ func _setup_ui_fallback() -> void:
 	_setup_styling()
 
 
-func _on_narrative_event(event: Variant) -> void:
+func _on_narrative_added(event: Variant) -> void:
 	print("[NarrativeFeed] 收到事件: type=%s agent=%s desc=%s" % [
 		event.get("event_type", "?"), event.get("agent_name", "?"), event.get("description", "?")
 	])
@@ -104,8 +76,8 @@ func add_event(event: Dictionary) -> void:
 	var event_type: String = event.get("event_type", "unknown")
 	var description: String = event.get("description", "")
 
-	# 获取颜色
-	var color: String = EVENT_COLORS.get(event_type, "#FFFFFF")
+	# 颜色由后端统一定义（单一数据源）
+	var color: String = event.get("color", "#FFFFFF")
 
 	# 格式化事件文本（description 已包含 agent 名字）
 	var formatted: String = "[color=%s][tick %d] %s[/color]\n" % [color, tick, description]
@@ -136,102 +108,3 @@ func _limit_events() -> void:
 
 func clear_log() -> void:
 	_text_box.text = "[i]日志已清空[/i]"
-
-
-# 添加压力事件
-func add_pressure_event(description: String) -> void:
-	add_event({
-		"tick": 0,
-		"agent_name": "[系统]",
-		"event_type": "pressure",
-		"description": description
-	})
-
-
-# 添加遗产事件
-func add_legacy_event(legacy_id: String, agent_name: String) -> void:
-	add_event({
-		"tick": 0,
-		"agent_name": agent_name,
-		"event_type": "legacy",
-		"description": "已死亡，留下遗迹 #%s" % legacy_id
-	})
-
-
-# 添加里程碑事件
-func add_milestone_event(name_str: String, display_name: String) -> void:
-	var milestone_icons = {
-		"FirstCamp": "🏕",
-		"FirstTrade": "🤝",
-		"FirstFence": "🚧",
-		"FirstAttack": "⚔",
-		"FirstLegacyInteract": "📜",
-		"CityState": "🏛",
-		"GoldenAge": "👑",
-	}
-	var icon = milestone_icons.get(name_str, "🏆")
-	add_event({
-		"tick": 0,
-		"agent_name": "[文明]",
-		"event_type": "milestone",
-		"description": "%s 达成：【%s】" % [icon, display_name]
-	})
-
-
-# 添加压力开始事件
-func add_pressure_start(pressure_type: String, description: String, duration: int) -> void:
-	var icons = {
-		"drought": "☀️",
-		"abundance": "🌾",
-		"plague": "☠️",
-	}
-	var icon = icons.get(pressure_type, "⚠️")
-	add_event({
-		"tick": 0,
-		"agent_name": "[世界]",
-		"event_type": "pressure_start",
-		"description": "%s %s（持续%d ticks）" % [icon, description, duration]
-	})
-
-
-# 添加压力结束事件
-func add_pressure_end(pressure_type: String, description: String) -> void:
-	var icons = {
-		"drought": "🌧️",
-		"abundance": "🍃",
-		"plague": "💚",
-	}
-	var icon = icons.get(pressure_type, "✓")
-	add_event({
-		"tick": 0,
-		"agent_name": "[世界]",
-		"event_type": "pressure_end",
-		"description": "%s %s 已结束" % [icon, description]
-	})
-
-
-# 添加治愈事件（营地效果）
-func add_healed_event(agent_name: String, hp_restored: int) -> void:
-	add_event({
-		"tick": 0,
-		"agent_name": agent_name,
-		"event_type": "healed",
-		"description": "在营地休息，恢复 %d HP" % hp_restored
-	})
-
-
-# 添加生存警告
-func add_survival_warning(agent_name: String, satiety: int, hydration: int) -> void:
-	var warnings = []
-	if satiety <= 30:
-		warnings.append("饥饿")
-	if hydration <= 30:
-		warnings.append("口渴")
-	if satiety == 0 or hydration == 0:
-		warnings.append("危急")
-	add_event({
-		"tick": 0,
-		"agent_name": agent_name,
-		"event_type": "survival",
-		"description": "⚠️ %s（饱食:%d 水分:%d）" % [" ".join(warnings), satiety, hydration]
-	})

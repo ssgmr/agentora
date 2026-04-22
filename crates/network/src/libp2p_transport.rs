@@ -106,6 +106,9 @@ pub struct Libp2pTransport {
     peer_id: PeerId,
     local_key: identity::Keypair,
     swarm_tx: mpsc::Sender<SwarmCommand>,
+    /// 消息接收通道（供上层消费 GossipSub 消息）
+    /// 使用 Option 包装，允许一次性取出
+    message_rx: Option<mpsc::Receiver<NetworkMessage>>,
     /// 中继 reservation 状态
     relay_reservations: std::sync::Arc<tokio::sync::RwLock<Vec<RelayReservation>>>,
     /// NAT 状态（使用 AutoNAT 探测结果）
@@ -298,6 +301,9 @@ impl Libp2pTransport {
         // 创建通道用于发送命令到 Swarm
         let (swarm_tx, swarm_rx) = mpsc::channel::<SwarmCommand>(100);
 
+        // 创建消息接收通道（供上层消费）
+        let (message_tx, message_rx) = mpsc::channel::<NetworkMessage>(100);
+
         // 创建 relay reservations 共享状态
         let relay_reservations = std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new()));
 
@@ -324,6 +330,7 @@ impl Libp2pTransport {
                 key_clone,
                 peer_id_clone,
                 swarm_rx,
+                message_tx,
                 reservations_clone,
                 nat_status_clone,
                 direct_connections_clone,
@@ -334,6 +341,7 @@ impl Libp2pTransport {
             peer_id,
             local_key,
             swarm_tx,
+            message_rx: Some(message_rx),
             relay_reservations,
             nat_status,
             direct_connections,
@@ -359,6 +367,9 @@ impl Libp2pTransport {
         // 创建通道用于发送命令到 Swarm
         let (swarm_tx, swarm_rx) = mpsc::channel::<SwarmCommand>(100);
 
+        // 创建消息接收通道（供上层消费）
+        let (message_tx, message_rx) = mpsc::channel::<NetworkMessage>(100);
+
         // 创建 relay reservations 共享状态
         let relay_reservations = std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new()));
 
@@ -385,6 +396,7 @@ impl Libp2pTransport {
                 key_clone,
                 peer_id_clone,
                 swarm_rx,
+                message_tx,
                 reservations_clone,
                 nat_status_clone,
                 direct_connections_clone,
@@ -395,6 +407,7 @@ impl Libp2pTransport {
             peer_id,
             local_key,
             swarm_tx,
+            message_rx: Some(message_rx),
             relay_reservations,
             nat_status,
             direct_connections,
@@ -434,6 +447,7 @@ impl Libp2pTransport {
         local_key: identity::Keypair,
         peer_id: PeerId,
         mut command_rx: mpsc::Receiver<SwarmCommand>,
+        message_tx: mpsc::Sender<NetworkMessage>,
         _relay_reservations: std::sync::Arc<tokio::sync::RwLock<Vec<RelayReservation>>>,
         nat_status: std::sync::Arc<tokio::sync::RwLock<NatStatus>>,
         direct_connections: std::sync::Arc<tokio::sync::RwLock<std::collections::HashSet<String>>>,
@@ -596,7 +610,7 @@ impl Libp2pTransport {
                     }
                 }
                 event = swarm.select_next_some() => {
-                    Self::handle_swarm_event(event, nat_status.clone(), direct_connections.clone()).await;
+                    Self::handle_swarm_event(event, message_tx.clone(), nat_status.clone(), direct_connections.clone()).await;
                 }
             }
         }
@@ -605,6 +619,7 @@ impl Libp2pTransport {
     /// 处理 Swarm 事件
     async fn handle_swarm_event(
         event: SwarmEvent<AgentoraBehaviourEvent>,
+        message_tx: mpsc::Sender<NetworkMessage>,
         nat_status: std::sync::Arc<tokio::sync::RwLock<NatStatus>>,
         direct_connections: std::sync::Arc<tokio::sync::RwLock<std::collections::HashSet<String>>>,
     ) {
@@ -632,9 +647,13 @@ impl Libp2pTransport {
                             } => {
                                 tracing::debug!("收到 GossipSub 消息：from={}, id={}", peer_id, id);
 
-                                // 解析消息
+                                // 解析消息并发送到上层消费
                                 if let Ok(network_msg) = NetworkMessage::from_bytes(&message.data) {
                                     tracing::debug!("消息内容：{:?}", network_msg);
+                                    // 发送到消息通道供上层消费
+                                    if let Err(e) = message_tx.try_send(network_msg) {
+                                        tracing::warn!("消息通道发送失败：{:?}", e);
+                                    }
                                 }
                             }
                             GossipsubEvent::Subscribed { peer_id, topic } => {
@@ -823,6 +842,23 @@ impl Libp2pTransport {
     /// 获取 NAT 状态
     pub async fn get_nat_status(&self) -> NatStatus {
         self.nat_status.read().await.clone()
+    }
+
+    /// 获取消息接收通道（供上层消费 GossipSub 消息）
+    ///
+    /// 注意：由于 Receiver 不能 clone，此方法只能调用一次。
+    /// 调用后 message_rx 字段变为 None，后续调用返回 None。
+    pub fn take_message_receiver(&mut self) -> Option<mpsc::Receiver<NetworkMessage>> {
+        self.message_rx.take()
+    }
+
+    /// 尝试接收一条消息（非阻塞，仅当 receiver 存在时）
+    pub fn try_recv_message(&mut self) -> Option<NetworkMessage> {
+        if let Some(ref mut rx) = self.message_rx {
+            rx.try_recv().ok()
+        } else {
+            None
+        }
     }
 
     /// 获取连接类型

@@ -3,9 +3,9 @@
 //! 设计原则：Handler 只返回 ActionResult（携带执行详情），不设置 last_action_result。
 //! 反馈生成统一在 apply_action 中处理，确保格式一致。
 
-use crate::agent::{Relation, RelationType};
+use crate::agent::RelationType;
 use crate::types::{
-    ActionType, AgentId, Direction, Position, ResourceType, StructureType
+    ActionType, AgentId, Direction, Position, ResourceType, StructureType, Action
 };
 use crate::world::{ActionResult, World, PendingTrade, TradeStatus};
 use crate::world::structure::Structure;
@@ -14,6 +14,30 @@ use std::collections::HashMap;
 use std::str::FromStr;
 
 impl World {
+    /// Action 执行入口：路由 ActionType 到具体 handler（World 职责：协调 + 后处理）
+    pub fn execute_action(&mut self, agent_id: &AgentId, action: &Action) -> ActionResult {
+        match &action.action_type {
+            ActionType::MoveToward { target } => self.handle_move_toward(agent_id, *target),
+            ActionType::Gather { resource } => self.handle_gather(agent_id, *resource),
+            ActionType::Wait => self.handle_wait(agent_id),
+            ActionType::Eat => self.handle_eat(agent_id),
+            ActionType::Drink => self.handle_drink(agent_id),
+            ActionType::Build { structure } => self.handle_build(agent_id, *structure),
+            ActionType::Attack { target_id } => self.handle_attack(agent_id, target_id.clone()),
+            ActionType::Talk { message } => self.handle_talk(agent_id, message.clone()),
+            ActionType::Explore { .. } => self.handle_explore(agent_id),
+            ActionType::TradeOffer { offer, want, target_id } => self.handle_trade_offer(agent_id, offer.clone(), want.clone(), target_id.clone()),
+            ActionType::TradeAccept { .. } => self.handle_trade_accept(agent_id),
+            ActionType::TradeReject { .. } => self.handle_trade_reject(agent_id),
+            ActionType::AllyPropose { target_id } => self.handle_ally_propose(agent_id, target_id.clone()),
+            ActionType::AllyAccept { ally_id } => self.handle_ally_accept(agent_id, ally_id.clone()),
+            ActionType::AllyReject { ally_id } => self.handle_ally_reject(agent_id, ally_id.clone()),
+            ActionType::InteractLegacy { legacy_id, interaction } => {
+                self.handle_legacy_interaction(agent_id, legacy_id, interaction)
+            }
+        }
+    }
+
     /// 记录错误叙事（统一入口）
     pub fn record_error_narrative(&mut self, agent_id: &AgentId, action_type: &ActionType, reason: &str) {
         if let Some(agent) = self.agents.get(agent_id) {
@@ -45,19 +69,19 @@ impl World {
                 format!("你已经在 ({},{})，不需要再移动。请选择其他动作（如采集附近资源、探索其他方向等）", target.x, target.y));
         }
 
-        // 校验：目标必须与当前位置相邻
+        // 校验：目标必须与当前位置相邻（World职责）
         let dist = current_pos.manhattan_distance(&target);
         if dist != 1 {
             return ActionResult::Blocked(
                 format!("目标 ({},{}) 不相邻（距离 {} 格），每次只能移动 1 格", target.x, target.y, dist));
         }
 
-        // 边界检查
+        // 边界检查（World职责）
         if target.x >= self.map.size().0 || target.y >= self.map.size().1 {
             return ActionResult::OutOfBounds;
         }
 
-        // Fence 碰撞检查
+        // Fence 碰撞检查（World职责）
         if let Some(fence) = self.structures.get(&target) {
             if fence.structure_type == StructureType::Fence {
                 if let Some(ref owner_id) = fence.owner_id {
@@ -72,17 +96,16 @@ impl World {
             }
         }
 
-        // 执行移动
+        // 执行移动：调用 Agent 方法
         let agent = self.agents.get_mut(agent_id).unwrap();
-        agent.last_position = Some(agent.position);
-        agent.position = target;
+        let (_, old_pos, new_pos) = agent.move_to(target);
 
         // 使用 NarrativeBuilder 生成描述
         self.record_event(agent_id, &agent_name, EventType::MoveToward.as_str(),
-            &builder.move_toward(current_pos, target), EventType::MoveToward.color_code());
+            &builder.move_toward(old_pos, new_pos), EventType::MoveToward.color_code());
 
-        // 返回成功详情（包含起终点，供反馈生成使用）
-        ActionResult::SuccessWithDetail(format!("move:{},{}→({},{})", current_pos.x, current_pos.y, target.x, target.y))
+        // 返回成功详情
+        ActionResult::SuccessWithDetail(format!("move:{},{}→({},{})", old_pos.x, old_pos.y, new_pos.x, new_pos.y))
     }
 
     // ===== Gather =====
@@ -185,29 +208,20 @@ impl World {
 
     // ===== Eat =====
     pub fn handle_eat(&mut self, agent_id: &AgentId) -> ActionResult {
-        let agent = self.agents.get_mut(agent_id).unwrap();
-        let agent_name = agent.name.clone();
+        let agent_name = self.agents.get(agent_id).unwrap().name.clone();
         let builder = NarrativeBuilder::new(agent_name.clone());
 
-        let food_count = agent.inventory.get("food").copied().unwrap_or(0);
-        if food_count > 0 {
-            // 记录进食前的饱食度（任务 3.6）
-            let satiety_before = agent.satiety;
-            *agent.inventory.get_mut("food").unwrap() -= 1;
-            if agent.inventory["food"] == 0 {
-                agent.inventory.remove("food");
-            }
-            agent.satiety = (agent.satiety + 30).min(100);
-            let new_satiety = agent.satiety;
-            let food_remaining = agent.inventory.get("food").copied().unwrap_or(0);
+        // 调用 Agent 方法
+        let agent = self.agents.get_mut(agent_id).unwrap();
+        let (success, delta, before, after, remain) = agent.eat_food();
 
+        if success {
             self.record_event(agent_id, &agent_name, EventType::Eat.as_str(),
-                &builder.eat(30), EventType::Eat.color_code());
-            // 任务 3.6：Eat 成功反馈包含饱食度变化和背包剩余
+                &builder.eat(delta), EventType::Eat.color_code());
             ActionResult::SuccessWithDetail(format!("eat:satiety+{}({}→{}),food_remain={}",
-                new_satiety - satiety_before, satiety_before, new_satiety, food_remaining))
+                delta, before, after, remain))
         } else {
-            // 任务 3.3：Eat 失败反馈包含背包状态
+            // 失败：获取背包状态
             let inventory_str: Vec<String> = agent.inventory.iter()
                 .map(|(r, n)| format!("{} x{}", r, n))
                 .collect();
@@ -219,29 +233,20 @@ impl World {
 
     // ===== Drink =====
     pub fn handle_drink(&mut self, agent_id: &AgentId) -> ActionResult {
-        let agent = self.agents.get_mut(agent_id).unwrap();
-        let agent_name = agent.name.clone();
+        let agent_name = self.agents.get(agent_id).unwrap().name.clone();
         let builder = NarrativeBuilder::new(agent_name.clone());
 
-        let water_count = agent.inventory.get("water").copied().unwrap_or(0);
-        if water_count > 0 {
-            // 记录饮水前的水分度（任务 3.6）
-            let hydration_before = agent.hydration;
-            *agent.inventory.get_mut("water").unwrap() -= 1;
-            if agent.inventory["water"] == 0 {
-                agent.inventory.remove("water");
-            }
-            agent.hydration = (agent.hydration + 25).min(100);
-            let new_hydration = agent.hydration;
-            let water_remaining = agent.inventory.get("water").copied().unwrap_or(0);
+        // 调用 Agent 方法
+        let agent = self.agents.get_mut(agent_id).unwrap();
+        let (success, delta, before, after, remain) = agent.drink_water();
 
+        if success {
             self.record_event(agent_id, &agent_name, EventType::Drink.as_str(),
-                &builder.drink(25), EventType::Drink.color_code());
-            // 任务 3.6：Drink 成功反馈包含水分度变化和背包剩余
+                &builder.drink(delta), EventType::Drink.color_code());
             ActionResult::SuccessWithDetail(format!("drink:hydration+{}({}→{}),water_remain={}",
-                new_hydration - hydration_before, hydration_before, new_hydration, water_remaining))
+                delta, before, after, remain))
         } else {
-            // 任务 3.3：Drink 失败反馈包含背包状态
+            // 失败：获取背包状态
             let inventory_str: Vec<String> = agent.inventory.iter()
                 .map(|(r, n)| format!("{} x{}", r, n))
                 .collect();
@@ -312,19 +317,19 @@ impl World {
         };
         let builder = NarrativeBuilder::new(agent_name.clone());
 
-        // 目标不存在检查
+        // 目标不存在检查（World职责）
         if !self.agents.contains_key(&target_id) {
             return ActionResult::Blocked(
                 format!("Attack失败：目标Agent {} 不存在", target_id.as_str()));
         }
 
-        // 目标死亡检查
+        // 目标死亡检查（World职责）
         if !self.agents.get(&target_id).map(|a| a.is_alive).unwrap_or(false) {
             return ActionResult::Blocked(
                 format!("Attack失败：目标Agent {} 已死亡", target_name));
         }
 
-        // 任务 3.5：距离限制检查
+        // 距离限制检查（World职责）
         let target_pos = self.agents.get(&target_id).unwrap().position;
         let distance = agent_pos.manhattan_distance(&target_pos);
         if distance > 1 {
@@ -333,7 +338,7 @@ impl World {
                     target_name, distance));
         }
 
-        // 任务 3.5：盟友关系检查
+        // 盟友关系检查（World职责）
         let is_ally = self.agents.get(agent_id)
             .and_then(|a| a.relations.get(&target_id))
             .map(|r| r.relation_type == RelationType::Ally)
@@ -343,39 +348,23 @@ impl World {
                 format!("Attack失败：不能攻击盟友Agent {}。若要攻击，需先解除盟约", target_name));
         }
 
+        // World计算damage
         let damage = 10;
-        let target_alive;
+
+        // 分段借用，调用Agent方法
         {
             let target = self.agents.get_mut(&target_id).unwrap();
-            target.health = target.health.saturating_sub(damage);
-            target_alive = target.health > 0;
-
-            if let Some(rel) = target.relations.get_mut(agent_id) {
-                rel.relation_type = RelationType::Enemy;
-                rel.trust = 0.0;
-            } else {
-                target.relations.insert(agent_id.clone(), Relation {
-                    trust: 0.0,
-                    relation_type: RelationType::Enemy,
-                    last_interaction_tick: 0,
-                });
-            }
+            target.receive_attack(damage, agent_id);
         }
-
         {
             let attacker = self.agents.get_mut(agent_id).unwrap();
-            if let Some(rel) = attacker.relations.get_mut(&target_id) {
-                rel.relation_type = RelationType::Enemy;
-                rel.trust = 0.0;
-            } else {
-                attacker.relations.insert(target_id.clone(), Relation {
-                    trust: 0.0,
-                    relation_type: RelationType::Enemy,
-                    last_interaction_tick: 0,
-                });
-            }
+            attacker.initiate_attack(&target_id);
         }
 
+        // 检查目标存活状态
+        let target_alive = self.agents.get(&target_id).map(|a| a.health > 0).unwrap_or(false);
+
+        // World维护统计
         self.total_attacks += 1;
 
         if !target_alive {
@@ -391,15 +380,12 @@ impl World {
 
     // ===== Talk =====
     pub fn handle_talk(&mut self, agent_id: &AgentId, message: String) -> ActionResult {
-        use crate::memory::MemoryEvent;
-
-        let agent = self.agents.get(agent_id).unwrap();
-        let agent_name = agent.name.clone();
+        let agent_name = self.agents.get(agent_id).unwrap().name.clone();
         let builder = NarrativeBuilder::new(agent_name.clone());
-        let agent_pos = agent.position;
+        let agent_pos = self.agents.get(agent_id).unwrap().position;
 
+        // World查找附近Agent
         const VISION_RANGE: i32 = 3;
-
         let nearby_agents: Vec<AgentId> = self.agents.iter()
             .filter(|(id, other)| {
                 *id != agent_id && {
@@ -418,31 +404,20 @@ impl World {
         }
 
         let mut affected_names = Vec::new();
+        let tick = self.tick as u32;
+
+        // 循环调用每个 nearby 的 receive_talk()
         for target_id in &nearby_agents {
             let target_name = self.agents.get(target_id).map(|a| a.name.clone()).unwrap_or_default();
             affected_names.push(target_name.clone());
 
-            self.agents.get_mut(agent_id).unwrap().increase_trust(target_id, 2.0);
-            self.agents.get_mut(target_id).unwrap().increase_trust(agent_id, 1.0);
-
             let target = self.agents.get_mut(target_id).unwrap();
-            target.memory.record(&MemoryEvent {
-                tick: self.tick as u32,
-                event_type: "social".to_string(),
-                content: format!("与 {} 交流：「{}」", agent_name, message),
-                emotion_tags: vec!["positive".to_string()],
-                importance: 0.5,
-            });
+            target.receive_talk(agent_id, &agent_name, &message, tick);
         }
 
+        // 调用发起方的 talk_with()
         let initiator = self.agents.get_mut(agent_id).unwrap();
-        initiator.memory.record(&MemoryEvent {
-            tick: self.tick as u32,
-            event_type: "social".to_string(),
-            content: format!("与 {} 交流：「{}」", affected_names.join("、"), message),
-            emotion_tags: vec!["positive".to_string()],
-            importance: 0.5,
-        });
+        initiator.talk_with(&nearby_agents, &message, tick);
 
         // 使用 NarrativeBuilder 生成描述
         let event_msg = builder.talk_to(&affected_names, &message);
@@ -457,7 +432,7 @@ impl World {
         let mut rng = rand::thread_rng();
         let agent_name = self.agents.get(agent_id).unwrap().name.clone();
 
-        let steps = rng.gen_range(1..=3);
+        // World随机方向计算（单步）
         let dir_idx = rng.gen_range(0..4);
         let directions = [Direction::North, Direction::South, Direction::East, Direction::West];
         let dir = directions[dir_idx];
@@ -465,28 +440,36 @@ impl World {
         let direction_name = dir.as_chinese();
 
         let old_pos = self.agents.get(agent_id).unwrap().position;
-        let agent = self.agents.get_mut(agent_id).unwrap();
-        for _ in 0..steps {
-            let new_x = agent.position.x as i32 + dx;
-            let new_y = agent.position.y as i32 + dy;
-            if new_x >= 0 && new_y >= 0 {
-                let new_pos = Position::new(new_x as u32, new_y as u32);
-                if self.map.is_valid(new_pos) && self.map.get_terrain(new_pos).is_passable() {
-                    agent.position = new_pos;
-                }
-            }
+        let new_x = old_pos.x as i32 + dx;
+        let new_y = old_pos.y as i32 + dy;
+
+        // 边界和地形校验（World职责）
+        if new_x < 0 || new_y < 0 {
+            self.record_event(agent_id, &agent_name, EventType::Explore.as_str(),
+                &format!("{} 向{}探索，但边界阻挡", agent_name, direction_name), EventType::Explore.color_code());
+            return ActionResult::Blocked("探索被边界阻挡".into());
         }
-        let new_pos = agent.position;
+
+        let target = Position::new(new_x as u32, new_y as u32);
+        if !self.map.is_valid(target) || !self.map.get_terrain(target).is_passable() {
+            self.record_event(agent_id, &agent_name, EventType::Explore.as_str(),
+                &format!("{} 向{}探索，但地形阻挡", agent_name, direction_name), EventType::Explore.color_code());
+            return ActionResult::Blocked("探索被地形阻挡".into());
+        }
+
+        // 调用Agent方法执行移动
+        let agent = self.agents.get_mut(agent_id).unwrap();
+        let (_, _, new_pos) = agent.move_to(target);
 
         self.record_event(agent_id, &agent_name, EventType::Explore.as_str(),
-            &format!("{} 向{}探索，移动了 {} 步 ({},{})→({},{})", agent_name, direction_name, steps, old_pos.x, old_pos.y, new_pos.x, new_pos.y),
+            &format!("{} 向{}探索 ({},{})→({},{})", agent_name, direction_name, old_pos.x, old_pos.y, new_pos.x, new_pos.y),
             EventType::Explore.color_code());
-        ActionResult::SuccessWithDetail(format!("explore:{}steps,{},{}→({},{})",
-            steps, old_pos.x, old_pos.y, new_pos.x, new_pos.y))
+        ActionResult::SuccessWithDetail(format!("explore:{},({},{})→({},{})", direction_name, old_pos.x, old_pos.y, new_pos.x, new_pos.y))
     }
 
     // ===== TradeOffer =====
     pub fn handle_trade_offer(&mut self, agent_id: &AgentId, offer: HashMap<ResourceType, u32>, want: HashMap<ResourceType, u32>, target_id: AgentId) -> ActionResult {
+        // World校验发起方资源足够
         let agent = self.agents.get(agent_id).unwrap();
         for (resource, amount) in &offer {
             let key = resource.as_str();
@@ -496,6 +479,7 @@ impl World {
             }
         }
 
+        // 目标存在性校验（World职责）
         if !self.agents.get(&target_id).map(|a| a.is_alive).unwrap_or(false) {
             return ActionResult::Blocked("交易目标不存在或已死亡".into());
         }
@@ -504,7 +488,10 @@ impl World {
         let target_name = self.agents.get(&target_id).map(|a| a.name.clone()).unwrap_or_default();
         let builder = NarrativeBuilder::new(agent_name.clone());
 
+        // World创建PendingTrade（包含trade_id）
+        let trade_id = uuid::Uuid::new_v4().to_string();
         let pending = PendingTrade {
+            trade_id: trade_id.clone(),
             proposer_id: agent_id.clone(),
             acceptor_id: target_id,
             offer_resources: offer.iter().map(|(r, a)| (r.as_str().to_string(), *a)).collect(),
@@ -512,6 +499,12 @@ impl World {
             status: TradeStatus::Pending,
             tick_created: self.tick,
         };
+
+        // 调用proposer.freeze_resources(offer, trade_id)
+        let proposer = self.agents.get_mut(agent_id).unwrap();
+        proposer.freeze_resources(offer.clone(), &trade_id);
+
+        // 添加到pending_trades队列
         self.pending_trades.push(pending);
 
         self.record_event(agent_id, &agent_name, EventType::TradeOffer.as_str(),
@@ -521,6 +514,7 @@ impl World {
 
     // ===== TradeAccept =====
     pub fn handle_trade_accept(&mut self, agent_id: &AgentId) -> ActionResult {
+        // World查找pending_trade
         let trade_idx = self.pending_trades.iter().position(|t| {
             t.acceptor_id == *agent_id && t.status == TradeStatus::Pending
         });
@@ -530,49 +524,39 @@ impl World {
         }
 
         let trade_idx = trade_idx.unwrap();
-        let proposer_id = self.pending_trades[trade_idx].proposer_id.clone();
+        let trade = self.pending_trades[trade_idx].clone();
+        let proposer_id = trade.proposer_id.clone();
 
-        let proposer = self.agents.get(&proposer_id).unwrap();
+        // 获取资源Map（String格式）
+        let offer_resources: HashMap<ResourceType, u32> = trade.offer_resources.iter()
+            .filter_map(|(k, v)| Some((str_to_resource(k)?, *v)))
+            .collect();
+        let want_resources: HashMap<ResourceType, u32> = trade.want_resources.iter()
+            .filter_map(|(k, v)| Some((str_to_resource(k)?, *v)))
+            .collect();
+
+        // World校验双方资源足够（acceptor需要want，proposer的offer已在frozen中）
         let acceptor = self.agents.get(agent_id).unwrap();
-
-        let offer_resources: HashMap<String, u32> = self.pending_trades[trade_idx].offer_resources.clone();
-        let want_resources: HashMap<String, u32> = self.pending_trades[trade_idx].want_resources.clone();
-
-        for (resource_key, amount) in &offer_resources {
-            let current = *proposer.inventory.get(resource_key).unwrap_or(&0);
+        for (resource, amount) in &want_resources {
+            let key = resource.as_str();
+            let current = *acceptor.inventory.get(key).unwrap_or(&0);
             if current < *amount {
-                return ActionResult::Blocked(format!("发起方资源不足，无法提供 {} x{}", resource_key, amount));
+                return ActionResult::Blocked(format!("接受方资源不足，无法提供 {} x{}", key, amount));
             }
         }
 
-        for (resource_key, amount) in &want_resources {
-            let current = *acceptor.inventory.get(resource_key).unwrap_or(&0);
-            if current < *amount {
-                return ActionResult::Blocked(format!("接受方资源不足，无法提供 {} x{}", resource_key, amount));
-            }
+        // 分段借用，调用Agent方法
+        {
+            let acceptor = self.agents.get_mut(agent_id).unwrap();
+            acceptor.give_resources(want_resources.clone());
+            acceptor.receive_resources(offer_resources.clone());
+        }
+        {
+            let proposer = self.agents.get_mut(&proposer_id).unwrap();
+            proposer.complete_trade_send(offer_resources.clone(), want_resources.clone());
         }
 
-        let proposer_id_clone = proposer_id.clone();
-        let proposer = self.agents.get_mut(&proposer_id_clone).unwrap();
-        for (resource_key, amount) in &offer_resources {
-            let resource = str_to_resource(resource_key).unwrap_or(ResourceType::Food);
-            proposer.consume(resource, *amount);
-        }
-        for (resource_key, amount) in &want_resources {
-            let resource = str_to_resource(resource_key).unwrap_or(ResourceType::Food);
-            proposer.gather(resource, *amount);
-        }
-
-        let acceptor = self.agents.get_mut(agent_id).unwrap();
-        for (resource_key, amount) in &want_resources {
-            let resource = str_to_resource(resource_key).unwrap_or(ResourceType::Food);
-            acceptor.consume(resource, *amount);
-        }
-        for (resource_key, amount) in &offer_resources {
-            let resource = str_to_resource(resource_key).unwrap_or(ResourceType::Food);
-            acceptor.gather(resource, *amount);
-        }
-
+        // 移除pending_trade，更新统计
         self.pending_trades.remove(trade_idx);
         self.total_trades += 1;
 
@@ -587,6 +571,7 @@ impl World {
 
     // ===== TradeReject =====
     pub fn handle_trade_reject(&mut self, agent_id: &AgentId) -> ActionResult {
+        // World查找pending_trade
         let trade_idx = self.pending_trades.iter().position(|t| {
             t.acceptor_id == *agent_id && t.status == TradeStatus::Pending
         });
@@ -596,7 +581,19 @@ impl World {
         }
 
         let trade_idx = trade_idx.unwrap();
-        let proposer_id = self.pending_trades[trade_idx].proposer_id.clone();
+        let trade = self.pending_trades[trade_idx].clone();
+        let proposer_id = trade.proposer_id.clone();
+
+        // 获取资源Map（用于cancel_trade）
+        let offer_resources: HashMap<ResourceType, u32> = trade.offer_resources.iter()
+            .filter_map(|(k, v)| Some((str_to_resource(k)?, *v)))
+            .collect();
+
+        // 调用proposer.cancel_trade(offer)
+        let proposer = self.agents.get_mut(&proposer_id).unwrap();
+        proposer.cancel_trade(offer_resources);
+
+        // 移除pending_trade
         self.pending_trades.remove(trade_idx);
 
         let proposer_name = self.agents.get(&proposer_id).map(|a| a.name.clone()).unwrap_or_default();

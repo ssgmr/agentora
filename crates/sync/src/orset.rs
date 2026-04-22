@@ -55,6 +55,18 @@ impl<T: Clone + Hash + Eq + Serialize + for<'de> Deserialize<'de>> OrSet<T> {
         }
     }
 
+    /// 使用 tag 删除元素（用于 OrSetRemove CRDT 操作）
+    pub fn remove_with_tag(&mut self, peer_id: &PeerId, counter: u64) {
+        let tag = ElementTag {
+            peer_id: peer_id.0.clone(),
+            counter,
+        };
+        // 添加到 tombstones
+        self.tombstones.insert(tag.clone());
+        // 从 elements 中移除
+        self.elements.retain(|(_, t)| t != &tag);
+    }
+
     /// 检查元素是否存在
     pub fn contains(&self, element: &T) -> bool {
         self.elements.iter().any(|(e, _)| e == element)

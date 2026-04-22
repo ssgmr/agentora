@@ -4,6 +4,12 @@ pub mod inventory;
 pub mod trade;
 pub mod combat;
 pub mod alliance;
+pub mod movement;
+pub mod survival;
+pub mod social;
+pub mod shadow;
+
+pub use shadow::ShadowAgent;
 
 use crate::types::{AgentId, Position, PersonalitySeed};
 use crate::memory::MemorySystem;
@@ -21,6 +27,8 @@ pub struct Agent {
     pub satiety: u32,       // 饱食度 0-100，初始100
     pub hydration: u32,     // 水分度 0-100，初始100
     pub inventory: HashMap<String, u32>,
+    /// 冻结的资源（用于待处理交易）
+    pub frozen_inventory: HashMap<String, u32>,
     pub memory: MemorySystem,
     pub relations: HashMap<AgentId, Relation>,
     pub strategies: StrategyHub,
@@ -39,6 +47,8 @@ pub struct Agent {
     pub last_action_result: Option<String>,
     /// 上一次移动前的位置（用于检测来回振荡）
     pub last_position: Option<Position>,
+    /// 当前发起的交易ID（用于取消时解冻）
+    pub pending_trade_id: Option<String>,
 }
 
 /// 临时偏好
@@ -81,6 +91,7 @@ impl Agent {
             satiety: 100,
             hydration: 100,
             inventory,
+            frozen_inventory: HashMap::new(),
             memory: MemorySystem::new(&id_str),
             relations: HashMap::new(),
             strategies: StrategyHub::new(&id_str),
@@ -94,6 +105,7 @@ impl Agent {
             last_action_type: None,
             last_action_result: None,
             last_position: None,
+            pending_trade_id: None,
         }
     }
 

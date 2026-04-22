@@ -1,4 +1,11 @@
 //! 决策管道：上下文构建 → LLM 生成 → 规则校验 → 执行
+//!
+//! 子模块：
+//! - perception: 感知构建器
+
+pub mod perception;
+
+pub use perception::PerceptionBuilder;
 
 use crate::agent::inventory::get_config;
 use crate::types::{ActionType, AgentId, Position};
@@ -92,22 +99,30 @@ impl DecisionPipeline {
         self
     }
 
-    /// 执行完整决策管道
+    /// 执行完整决策管道（接收预构建感知）
     ///
     /// 核心原则：LLM Provider 可用时，决策权完全交给 LLM。
     /// LLM 的决策即使有问题，也应通过 action_feedback 反馈让它自我修正，
     /// 而不是用规则引擎覆盖。规则引擎仅在 LLM Provider 不可用时兜底。
+    ///
+    /// # 参数
+    /// - `agent_id`: Agent ID
+    /// - `world_state`: 世界状态
+    /// - `perception_summary`: 预构建的感知摘要（由 PerceptionBuilder 生成）
+    /// - `memory_summary`: 记忆摘要
+    /// - `action_feedback`: 上次动作反馈
     pub async fn execute(
         &self,
         agent_id: &AgentId,
         world_state: &WorldState,
+        perception_summary: &str,
         memory_summary: Option<&str>,
         action_feedback: Option<&str>,
     ) -> DecisionResult {
         tracing::info!("开始决策管道执行 for agent {}", agent_id.as_str());
 
         // 阶段 1: 上下文构建 (Prompt 组装)
-        let prompt = self.build_prompt(agent_id, world_state, memory_summary, action_feedback);
+        let prompt = self.build_prompt(agent_id, world_state, perception_summary, memory_summary, action_feedback);
         tracing::info!("===== LLM Request Prompt =====\n{}\n===============================", prompt);
         tracing::trace!("Agent {} Prompt 长度：{} chars", agent_id.as_str(), prompt.len());
 
@@ -191,17 +206,30 @@ impl DecisionPipeline {
         }
     }
 
-    /// 构建 Prompt
-    fn build_prompt(
+    /// 执行决策管道（向后兼容，自行构建感知）
+    ///
+    /// 仅用于未迁移的调用方，新代码应使用 execute() 并传入预构建感知
+    pub async fn execute_with_auto_perception(
         &self,
         agent_id: &AgentId,
         world_state: &WorldState,
         memory_summary: Option<&str>,
         action_feedback: Option<&str>,
-    ) -> String {
-        // 构建感知摘要
+    ) -> DecisionResult {
         let perception_summary = self.build_perception_summary(world_state);
+        self.execute(agent_id, world_state, &perception_summary, memory_summary, action_feedback).await
+    }
 
+    /// 构建 Prompt（接收预构建感知）
+    fn build_prompt(
+        &self,
+        agent_id: &AgentId,
+        world_state: &WorldState,
+        perception_summary: &str,
+        memory_summary: Option<&str>,
+        action_feedback: Option<&str>,
+    ) -> String {
+        // 使用传入的感知摘要（不再自行构建）
         // 使用传入的记忆摘要，默认为空
         let memory_summary = memory_summary.unwrap_or("");
 
@@ -214,24 +242,24 @@ impl DecisionPipeline {
             })
         });
 
-        // 提取附近建筑信息（任务 1.4）
+        // 提取附近建筑信息
         let nearby_structures: Vec<&str> = world_state.nearby_structures.iter()
             .map(|s| s.structure_type.as_str())
             .collect();
 
-        // 提取活跃压力事件（任务 1.4）
+        // 提取活跃压力事件
         let active_pressures: Vec<&str> = world_state.active_pressures.iter()
             .map(|s| s.as_str())
             .collect();
 
         self.prompt_builder.build_decision_prompt(
             agent_id.as_str(),
-            &perception_summary,
+            perception_summary,
             memory_summary,
             strategy_hint.as_deref(),
             action_feedback,
             get_config().max_stack_size,
-            world_state.agent_personality.as_ref(), // 任务 2.6：性格描述
+            world_state.agent_personality.as_ref(),
             world_state.agent_satiety,
             world_state.agent_hydration,
             &nearby_structures,
@@ -264,24 +292,47 @@ impl DecisionPipeline {
     fn build_perception_summary(&self, world_state: &WorldState) -> String {
         let mut summary = String::new();
 
-        // 生存状态
+        // ===== 新增：推荐行动路径（最高优先级展示） =====
+        self.build_path_recommendation(&mut summary, world_state);
+
+        // ===== 生存状态 =====
         let satiety_status = if world_state.agent_satiety <= 30 {
-            "饥饿中！"
+            "⚠️饥饿中！"
+        } else if world_state.agent_satiety <= 50 {
+            "偏低"
         } else {
             "正常"
         };
         let hydration_status = if world_state.agent_hydration <= 30 {
-            "口渴中！"
+            "⚠️口渴中！"
+        } else if world_state.agent_hydration <= 50 {
+            "偏低"
         } else {
             "正常"
         };
-        summary.push_str(&format!(
-            "当前状态：\n  饱食度: {}/100{}, 水分度: {}/100{}\n",
-            world_state.agent_satiety,
-            if world_state.agent_satiety <= 30 { format!(" [{}]", satiety_status) } else { String::new() },
-            world_state.agent_hydration,
-            if world_state.agent_hydration <= 30 { format!(" [{}]", hydration_status) } else { String::new() },
-        ));
+
+        // 生存紧迫提示（更突出）
+        let survival_urgent = world_state.agent_satiety <= 30 || world_state.agent_hydration <= 30;
+        if survival_urgent {
+            summary.push_str("【生存状态】\n");
+            if world_state.agent_satiety <= 30 {
+                summary.push_str(&format!("  饱食度: {} [{}] — 需要进食！背包food: {}\n",
+                    world_state.agent_satiety, satiety_status,
+                    world_state.agent_inventory.get(&ResourceType::Food).copied().unwrap_or(0)));
+            }
+            if world_state.agent_hydration <= 30 {
+                summary.push_str(&format!("  水分度: {} [{}] — 需要饮水！背包water: {}\n",
+                    world_state.agent_hydration, hydration_status,
+                    world_state.agent_inventory.get(&ResourceType::Water).copied().unwrap_or(0)));
+            }
+            summary.push_str("\n");
+        } else {
+            summary.push_str(&format!(
+                "当前状态：饱食度 {}/{} [{}] 水分度 {}/{} [{}]\n",
+                world_state.agent_satiety, 100, satiety_status,
+                world_state.agent_hydration, 100, hydration_status
+            ));
+        }
 
         // 背包信息
         if !world_state.agent_inventory.is_empty() {
@@ -329,32 +380,38 @@ impl DecisionPipeline {
         // 相邻格信息（用于 Agent 自主规划移动路线）
         let pos = world_state.agent_position;
         let dirs = [
-            (crate::types::Direction::North, "北", 0i32, -1i32),
-            (crate::types::Direction::South, "南", 0, 1),
-            (crate::types::Direction::East, "东", 1, 0),
-            (crate::types::Direction::West, "西", -1, 0),
+            (crate::types::Direction::North, "北", "north", 0i32, -1i32),
+            (crate::types::Direction::South, "南", "south", 0, 1),
+            (crate::types::Direction::East, "东", "east", 1, 0),
+            (crate::types::Direction::West, "西", "west", -1, 0),
         ];
-        let mut adjacent_info = Vec::new();
-        for (_dir, name, dx, dy) in &dirs {
+        summary.push_str("相邻格（可移动方向，每格需1步）：\n");
+        for (_dir, name, eng, dx, dy) in &dirs {
             let nx = pos.x as i32 + dx;
             let ny = pos.y as i32 + dy;
             if nx < 0 || ny < 0 || nx >= world_state.map_size as i32 || ny >= world_state.map_size as i32 {
-                adjacent_info.push(format!("{}: 越界", name));
+                summary.push_str(&format!("  {}: 越界(不可移动)\n", name));
             } else {
                 let np = crate::types::Position::new(nx as u32, ny as u32);
                 let terrain = world_state.terrain_at.get(&np);
-                let terrain_name = terrain.map(|t| format!("{:?}", t)).unwrap_or("未知".to_string());
-                let res_info = world_state.resources_at.get(&np)
-                    .map(|(r, a)| format!(" {:?}x{}", r, a))
+                let terrain_icon = terrain.map(|t| format!("{:?}", t)).unwrap_or_else(|| "未知".to_string());
+
+                // 资源标记（简化）
+                let res_mark = world_state.resources_at.get(&np)
+                    .map(|(r, a)| format!("{:?}×{}", r, a))
                     .unwrap_or_default();
-                let agent_info = world_state.nearby_agents.iter()
+
+                // Agent标记
+                let agent_mark = world_state.nearby_agents.iter()
                     .find(|a| a.position == np)
                     .map(|a| format!(" Agent:{}", a.name))
                     .unwrap_or_default();
-                adjacent_info.push(format!("{}({},{}): {}{}{}", name, nx, ny, terrain_name, res_info, agent_info));
+
+                // 明确的direction参数示例
+                summary.push_str(&format!("  {}({},{}) {} {} {} → direction:\"{}\"\n",
+                    name, nx, ny, terrain_icon, res_mark, agent_mark, eng));
             }
         }
-        summary.push_str(&format!("相邻格（可移动到的坐标）：{}\n", adjacent_info.join(", ")));
 
         // 地形概览
         if !world_state.terrain_at.is_empty() {
@@ -863,6 +920,173 @@ impl DecisionPipeline {
             }
         }
         map
+    }
+
+    /// 构建路径推荐（核心新增功能）
+    ///
+    /// 根据生存状态和资源分布，推荐最优移动路径，帮助LLM做出正确决策
+    fn build_path_recommendation(&self, summary: &mut String, world_state: &WorldState) {
+        use crate::types::Direction;
+
+        // 确定优先资源类型（基于生存压力）
+        let priority_resource = if world_state.agent_satiety <= 50 {
+            Some(ResourceType::Food)
+        } else if world_state.agent_hydration <= 50 {
+            Some(ResourceType::Water)
+        } else {
+            None // 没有生存压力，可以自由探索或采集
+        };
+
+        // 如果有生存压力，找最近的优先资源并推荐路径
+        if let Some(priority) = priority_resource {
+            let nearest = world_state.resources_at.iter()
+                .filter(|(_, (r, _))| *r == priority)
+                .min_by_key(|(pos, _)| pos.manhattan_distance(&world_state.agent_position));
+
+            if let Some((pos, (_, amount))) = nearest {
+                let dist = pos.manhattan_distance(&world_state.agent_position);
+                let dx = pos.x as i32 - world_state.agent_position.x as i32;
+                let dy = pos.y as i32 - world_state.agent_position.y as i32;
+
+                // 确定第一步方向（优先走较长轴）
+                let (first_dir, dir_name, dir_eng) = if dx.abs() >= dy.abs() {
+                    if dx > 0 { (Direction::East, "东", "east") }
+                    else { (Direction::West, "西", "west") }
+                } else {
+                    if dy > 0 { (Direction::South, "南", "south") }
+                    else { (Direction::North, "北", "north") }
+                };
+
+                // 检查第一步方向是否有效（不越界）
+                let delta = first_dir.delta();
+                let step_x = world_state.agent_position.x as i32 + delta.0;
+                let step_y = world_state.agent_position.y as i32 + delta.1;
+                let step_valid = step_x >= 0 && step_y >= 0 &&
+                    step_x < world_state.map_size as i32 &&
+                    step_y < world_state.map_size as i32;
+
+                // 构建推荐
+                summary.push_str("【推荐路径】\n");
+                summary.push_str(&format!(
+                    "  最近的{:?}在{}方向({},{})，距离{}格，存量×{}\n",
+                    priority, dir_name, pos.x, pos.y, dist, amount
+                ));
+
+                if step_valid && dist > 0 {
+                    summary.push_str(&format!(
+                        "  → 建议动作：MoveToward，direction: \"{}\"（向{}移动1格）\n",
+                        dir_eng, dir_name
+                    ));
+                    if dist > 1 {
+                        summary.push_str(&format!(
+                        "  → 还需{}步到达，建议持续向{}方向移动\n",
+                        dist - 1, dir_name
+                    ));
+                    }
+                } else if !step_valid && dist > 0 {
+                    // 优先方向被阻挡，找替代方向
+                    let alternatives = [
+                        (Direction::North, "北", "north"),
+                        (Direction::South, "南", "south"),
+                        (Direction::East, "东", "east"),
+                        (Direction::West, "西", "west"),
+                    ];
+                    for (alt_dir, _alt_name, alt_eng) in &alternatives {
+                        let alt_delta = alt_dir.delta();
+                        let alt_x = world_state.agent_position.x as i32 + alt_delta.0;
+                        let alt_y = world_state.agent_position.y as i32 + alt_delta.1;
+                        if alt_x >= 0 && alt_y >= 0 &&
+                            alt_x < world_state.map_size as i32 &&
+                            alt_y < world_state.map_size as i32 {
+                            summary.push_str(&format!(
+                                "  → {}方向被阻挡，建议绕行：direction: \"{}\"\n",
+                                dir_name, alt_eng
+                            ));
+                            break;
+                        }
+                    }
+                }
+
+                // 如果背包有资源且生存危急，提醒可以直接使用
+                let have_in_bag = world_state.agent_inventory.get(&priority).copied().unwrap_or(0);
+                if have_in_bag > 0 {
+                    let urgent = world_state.agent_satiety <= 30 || world_state.agent_hydration <= 30;
+                    if urgent {
+                        summary.push_str(&format!(
+                            "  → 或者：背包有{}×{}，可直接{}恢复（优先级更高）\n",
+                            priority.as_str(), have_in_bag,
+                            if priority == ResourceType::Food { "Eat" } else { "Drink" }
+                        ));
+                    }
+                }
+                summary.push_str("\n");
+            } else {
+                // 视野内没有优先资源
+                summary.push_str("【推荐路径】\n");
+                summary.push_str(&format!(
+                    "  视野内无{:?}资源，建议向任意有效方向探索\n",
+                    priority
+                ));
+                // 找一个有效方向
+                let directions = [
+                    (Direction::North, "北", "north"),
+                    (Direction::South, "南", "south"),
+                    (Direction::East, "东", "east"),
+                    (Direction::West, "西", "west"),
+                ];
+                for (dir, name, eng) in &directions {
+                    let delta = dir.delta();
+                    let nx = world_state.agent_position.x as i32 + delta.0;
+                    let ny = world_state.agent_position.y as i32 + delta.1;
+                    if nx >= 0 && ny >= 0 && nx < world_state.map_size as i32 && ny < world_state.map_size as i32 {
+                        summary.push_str(&format!(
+                            "  → 建议：direction: \"{}\"（向{}探索）\n\n",
+                            eng, name
+                        ));
+                        break;
+                    }
+                }
+            }
+        } else {
+            // 没有生存压力，检查当前位置是否有资源
+            let current_has_resource = world_state.resources_at.get(&world_state.agent_position);
+            if current_has_resource.is_some() {
+                let (r, amount) = current_has_resource.unwrap();
+                summary.push_str("【推荐路径】\n");
+                summary.push_str(&format!(
+                    "  当前位置有{:?}×{}，可直接Gather采集\n\n",
+                    r, amount
+                ));
+            } else {
+                // 找最近的任意资源
+                let nearest_any = world_state.resources_at.iter()
+                    .min_by_key(|(pos, _)| pos.manhattan_distance(&world_state.agent_position));
+
+                if let Some((pos, (r, amount))) = nearest_any {
+                    let dist = pos.manhattan_distance(&world_state.agent_position);
+                    let dx = pos.x as i32 - world_state.agent_position.x as i32;
+                    let dy = pos.y as i32 - world_state.agent_position.y as i32;
+                    let (dir_name, dir_eng) = if dx.abs() >= dy.abs() {
+                        (if dx > 0 { "东" } else { "西" }, if dx > 0 { "east" } else { "west" })
+                    } else {
+                        (if dy > 0 { "南" } else { "北" }, if dy > 0 { "south" } else { "north" })
+                    };
+                    summary.push_str("【推荐路径】\n");
+                    summary.push_str(&format!(
+                        "  最近的{:?}×{}在{}方向({},{})，距离{}格\n",
+                        r, amount, dir_name, pos.x, pos.y, dist
+                    ));
+                    if dist <= 5 {
+                        summary.push_str(&format!(
+                            "  → 建议：direction: \"{}\"（向{}移动）\n\n",
+                            dir_eng, dir_name
+                        ));
+                    } else {
+                        summary.push_str("\n");
+                    }
+                }
+            }
+        }
     }
 }
 

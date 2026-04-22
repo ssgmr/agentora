@@ -1,12 +1,14 @@
 //! 世界 tick 循环逻辑
 //!
-//! 包含生存消耗、建筑效果、死亡处理、遗产衰减等 tick 相关方法。
+//! 包含生存消耗、建筑效果、死亡处理、遗产衰减、交易超时等 tick 相关方法。
 
 use crate::world::World;
 use crate::world::resource;
 use crate::world::legacy::{Legacy, LegacyEvent};
+use crate::world::TradeStatus;
 use crate::types::{AgentId, ResourceType, StructureType, Position};
 use crate::snapshot::NarrativeEvent;
+use std::collections::HashMap;
 
 impl World {
     /// 生存消耗 tick：饱食度和水分度衰减，耗尽时掉血
@@ -28,6 +30,63 @@ impl World {
             if agent.hydration == 0 {
                 agent.health = agent.health.saturating_sub(1);
             }
+        }
+    }
+
+    /// 交易超时检查：超过配置 tick 数自动取消，解冻资源
+    pub fn check_trade_timeout(&mut self) {
+        let timeout = self.trade_timeout_ticks;
+
+        let timed_out_trades: Vec<usize> = self.pending_trades.iter().enumerate()
+            .filter(|(_, trade)| {
+                trade.status == TradeStatus::Pending && (self.tick - trade.tick_created) > timeout
+            })
+            .map(|(idx, _)| idx)
+            .collect();
+
+        // 处理超时交易（先克隆索引列表，避免借用问题）
+        let indices_clone = timed_out_trades.clone();
+        for idx in indices_clone {
+            let trade = self.pending_trades[idx].clone();
+            let proposer_id = trade.proposer_id.clone();
+
+            // 转换资源格式
+            let offer_resources: HashMap<ResourceType, u32> = trade.offer_resources.iter()
+                .filter_map(|(k, v)| {
+                    match k.as_str() {
+                        "iron" => Some((ResourceType::Iron, *v)),
+                        "food" => Some((ResourceType::Food, *v)),
+                        "wood" => Some((ResourceType::Wood, *v)),
+                        "water" => Some((ResourceType::Water, *v)),
+                        "stone" => Some((ResourceType::Stone, *v)),
+                        _ => None,
+                    }
+                })
+                .collect();
+
+            // 调用 proposer.cancel_trade 解冻资源
+            if let Some(proposer) = self.agents.get_mut(&proposer_id) {
+                proposer.cancel_trade(offer_resources);
+            }
+
+            let proposer_name = self.agents.get(&proposer_id).map(|a| a.name.clone()).unwrap_or_default();
+
+            // 记录超时事件
+            self.tick_events.push(NarrativeEvent {
+                tick: self.tick,
+                agent_id: proposer_id.as_str().to_string(),
+                agent_name: proposer_name.clone(),
+                event_type: "trade_timeout".to_string(),
+                description: format!("{} 的交易提议超时取消，资源已解冻", proposer_name),
+                color_code: "#888888".to_string(),
+            });
+
+            tracing::info!("交易 {} 超时取消，proposer {}", trade.trade_id, proposer_name);
+        }
+
+        // 移除超时交易（从后往前删除，避免索引错位）
+        for idx in timed_out_trades.into_iter().rev() {
+            self.pending_trades.remove(idx);
         }
     }
 

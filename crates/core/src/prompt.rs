@@ -379,6 +379,14 @@ impl PromptBuilder {
                 - 你可以用资源建造建筑、与其他 Agent 交易或战斗\n\
                 - 你应该根据当前状态和环境，自主决定做什么\n\
                 \n\
+                【地形与资源分布规律】\n\
+                不同地形产出的资源类型不同，根据需要选择合适地形采集：\n\
+                - Forest(森林)：主要产出 wood(80%)，少量 food(15%)、stone(5%) — 找木材去森林\n\
+                - Mountain(山地)：主要产出 iron(50%)、stone(40%)，少量 water(10%) — 找铁矿去山地\n\
+                - Plains(平原)：主要产出 food(60%)、water(25%)，少量 stone/iron — 找食物去平原\n\
+                - Water(水域)：产出 water(70%)、food(30%) — 找水源去水域附近\n\
+                - Desert(沙漠)：产出 stone(60%)、iron(30%)，资源较少 — 较贫瘠\n\
+                \n\
                 背包规则：\n\
                 - 每种资源堆叠上限 {}（仓库建筑附近可达 {}）\n\
                 - 背包中的食物(food)和水(water)可以直接用于 Eat/Drink 动作\n\
@@ -516,28 +524,39 @@ impl PromptBuilder {
         let mut s = String::new();
         s.push_str("请做出一个决策。输出格式为 JSON:\n");
         s.push_str("{\n");
-        s.push_str("  \"reasoning\": \"决策理由\",\n");
-        s.push_str("  \"action_type\": \"MoveToward|Gather|Eat|Drink|Build|Talk|Attack|TradeOffer|TradeAccept|TradeReject|AllyPropose|AllyAccept|AllyReject|Explore|InteractLegacy|Wait\",\n");
-        s.push_str("  \"target\": \"简短描述，如 \\\"Wood x134\\\" 或 Agent 名字\",\n");
-        s.push_str("  \"params\": {\"direction\": \"north\"}  // MoveToward 时填写方向\n");
+        s.push_str("  \"reasoning\": \"决策理由（简短）\",\n");
+        s.push_str("  \"action_type\": \"动作类型\",\n");
+        s.push_str("  \"target\": \"目标描述（可选）\",\n");
+        s.push_str("  \"params\": {}  // 根据动作类型填写参数\n");
         s.push_str("}\n\n");
-        s.push_str("坐标系规则：X增大=东，Y增大=南。相邻格方向标注准确可直接参考。\n\n");
+
+        // 突出 MoveToward 的正确用法
+        s.push_str("【重要：MoveToward 只能移动到相邻格】\n");
+        s.push_str("每次只能移动1格！要到达远处目标，需要连续多次 MoveToward。\n");
+        s.push_str("正确格式示例：\n");
+        s.push_str("  {\"action_type\": \"MoveToward\", \"params\": {\"direction\": \"east\"}}\n");
+        s.push_str("  {\"action_type\": \"MoveToward\", \"params\": {\"direction\": \"north\"}}\n");
+        s.push_str("方向值必须是：north / south / east / west（四个选项之一）\n");
+        s.push_str("请参考「推荐路径」和「相邻格」部分的建议选择正确的方向。\n\n");
+
         s.push_str("动作说明：\n");
-        s.push_str("- MoveToward: 移动到相邻格，params: {\"direction\": \"north/south/east/west\"}\n");
-        s.push_str("- Gather: 采集脚下资源，params: {\"resource\": \"wood/food/water/iron/stone\"}\n");
-        s.push_str("- Eat: 消耗1 food，饱食度+30\n");
-        s.push_str("- Drink: 消耗1 water，水分度+25\n");
-        s.push_str("- Build: 建造建筑，params: {\"structure\": \"Camp/Fence/Warehouse\"}\n");
-        s.push_str("- Talk: 与3格内Agent对话，target填Agent名，信任+2(发起方)/+1(接收方)\n");
-        s.push_str("- Attack: 攻击1格内Agent，伤害10HP，不能攻击盟友，target填Agent名\n");
-        s.push_str("- TradeOffer: 发起交易，params: {\"offer\": {\"wood\":5}, \"want\": {\"food\":3}, \"target_id\": Agent名}\n");
-        s.push_str("- TradeAccept/TradeReject: 接受/拒绝待处理的交易\n");
-        s.push_str("- AllyPropose: 提议结盟(需信任>0.5)，target填Agent名\n");
-        s.push_str("- AllyAccept/AllyReject: 接受/拒绝结盟提议\n");
-        s.push_str("- Explore: 探索周边，随机移动1-3步\n");
-        s.push_str("- InteractLegacy: 与脚下遗产交互，params: {\"legacy_id\": 遗产ID, \"interaction\": \"Worship/Explore/Pickup\"}\n");
+        s.push_str("- MoveToward: 移动到相邻格（只能1格）\n");
+        s.push_str("    params: {\"direction\": \"north/south/east/west\"}\n");
+        s.push_str("- Gather: 采集脚下资源（必须先移动到资源格）\n");
+        s.push_str("    params: {\"resource\": \"food/water/wood/stone/iron\"}\n");
+        s.push_str("- Eat: 消耗1个food，饱食度+30\n");
+        s.push_str("- Drink: 消耗1个water，水分度+25\n");
+        s.push_str("- Build: 建造建筑\n");
+        s.push_str("    params: {\"structure\": \"Camp/Fence/Warehouse\"}\n");
+        s.push_str("- Talk: 与附近Agent对话\n");
+        s.push_str("- Attack: 攻击相邻格Agent\n");
+        s.push_str("- Explore: 随机移动1-3步探索\n");
         s.push_str("- Wait: 原地等待\n\n");
-        s.push_str("关系系统：trust值[-100,100]，trust>30为盟友，trust<-20为敌人。死亡Agent在脚下产生遗产，50tick后物品开始衰减。\n");
+
+        s.push_str("决策优先级：\n");
+        s.push_str("1. 生存危急（饱食度/水分度≤30）：优先 Eat/Drink 或移动到资源\n");
+        s.push_str("2. 资源采集：移动到最近资源 → Gather\n");
+        s.push_str("3. 探索/社交：无紧迫需求时可自由行动\n");
         s
     }
 

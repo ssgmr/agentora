@@ -81,7 +81,7 @@ func _setup_ui() -> void:
 func _on_world_updated(snapshot: Dictionary) -> void:
 	var milestones: Array = snapshot.get("milestones", [])
 
-	# 更新已达成的里程碑
+	# 更新已达成的里程碑显示（叙事事件由后端统一发送）
 	for milestone in milestones:
 		var name_str: String = milestone.get("name", "")
 		var display_name: String = milestone.get("display_name", "")
@@ -93,7 +93,6 @@ func _on_world_updated(snapshot: Dictionary) -> void:
 				"tick": tick
 			}
 			_update_milestone_display(name_str, display_name, tick)
-			_show_milestone_notification(name_str, display_name)
 
 
 func _update_milestone_display(name_str: String, display_name: String, tick: int) -> void:
@@ -103,10 +102,3 @@ func _update_milestone_display(name_str: String, display_name: String, tick: int
 		label.text = "%s [color=green]✓ 已达成[/color] (tick %d)" % [display_name, tick]
 		# 高亮颜色
 		label.add_theme_color_override("default_color", Color(0.4, 0.9, 0.4))
-
-
-func _show_milestone_notification(name_str: String, display_name: String) -> void:
-	# 通过叙事系统显示通知（如果 NarrativeFeed 可用）
-	var narrative = get_node_or_null("../../NarrativeFeed")
-	if narrative and narrative.has_method("add_milestone_event"):
-		narrative.add_milestone_event(name_str, display_name)

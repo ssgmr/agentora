@@ -20,6 +20,9 @@ player_decision_interval_secs = 2
 # Agent 视野扫描半径（格子数），决定 Agent 能看到多远的周边环境
 vision_radius = 10
 
+# 交易超时 tick 数（超过此时间自动取消交易，解冻资源）
+trade_timeout_ticks = 50
+
 # 背包系统配置
 [inventory]
 # 背包格子数量（不同资源类型的种类上限）

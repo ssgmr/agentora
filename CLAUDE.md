@@ -103,9 +103,12 @@ crates/
 
 ### Godot客户端 (`client/`)
 Godot 4 GDScript客户端，负责渲染和交互：
+- `main.gd` — 主场景入口
+- `bridge_accessor.gd` — 桥接访问器：与SimulationBridge GDExtension节点交互
+- `state_manager.gd` — 状态管理器：管理游戏状态
 - `agent_manager.gd` — Agent生命周期和状态管理
-- `world_renderer.gd` — TileMap世界渲染（地图尺寸从后端 snapshot 获取）
-- `camera_controller.gd` — 相机控制（边界从后端 snapshot 动态设置）
+- `world_renderer.gd` — TileMap世界渲染（地图尺寸从后端snapshot获取）
+- `camera_controller.gd` — 相机控制（边界从后端snapshot动态设置）
 - `narrative_feed.gd` — 叙事流面板
 - `agent_detail_panel.gd` — Agent详情面板
 - `milestone_panel.gd` — 文明里程碑面板
@@ -183,41 +186,59 @@ AutoScreenshot="*res://scripts/auto_screenshot.gd"
 
 ### Core Crate顶层模块 (`crates/core/src/`)
 - **`types.rs`** — 核心类型：AgentId, Position, Direction, ResourceType, TerrainType, StructureType, ActionType(13种), Action, PersonalitySeed, PeerId
-- **`decision.rs`** — DecisionPipeline：Prompt构建 → LLM调用 → 规则校验 → 执行
+- **`decision/mod.rs`** — DecisionPipeline：接收预构建感知 → LLM调用 → 规则校验 → 执行（`execute`方法），保留`execute_with_auto_perception`向后兼容
+- **`decision/perception.rs`** — PerceptionBuilder：从WorldState构建感知摘要和路径推荐（已从decision.rs抽离）
 - **`rule_engine.rs`** — 规则引擎：硬约束过滤 + 动作校验 + LLM失败兜底
 - **`prompt.rs`** — PromptBuilder：分级截断（策略→记忆→感知），最大2500 tokens，中文感知估算
+- **`narrative.rs`** — 叙事构建器：NarrativeBuilder, EventType, action_type_display
 - **`seed.rs`** — WorldSeed配置加载
 - **`snapshot.rs`** — WorldSnapshot/AgentSnapshot/CellChange/NarrativeEvent/LegacyEvent/PressureSnapshot（Godot序列化）
-- **`legacy.rs`** — 遗产系统（Agent死亡/遗产沉淀）
-- **`vision.rs`** — 视野扫描（附近Agent/资源扫描）
 
 ### Simulation模块 (`crates/core/src/simulation/`)
 模拟编排层，管理 Agent 决策循环、世界时间推进、快照生成：
-- **`mod.rs`** — 模块导出，重导出 SimConfig、AgentDelta
-- **`config.rs`** — SimConfig 配置（Agent数量、决策间隔、视野半径等）
-- **`delta.rs`** — AgentDelta 增量事件（AgentMoved/AgentDied/StructureCreated等）
-- **`agent_loop.rs`** — Agent 决策循环（LLM调用 + 规则兜底 + delta推送）
+- **`mod.rs`** — 模块导出，重导出 Simulation, SimConfig, AgentDelta
+- **`simulation.rs`** — Simulation结构体：封装World + DecisionPipeline，管理agent_handles/tick_handle/snapshot_handle，提供start/pause/resume API
+- **`config.rs`** — SimConfig, SimMode 配置加载
+- **`delta.rs`** — AgentDelta增量事件枚举（14种变体：AgentMoved/AgentDied/AgentSpawned/StructureCreated/TradeCompleted等）
+- **`agent_loop.rs`** — Agent决策循环6阶段流水线：WorldState构建 → 感知 → 决策 → 应用 → Delta发送 → 叙事发送
 - **`tick_loop.rs`** — 世界时间推进（advance_tick、生存消耗）
 - **`snapshot_loop.rs`** — 定期快照生成（5秒完整状态兜底）
-- **`npc.rs`** — NPC Agent 创建（规则引擎快速决策）
+- **`npc.rs`** — NPC Agent创建（规则引擎快速决策）
+- **`state_builder.rs`** — WorldStateBuilder：从World自动构建WorldState供决策使用
+- **`delta_emitter.rs`** — DeltaEmitter：构建和发送delta事件
+- **`narrative_emitter.rs`** — NarrativeEmitter：提取和发送叙事事件
+- **`memory_recorder.rs`** — MemoryRecorder：记录动作到Agent记忆
+- **`p2p_handler.rs`** — P2PMessageHandler：处理P2P网络消息
 
 ### Agent模块 (`crates/core/src/agent/`)
-- **`mod.rs`** — Agent实体（信任关系/临时偏好）
-- **`movement.rs`** — 移动逻辑（边界检查、碰撞、地形影响）
-- **`inventory.rs`** — 物品栏管理（收集/消耗/交易）
-- **`trade.rs`** — Agent间交易协议
-- **`dialogue.rs`** — 对话生成和传播
-- **`combat.rs`** — 战斗系统
-- **`alliance.rs`** — 联盟系统
+Agent只负责自身状态变更，World负责协调/校验/叙事。返回详细元组供World生成反馈。
+- **`mod.rs`** — Agent实体（信任关系/临时偏好/frozen_inventory/pending_trade_id）
+- **`movement.rs`** — `move_to(target) -> (bool, old_pos, new_pos)` 单步移动
+- **`survival.rs`** — `eat_food()/drink_water() -> (success, delta, before, after, remaining)`
+- **`social.rs`** — `talk_with()/receive_talk()` 对话与信任建立
+- **`combat.rs`** — `receive_attack(damage, attacker_id)/initiate_attack(target_id)` 分段借用
+- **`trade.rs`** — `freeze_resources/complete_trade_send/cancel_trade/give_resources/receive_resources`
+- **`inventory.rs`** — 物品栏管理（收集/消耗），全局InventoryConfig单例
+- **`alliance.rs`** — 联盟系统（信任值阈值0.5）
+- **`shadow.rs`** — ShadowAgent：P2P远程Agent精简结构，支持apply_delta和过期检测
 
 ### World模块 (`crates/core/src/world/`)
-- **`mod.rs`** — World主结构（tick循环、apply_action、snapshot生成）
-- **`map.rs`** — TileMap地形生成和查询
+- **`mod.rs`** — World主结构（256x256地图、区域、资源、建筑、压力池、Agent管理）
+- **`map.rs`** — CellGrid地形网格
 - **`region.rs`** — 区域划分和管理
-- **`resource.rs`** — 资源分布和刷新
-- **`pressure.rs`** — 环境压力系统（资源波动/气候事件/区域封锁）
-- **`structure.rs`** — 建筑放置和管理
+- **`resource.rs`** — 资源节点分布和刷新
+- **`pressure.rs`** — 环境压力事件池（资源波动/气候事件/区域封锁）
+- **`structure.rs`** — 建筑结构（Camp, Fence, Warehouse）
 - **`generator.rs`** — 世界生成器（基于WorldSeed）
+- **`actions.rs`** — 动作执行路由（apply_action分发）
+- **`snapshot.rs`** — 世界快照生成
+- **`feedback.rs`** — 动作反馈生成（物理/社会/记忆/系统四层）
+- **`tick.rs`** — 生存消耗、建筑效果、压力等tick处理
+- **`milestones.rs`** — 文明里程碑
+- **`legacy.rs`** — 遗产系统（Agent死亡/遗产沉淀）
+- **`vision.rs`** — 视野扫描（scan_vision, calculate_direction）
+- **`types.rs`** — 世界类型（MilestoneType, TradeStatus等）
+- **`action_result.rs`** — 动作结果结构（ActionResultSchema, FieldChange, ActionSuggestion）
 
 ### Storage层 (`crates/core/src/storage/`)
 - **`mod.rs`** — StorageManager（SQLite连接管理）
@@ -250,26 +271,23 @@ AutoScreenshot="*res://scripts/auto_screenshot.gd"
 - 根包 → 所有crates (集成测试)
 
 ### Bridge架构 (`crates/bridge/src/`)
-GDExtension桥接Rust核心引擎到Godot客户端（单文件1000+行）：
-- **`SimulationBridge`** — Godot Node扩展，通过mpsc通道与模拟线程通信
-- **`SimCommand`** — 控制命令枚举（Start/Pause/SetTickInterval/InjectPreference）
-- **`SimConfig`** — 从`config/sim.toml`加载模拟配置（Agent数量/NPC数量/决策间隔）
-- **日志系统** — `config/log.toml`配置，tracing-subscriber输出，控制台+文件双通道，支持按模块设置级别
-- **多Agent独立心跳** — 每个Agent独立tokio task运行决策循环，不等待其他Agent
-- **双通道推送** — delta通道（实时动作推送）+ snapshot通道（5秒完整状态兜底）
-- **`run_agent_loop`** — 每个Agent独立决策task，LLM调用有60s超时保护
-- **`run_apply_loop`** — 串行应用动作，并发发送delta到Godot
-- **`run_snapshot_loop`** — 每5秒生成完整WorldSnapshot
-- **`AgentDelta`** — 增量更新枚举（AgentMoved/AgentDied/AgentSpawned）
-- **读写分离** — 决策不持锁，Apply阶段串行获取写权限
-- **NPC系统** — 规则引擎快速决策（无LLM），独立决策间隔（`npc_decision_interval_secs=5`）
-- **记忆记录** — 动作自动记录到Agent记忆，带情感标签和重要性评分
-- 产物为`cdylib`动态库（macOS: `.dylib`, Linux: `.so`, Windows: `.dll`），每次重新构建后，必须复制到`client/bin/`
-- **线程安全**：`godot_print!` 等 godot-rust 引擎 API 只能在主线程调用，在异步 task（如 `run_sim_thread`）中调用会导致 panic `attempted to access binding from different thread`，应改用 `eprintln!`
-- **WorldSeed 加载**：Bridge 不应硬编码 WorldSeed 参数，必须从 `worldseeds/default.toml` 通过 `WorldSeed::load()` 加载，配置变更后需重新编译 bridge
+GDExtension桥接Rust核心引擎到Godot客户端（拆分为4个模块）：
+- **`lib.rs`** — 入口：定义AgentoraExtension，重导出SimulationBridge, SimCommand
+- **`bridge.rs`** — SimulationBridge GDExtension节点：实现INode(ready, physics_process)，通过mpsc通道接收snapshot/delta/narrative并emit_signal给GDScript，提供start_simulation/pause/toggle_pause/inject_preference/get_agent_data等[func] API
+- **`conversion.rs`** — 类型转换：delta_to_dict, agent_to_dict, snapshot_to_dict（Rust结构体→GDScript Dictionary/Variant）
+- **`logging.rs`** — LogConfig：从config/log.toml加载配置，init_logging初始化console+file双层日志
+- **`simulation_runner.rs`** — 模拟线程运行器：在独立OS thread创建tokio runtime，运行Simulation并处理SimCommand命令循环
 
-**决策管道** (`crates/core/src/decision.rs`)
-- LLM调用 → 规则校验 → 执行
+**数据流**：`SimulationBridge.ready()` → spawn OS thread → `run_simulation_with_api()` → tokio runtime → `Simulation::start()` → mpsc channels → `physics_process` try_recv → emit_signal到Godot
+
+**重要注意事项**：
+- 产物为`cdylib`动态库（macOS: `.dylib`, Linux: `.so`, Windows: `.dll`），每次构建后需复制到`client/bin/`
+- **线程安全**：`godot_print!`等godot-rust API只能在主线程调用，异步task中会panic，应改用`eprintln!`
+- **WorldSeed加载**：必须从`worldseeds/default.toml`通过`WorldSeed::load()`加载，配置变更后需重新编译bridge
+
+**决策管道** (`crates/core/src/decision/mod.rs`)
+- 接收预构建感知 → LLM调用 → 规则校验 → 执行
+- PerceptionBuilder独立于DecisionPipeline，在`decision/perception.rs`中实现
 
 **规则引擎** (`crates/core/src/rule_engine.rs`)
 - `RuleEngine`：硬约束过滤 + 动作校验 + LLM失败兜底

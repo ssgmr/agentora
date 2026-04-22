@@ -14,19 +14,23 @@ pub mod milestones;
 pub mod legacy;
 pub mod vision;
 pub mod types;
+pub mod action_result;
 
 // 重导出辅助类型
 pub use types::{MilestoneType, Milestone, TradeStatus, PendingTrade, DialogueLog, DialogueMessage};
+pub use action_result::{ActionResultSchema, FieldChange, ActionSuggestion};
 
 use crate::seed::WorldSeed;
 use crate::agent::Agent;
 use crate::agent::inventory::get_config as get_inventory_config;
+use crate::agent::ShadowAgent;
 use crate::types::{AgentId, Position, ActionType, Action, TerrainType, StructureType};
 use crate::world::legacy::Legacy;
 use crate::strategy::decay::{decay_all_strategies, check_deprecation, auto_delete_deprecated};
 use crate::strategy::create::{should_create_strategy, create_strategy, scan_strategy_content};
 use crate::snapshot::NarrativeEvent;
 use crate::decision::SparkType;
+use crate::simulation::{DeltaEnvelope, SimMode};
 use std::collections::HashMap;
 
 /// 世界状态
@@ -37,7 +41,12 @@ pub struct World {
     pub regions: HashMap<u32, region::Region>,
     pub resources: HashMap<Position, resource::ResourceNode>,
     pub structures: HashMap<Position, structure::Structure>,
+    /// 本地 Agent（本 peer 负责决策的 Agent）
     pub agents: HashMap<AgentId, Agent>,
+    /// 远程 Agent 影子状态（P2P 模式下，其他 peer 负责决策的 Agent）
+    pub remote_agents: HashMap<AgentId, ShadowAgent>,
+    /// 本地 Agent ID 集合（P2P 模式下用于区分 local/remote）
+    pub local_agent_ids: Option<std::collections::HashSet<AgentId>>,
     pub pressure_pool: Vec<pressure::PressureEvent>,
     pub legacies: Vec<Legacy>,
     /// 当前 tick 各 Agent 的动作
@@ -48,7 +57,7 @@ pub struct World {
     pub pending_trades: Vec<PendingTrade>,
     /// 对话日志
     pub dialogue_logs: Vec<DialogueLog>,
-    /// 位置到 Agent ID 的反向索引，用于空间查询
+    /// 位置到 Agent ID 的反向索引，用于空间查询（包含 local + remote）
     pub agent_positions: HashMap<Position, Vec<AgentId>>,
     /// 下次压力事件触发 tick
     pub next_pressure_tick: u64,
@@ -62,6 +71,8 @@ pub struct World {
     pub total_attacks: u32,
     /// 累计遗产交互次数
     pub total_legacy_interacts: u32,
+    /// 交易超时 tick 数（超过此时间自动取消交易，解冻资源）
+    pub trade_timeout_ticks: u64,
 }
 
 impl World {
@@ -74,6 +85,8 @@ impl World {
             resources: HashMap::new(),
             structures: HashMap::new(),
             agents: HashMap::new(),
+            remote_agents: HashMap::new(),
+            local_agent_ids: None, // 集中式模式下为 None
             pressure_pool: Vec::new(),
             legacies: Vec::new(),
             current_actions: HashMap::new(),
@@ -90,6 +103,7 @@ impl World {
             total_trades: 0,
             total_attacks: 0,
             total_legacy_interacts: 0,
+            trade_timeout_ticks: 50, // 默认值，可由 Simulation 配置覆盖
         };
 
         // 生成地形
@@ -202,6 +216,9 @@ impl World {
         // 遗产衰减
         self.decay_legacies();
 
+        // 交易超时检查
+        self.check_trade_timeout();
+
         // 策略衰减（每 50 tick）
         if self.tick % 50 == 0 {
             for (_, agent) in self.agents.iter_mut() {
@@ -231,27 +248,8 @@ impl World {
         // 记录当前动作的思考内容（reasoning，用于 UI 显示 Agent 的决策思路）
         self.current_actions.insert(agent_id.clone(), action.reasoning.clone());
 
-        // 路由到具体 handler
-        let result = match &action.action_type {
-            ActionType::MoveToward { target } => self.handle_move_toward(agent_id, *target),
-            ActionType::Gather { resource } => self.handle_gather(agent_id, *resource),
-            ActionType::Wait => self.handle_wait(agent_id),
-            ActionType::Eat => self.handle_eat(agent_id),
-            ActionType::Drink => self.handle_drink(agent_id),
-            ActionType::Build { structure } => self.handle_build(agent_id, *structure),
-            ActionType::Attack { target_id } => self.handle_attack(agent_id, target_id.clone()),
-            ActionType::Talk { message } => self.handle_talk(agent_id, message.clone()),
-            ActionType::Explore { .. } => self.handle_explore(agent_id),
-            ActionType::TradeOffer { offer, want, target_id } => self.handle_trade_offer(agent_id, offer.clone(), want.clone(), target_id.clone()),
-            ActionType::TradeAccept { .. } => self.handle_trade_accept(agent_id),
-            ActionType::TradeReject { .. } => self.handle_trade_reject(agent_id),
-            ActionType::AllyPropose { target_id } => self.handle_ally_propose(agent_id, target_id.clone()),
-            ActionType::AllyAccept { ally_id } => self.handle_ally_accept(agent_id, ally_id.clone()),
-            ActionType::AllyReject { ally_id } => self.handle_ally_reject(agent_id, ally_id.clone()),
-            ActionType::InteractLegacy { legacy_id, interaction } => {
-                self.handle_legacy_interaction(agent_id, legacy_id, interaction)
-            }
-        };
+        // 路由到具体 handler（通过 ActionExecutor）
+        let result = self.execute_action(agent_id, action);
 
         // 失败时生成错误叙事
         if let ActionResult::Blocked(ref reason) = result {
@@ -329,6 +327,174 @@ impl World {
         }
 
         result
+    }
+
+    // ===== P2P 模式相关方法 =====
+
+    /// 设置运行模式（P2P 模式下需要指定 local_agent_ids）
+    pub fn set_sim_mode(&mut self, mode: &SimMode) {
+        match mode {
+            SimMode::Centralized => {
+                // 集中式模式：所有 Agent 都是 local
+                self.local_agent_ids = None;
+            }
+            SimMode::P2P { local_agent_ids, .. } => {
+                // P2P 模式：只管理指定的 Agent
+                self.local_agent_ids = Some(
+                    local_agent_ids.iter()
+                        .map(|id| AgentId::new(id.clone()))
+                        .collect()
+                );
+            }
+        }
+    }
+
+    /// 判断 AgentId 是否为本地 Agent
+    pub fn is_local_agent(&self, agent_id: &AgentId) -> bool {
+        match &self.local_agent_ids {
+            None => true, // 集中式模式下所有都是 local
+            Some(ids) => ids.contains(agent_id),
+        }
+    }
+
+    /// 获取所有 Agent（local + remote），用于渲染
+    ///
+    /// 返回 (local_agents, remote_agents) 元组
+    pub fn all_agents(&self) -> (&HashMap<AgentId, Agent>, &HashMap<AgentId, ShadowAgent>) {
+        (&self.agents, &self.remote_agents)
+    }
+
+    /// 应用远程 Delta 更新影子状态
+    ///
+    /// 过滤本地回环，只处理来自其他 peer 的 Delta
+    pub fn apply_remote_delta(&mut self, envelope: &DeltaEnvelope, current_tick: u64) {
+        // 过滤本地回环（如果 source_peer_id 为空，视为本地产生）
+        if envelope.source_peer_id.is_none() {
+            return;
+        }
+
+        // 尝试从 AgentMoved 创建或更新影子
+        let agent_id_str = envelope.delta.event_agent_id();
+        if agent_id_str.is_empty() {
+            return;
+        }
+
+        let agent_id = AgentId::new(agent_id_str.clone());
+
+        // 如果是本地 Agent，跳过（本地回环过滤）
+        if self.is_local_agent(&agent_id) {
+            tracing::trace!("[World] 跳过本地 Agent delta: {}", agent_id.as_str());
+            return;
+        }
+
+        // 创建或更新影子 Agent
+        if let Some(shadow) = self.remote_agents.get_mut(&agent_id) {
+            shadow.apply_delta(&envelope.delta);
+            shadow.last_seen_tick = current_tick;
+            tracing::trace!("[World] 更新远程影子 Agent: {}", agent_id.as_str());
+        } else if let Some(new_shadow) = ShadowAgent::from_moved(
+            &envelope.delta,
+            &envelope.source_peer_id.clone().unwrap_or_default(),
+            current_tick
+        ) {
+            let id_str = new_shadow.id.clone();
+            self.remote_agents.insert(agent_id, new_shadow);
+            tracing::info!("[World] 创建远程影子 Agent: {}", id_str);
+        }
+    }
+
+    /// 清理过期影子 Agent
+    pub fn cleanup_expired_shadows(&mut self, current_tick: u64, timeout_ticks: u64) {
+        let expired: Vec<AgentId> = self.remote_agents.iter()
+            .filter(|(_, shadow)| shadow.is_expired(current_tick, timeout_ticks))
+            .map(|(id, _)| id.clone())
+            .collect();
+
+        for id in &expired {
+            self.remote_agents.remove(id);
+            tracing::info!("[World] 清理过期影子 Agent: {}", id.as_str());
+        }
+    }
+
+    /// 只对本地 Agent 执行生存消耗（P2P 模式）
+    ///
+    /// 集中式模式下行为与 advance_tick 相同
+    pub fn advance_tick_local_only(&mut self) {
+        self.tick += 1;
+
+        // 生存消耗 tick：只对本地 Agent
+        if let Some(ref local_ids) = self.local_agent_ids {
+            // P2P 模式：只对 local_agents 执行生存消耗
+            for agent_id in local_ids {
+                if let Some(agent) = self.agents.get_mut(agent_id) {
+                    if !agent.is_alive {
+                        continue;
+                    }
+                    // 每 tick 衰减 1 点
+                    agent.satiety = agent.satiety.saturating_sub(1);
+                    agent.hydration = agent.hydration.saturating_sub(1);
+
+                    // 饱食度耗尽：HP -1/tick
+                    if agent.satiety == 0 {
+                        agent.health = agent.health.saturating_sub(1);
+                    }
+                    // 水分度耗尽：HP -1/tick
+                    if agent.hydration == 0 {
+                        agent.health = agent.health.saturating_sub(1);
+                    }
+
+                    // 检查死亡
+                    if agent.health <= 0 {
+                        agent.is_alive = false;
+                        self.tick_events.push(NarrativeEvent {
+                            tick: self.tick,
+                            agent_id: agent_id.as_str().to_string(),
+                            agent_name: agent.name.clone(),
+                            event_type: "death".to_string(),
+                            description: format!("{} 因饥饿或脱水而死", agent.name),
+                            color_code: "#FF0000".to_string(),
+                        });
+                    }
+                }
+            }
+        } else {
+            // 集中式模式：原有行为
+            self.survival_consumption_tick();
+        }
+
+        // 建筑效果 tick（所有 Agent 受益）
+        self.structure_effects_tick();
+
+        // 更新本地 Agent 的临时偏好
+        for (_, agent) in self.agents.iter_mut() {
+            if agent.is_alive {
+                agent.tick_preferences();
+            }
+        }
+
+        // 环境压力 tick
+        self.pressure_tick();
+
+        // 检查 Agent 死亡并产生遗产（只检查本地 Agent）
+        self.check_agent_death();
+
+        // 遗产衰减
+        self.decay_legacies();
+
+        // 交易超时检查
+        self.check_trade_timeout();
+
+        // 策略衰减（每 50 tick）
+        if self.tick % 50 == 0 {
+            for (_, agent) in self.agents.iter_mut() {
+                let _ = decay_all_strategies(&agent.strategies, self.tick as u32);
+                let _ = check_deprecation(&agent.strategies);
+                let _ = auto_delete_deprecated(&agent.strategies, self.tick as u32);
+            }
+        }
+
+        // 里程碑检查
+        self.check_milestones();
     }
 
     /// 持久化世界状态

@@ -203,6 +203,49 @@ impl RuleEngine {
         true
     }
 
+    /// 建议一个有效的移动方向（用于校验失败时的引导）
+    fn suggest_valid_direction(&self, world_state: &WorldState) -> String {
+        use crate::types::Direction;
+        let directions = [
+            (Direction::North, "北", "north"),
+            (Direction::South, "南", "south"),
+            (Direction::East, "东", "east"),
+            (Direction::West, "西", "west"),
+        ];
+
+        // 优先向最近资源方向移动
+        if !world_state.resources_at.is_empty() {
+            // 找最近的资源
+            let nearest_resource = self.find_nearest_resource(&world_state.agent_position, &world_state.resources_at);
+            if let Some(resource_pos) = nearest_resource {
+                let dx = resource_pos.x as i32 - world_state.agent_position.x as i32;
+                let dy = resource_pos.y as i32 - world_state.agent_position.y as i32;
+
+                // 确定优先方向
+                let preferred_dir = if dx.abs() >= dy.abs() {
+                    if dx > 0 { Direction::East } else { Direction::West }
+                } else {
+                    if dy > 0 { Direction::South } else { Direction::North }
+                };
+
+                // 检查是否有效
+                if self.check_move_valid(preferred_dir, world_state) {
+                    let (_, name, eng) = directions.iter().find(|(d, _, _)| *d == preferred_dir).unwrap();
+                    return format!("{}方向（direction: \"{}\"）", name, eng);
+                }
+            }
+        }
+
+        // 没有资源或优先方向无效，找任意有效方向
+        for (dir, name, eng) in &directions {
+            if self.check_move_valid(*dir, world_state) {
+                return format!("{}方向（direction: \"{}\"）", name, eng);
+            }
+        }
+
+        "任意有效方向".to_string()
+    }
+
     /// 检查是否可以建造
     fn can_build(&self, structure: StructureType, world_state: &WorldState) -> bool {
         let required = structure.resource_cost();
@@ -241,19 +284,53 @@ impl RuleEngine {
     }
 
     /// 校验动作参数合法性，返回 (是否合法, 失败原因)
+    ///
+    /// 任务 4.x：增强校验失败时的智能引导，帮助 LLM 自我修正
     pub fn validate_action(&self, candidate: &ActionCandidate, world_state: &WorldState) -> (bool, Option<String>) {
         match &candidate.action_type {
             ActionType::MoveToward { target } => {
                 if target.x >= world_state.map_size || target.y >= world_state.map_size {
+                    // 边界校验失败：提供最近的合法方向建议
+                    let suggested_dir = self.suggest_valid_direction(world_state);
                     return (false, Some(format!(
-                        "MoveToward校验失败：目标位置({}, {}) 超出地图边界（0-{}）",
-                        target.x, target.y, world_state.map_size - 1)));
+                        "MoveToward失败：目标({}, {}) 超出地图边界（0-{}）。建议向{}方向移动",
+                        target.x, target.y, world_state.map_size - 1, suggested_dir)));
                 }
                 let dist = target.manhattan_distance(&world_state.agent_position);
                 if dist != 1 {
-                    return (false, Some(format!(
-                        "MoveToward校验失败：目标({}, {}) 不相邻（距离={}格），只能移动到相邻格",
-                        target.x, target.y, dist)));
+                    // 不相邻校验失败：计算正确的第一步方向
+                    let dx = target.x as i32 - world_state.agent_position.x as i32;
+                    let dy = target.y as i32 - world_state.agent_position.y as i32;
+                    let first_step_dir = if dx.abs() >= dy.abs() {
+                        if dx > 0 { "east" } else { "west" }
+                    } else {
+                        if dy > 0 { "south" } else { "north" }
+                    };
+                    // 验证第一步方向是否有效（不越界）
+                    let first_step_valid = self.check_move_valid(
+                        match first_step_dir {
+                            "east" => crate::types::Direction::East,
+                            "west" => crate::types::Direction::West,
+                            "south" => crate::types::Direction::South,
+                            "north" => crate::types::Direction::North,
+                            _ => crate::types::Direction::North,
+                        },
+                        world_state
+                    );
+                    if first_step_valid {
+                        return (false, Some(format!(
+                            "MoveToward失败：目标({}, {}) 距离{}格，只能移动到相邻格。第一步应向{}方向移动（params: {{\"direction\": \"{}\"}}）",
+                            target.x, target.y, dist,
+                            match first_step_dir { "east" => "东", "west" => "西", "south" => "南", "north" => "北", _ => "北" },
+                            first_step_dir)));
+                    } else {
+                        let alternative_dir = self.suggest_valid_direction(world_state);
+                        return (false, Some(format!(
+                            "MoveToward失败：目标({}, {}) 距离{}格，且最佳路径方向{}被阻挡。建议向{}方向移动",
+                            target.x, target.y, dist,
+                            match first_step_dir { "east" => "东", "west" => "西", "south" => "南", "north" => "北", _ => "北" },
+                            alternative_dir)));
+                    }
                 }
                 (true, None)
             }

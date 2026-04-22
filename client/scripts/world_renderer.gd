@@ -92,17 +92,12 @@ func _ready() -> void:
 	_structure_sprites.name = "StructureSprites"
 	add_child(_structure_sprites)
 
-	# 连接信号
-	var bridge = BridgeAccessor.get_bridge()
-	if bridge:
-		print("[WorldRenderer] 找到 SimulationBridge 节点")
-		bridge.world_updated.connect(_on_world_updated)
-		print("[WorldRenderer] world_updated 信号已连接")
-		# 连接 delta 信号（Tier 2）
-		if bridge.has_signal("agent_delta"):
-			bridge.agent_delta.connect(_on_delta_received)
-	else:
-		push_error("[WorldRenderer] 未找到 SimulationBridge 节点！")
+	# 订阅 StateManager 信号（统一状态分发）
+	StateManager.state_updated.connect(_on_state_updated)
+	StateManager.terrain_changed.connect(_on_terrain_changed)
+	StateManager.resource_changed.connect(_on_resource_changed)
+	StateManager.structure_changed.connect(_on_structure_changed)
+	print("[WorldRenderer] StateManager 信号已连接")
 
 	# 生成地图数据
 	_generate_map_data()
@@ -304,8 +299,8 @@ func _process(_delta: float) -> void:
 	queue_redraw()
 
 
-func _on_world_updated(snapshot: Dictionary) -> void:
-	# 从 snapshot 加载地形、建筑和资源信息（兜底同步）
+func _on_state_updated(snapshot: Dictionary) -> void:
+	# 从 StateManager 加载地形、建筑和资源信息（兜底同步）
 
 	# 处理地形网格数据（优先使用，包含全图地形）
 	if snapshot.has("terrain_grid") and snapshot.has("terrain_width") and snapshot.has("terrain_height"):
@@ -351,6 +346,30 @@ func _on_world_updated(snapshot: Dictionary) -> void:
 	queue_redraw()
 
 
+func _on_terrain_changed(x: int, y: int, terrain_type: String) -> void:
+	var key = "%d_%d" % [x, y]
+	_map_data[key] = terrain_type.to_lower()
+	queue_redraw()
+
+
+func _on_resource_changed(x: int, y: int, resource_type: String, amount: int) -> void:
+	var key = "%d_%d" % [x, y]
+	if amount > 0 and resource_type != "":
+		_resources[key] = {"type": resource_type.to_lower(), "amount": amount}
+	else:
+		_resources.erase(key)
+	queue_redraw()
+
+
+func _on_structure_changed(x: int, y: int, structure_type: String, _owner_id: String) -> void:
+	var key = "%d_%d" % [x, y]
+	if structure_type != "":
+		_structures[key] = {"type": _normalize_structure_type(structure_type)}
+	else:
+		_structures.erase(key)
+	queue_redraw()
+
+
 # 解码地形网格数据（0=plains, 1=forest, 2=mountain, 3=water, 4=desert）
 const _TERRAIN_NAMES = ["plains", "forest", "mountain", "water", "desert"]
 
@@ -367,65 +386,6 @@ func _decode_terrain_grid(grid: PackedByteArray, width: int, height: int) -> voi
 			else:
 				_map_data[key] = "plains"
 	print("[WorldRenderer] 地形网格解码: %dx%d = %d 格 (地图尺寸已更新)" % [width, height, _map_data.size()])
-
-
-# ===== Tier 2: Delta 事件处理 =====
-
-func _on_delta_received(delta: Dictionary) -> void:
-	var delta_type = delta.get("type", "")
-
-	match delta_type:
-		"structure_created":
-			_on_structure_created(delta)
-		"structure_destroyed":
-			_on_structure_destroyed(delta)
-		"resource_changed":
-			_on_resource_changed(delta)
-
-
-func _on_structure_created(delta: Dictionary) -> void:
-	var pos: Vector2 = delta.get("position", Vector2.ZERO)
-	var x = int(pos.x)
-	var y = int(pos.y)
-	var struct_type = delta.get("structure_type", "Camp")
-	var key = "%d_%d" % [x, y]
-
-	_structures[key] = {"type": _normalize_structure_type(struct_type)}
-	print("[WorldRenderer] 建筑创建: %s at (%d, %d)" % [struct_type, x, y])
-	queue_redraw()
-
-
-func _on_structure_destroyed(delta: Dictionary) -> void:
-	var pos: Vector2 = delta.get("position", Vector2.ZERO)
-	var x = int(pos.x)
-	var y = int(pos.y)
-	var key = "%d_%d" % [x, y]
-
-	if _structures.has(key):
-		_structures.erase(key)
-		print("[WorldRenderer] 建筑销毁: (%d, %d)" % [x, y])
-		queue_redraw()
-
-
-func _on_resource_changed(delta: Dictionary) -> void:
-	# 更新资源字典并触发重绘
-	var x = delta.get("x", 0)
-	var y = delta.get("y", 0)
-	var resource_type = delta.get("resource_type", "").to_lower()
-	var amount = delta.get("amount", 0)
-
-	var key = "%d_%d" % [x, y]
-
-	if amount > 0 and resource_type != "":
-		_resources[key] = {"type": resource_type, "amount": amount}
-		print("[WorldRenderer] 资源更新: %s at (%d, %d) = %d" % [resource_type, x, y, amount])
-	else:
-		# 资源耗尽，移除
-		if _resources.has(key):
-			_resources.erase(key)
-			print("[WorldRenderer] 资源耗尽: (%d, %d)" % [x, y])
-
-	queue_redraw()
 
 
 func _normalize_structure_type(raw: String) -> String:

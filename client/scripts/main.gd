@@ -13,15 +13,23 @@ var _map_bounds_set: bool = false  # 标记是否已设置地图边界
 func _ready() -> void:
 	print("[Main] 主场景初始化")
 
-	# 连接 SimulationBridge 信号（使用 BridgeAccessor）
+	# 连接 SimulationBridge 信号到 StateManager（统一状态分发）
 	var bridge = BridgeAccessor.get_bridge()
 	if bridge:
-		bridge.world_updated.connect(_on_world_updated)
+		# Bridge 信号 → StateManager 处理
+		bridge.world_updated.connect(StateManager._on_world_updated)
 		bridge.agent_selected.connect(_on_agent_selected)
-		bridge.narrative_event.connect(_on_narrative_event)
-		print("[Main] SimulationBridge 信号已连接")
+		bridge.narrative_event.connect(StateManager._on_narrative_event)
+		# 连接 agent_delta 信号（增量更新）
+		if bridge.has_signal("agent_delta"):
+			bridge.agent_delta.connect(StateManager._on_agent_delta)
+		print("[Main] SimulationBridge 信号已连接到 StateManager")
 	else:
 		printerr("[Main] 未找到 SimulationBridge!")
+
+	# 订阅 StateManager 的全局更新信号（用于 UI 更新）
+	StateManager.state_updated.connect(_on_state_updated)
+	StateManager.milestone_reached.connect(_on_milestone_reached)
 
 	# 初始化速度控制
 	_setup_speed_control()
@@ -58,10 +66,10 @@ func _on_speed_changed(index: int) -> void:
 			bridge.pause()
 
 
-func _on_world_updated(snapshot: Dictionary) -> void:
-	# 更新 UI 显示
-	var tick: int = snapshot.get("tick", 0)
-	var agents: Dictionary = snapshot.get("agents", {})
+func _on_state_updated(snapshot: Dictionary) -> void:
+	# 从 StateManager 获取当前状态更新 UI 显示
+	var tick: int = StateManager.get_current_tick()
+	var agents: Dictionary = StateManager.get_all_agents()
 
 	if tick_label:
 		tick_label.text = "Tick: %d" % tick
@@ -69,26 +77,31 @@ func _on_world_updated(snapshot: Dictionary) -> void:
 	if agent_count_label:
 		agent_count_label.text = "Agent: %d" % agents.size()
 
-	# 设置相机边界（从后端获取地图尺寸）
-	if not _map_bounds_set and snapshot.has("terrain_width") and snapshot.has("terrain_height"):
-		var width: int = snapshot.terrain_width
-		var height: int = snapshot.terrain_height
-		var camera = get_node_or_null("Camera2D")
-		if camera and camera.has_method("set_map_bounds"):
-			camera.set_map_bounds(width, height, 16)
-			_map_bounds_set = true
-			print("[Main] 已设置相机边界: %dx%d" % [width, height])
+	# 设置相机边界（从 StateManager 获取地图尺寸）
+	if not _map_bounds_set:
+		var map_size: Vector2i = StateManager.get_map_size()
+		if map_size.x > 0 and map_size.y > 0:
+			var camera = get_node_or_null("Camera2D")
+			if camera and camera.has_method("set_map_bounds"):
+				camera.set_map_bounds(map_size.x, map_size.y, 16)
+				_map_bounds_set = true
+				print("[Main] 已设置相机边界: %dx%d" % [map_size.x, map_size.y])
 
 	# 如果没有选中 Agent，自动选第一个存活的
 	if selected_agent_id.is_empty():
-		for agent_data in agents.values():
+		for agent_id in agents.keys():
+			var agent_data = agents[agent_id]
 			if agent_data.get("is_alive", false):
 				selected_agent_id = agent_data.get("id", "")
-				# 触发 agent_selected 信号，让 AgentDetailPanel 等组件响应
+				# 触发 agent_selected 信号
 				var bridge = BridgeAccessor.get_bridge()
 				if bridge:
 					bridge.select_agent(selected_agent_id)
 				break
+
+
+func _on_milestone_reached(name: String, display_name: String, tick: int) -> void:
+	print("[Main] 里程碑达成: %s (%s) at tick %d" % [name, display_name, tick])
 
 
 func _on_agent_selected(agent_id: String) -> void:
