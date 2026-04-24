@@ -470,7 +470,12 @@ impl PerceptionBuilder {
                 priority, dir_name, pos.x, pos.y, dist, amount
             ));
 
-            if step_valid && dist > 0 {
+            if dist == 0 {
+                summary.push_str(&format!(
+                    "  当前位置有{:?}×{}，可直接Gather采集\n",
+                    priority, amount
+                ));
+            } else if step_valid {
                 summary.push_str(&format!(
                     "  → 建议动作：MoveToward，direction: \"{}\"（向{}移动1格）\n",
                     dir_eng, dir_name
@@ -481,7 +486,7 @@ impl PerceptionBuilder {
                         dist - 1, dir_name
                     ));
                 }
-            } else if !step_valid && dist > 0 {
+            } else if !step_valid {
                 let alternatives = [
                     (Direction::North, "北", "north"),
                     (Direction::South, "南", "south"),

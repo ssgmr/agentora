@@ -197,13 +197,13 @@ impl World {
                 random_types[rng.gen_range(0..random_types.len())]
             };
 
-            // 资源量根据地形调整
+            // 资源量根据地形调整（降低初始量，使采集更有策略性）
             let base_amount = match terrain {
-                TerrainType::Forest => rng.gen_range(80..200),  // 森林木材丰富
-                TerrainType::Mountain => rng.gen_range(100..250), // 山地矿产丰富
-                TerrainType::Plains => rng.gen_range(50..150),   // 平原适中
-                TerrainType::Water => rng.gen_range(100..300),   // 水域附近资源丰富
-                TerrainType::Desert => rng.gen_range(20..80),    // 沙漠贫瘠
+                TerrainType::Forest => rng.gen_range(8..20),   // 森林木材丰富
+                TerrainType::Mountain => rng.gen_range(10..25), // 山地矿产丰富
+                TerrainType::Plains => rng.gen_range(5..15),   // 平原适中
+                TerrainType::Water => rng.gen_range(10..30),   // 水域附近资源丰富
+                TerrainType::Desert => rng.gen_range(2..8),    // 沙漠贫瘠
             };
 
             let node = resource::ResourceNode::new(pos, resource_type, base_amount);

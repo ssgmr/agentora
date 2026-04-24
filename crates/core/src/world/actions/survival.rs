@@ -43,8 +43,8 @@ impl World {
         // 检查压力乘数
         let multiplier = self.pressure_multiplier.get(resource.as_str()).copied().unwrap_or(1.0);
 
-        // 采集资源（每次固定 2 个）
-        let gather_amount = 2u32;
+        // 采集资源（每次固定 1 个）
+        let gather_amount = 1u32;
         let actual_gather = if current_amount >= gather_amount { gather_amount } else { current_amount };
         if actual_gather == 0 {
             return ActionResult::Blocked(
