@@ -4,7 +4,7 @@
 
 在 Godot 客户端创建 StateManager Autoload，作为唯一的状态分发中心，消除各组件对 SimulationBridge 的直接监听，统一状态管理。
 
-## Requirements
+## ADDED Requirements
 
 ### Requirement: 单一状态管理器
 

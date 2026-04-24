@@ -45,3 +45,11 @@ Simulation 与 Bridge 之间 SHALL 只通过 mpsc channel 通信：
 - **WHEN** Bridge 需要暂停模拟
 - **THEN** 发送 SimCommand::Pause 到 cmd_tx
 - **AND** Simulation 在命令循环中处理
+
+## REMOVED Requirements
+
+### Requirement: Simulation 创建 tokio runtime
+
+**原因**：职责应归属于 Bridge 层（前端桥接）
+
+**迁移方案**：Bridge 创建 tokio runtime，调用 Simulation API 时在 runtime 内执行

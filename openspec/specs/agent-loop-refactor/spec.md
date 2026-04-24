@@ -53,3 +53,11 @@ run_agent_loop() SHALL 只协调各阶段调用，不包含具体逻辑。
 - **WHEN** DeltaEmitter.emit() 被调用
 - **THEN** 从 ActionResult 构建 AgentDelta
 - **AND** 发送到 delta_tx
+
+## REMOVED Requirements
+
+### Requirement: AgentLoop 内手动构建 WorldState
+
+**原因**：代码过长（80+ 行），应使用 WorldStateBuilder
+
+**迁移方案**：删除手动构建逻辑，调用 WorldStateBuilder::build()

@@ -4,7 +4,7 @@
 
 定义 WorldState 自动构建方式，从 World 自动构建决策所需的状态快照，消除数据重复。
 
-## Requirements
+## ADDED Requirements
 
 ### Requirement: WorldState 自动构建
 

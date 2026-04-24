@@ -63,7 +63,7 @@ pub struct GatherRules {
 impl Default for GatherRules {
     fn default() -> Self {
         Self {
-            gather_amount: 2,
+            gather_amount: 1,
             depleted_threshold: 0,
         }
     }
