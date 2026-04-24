@@ -3,7 +3,7 @@
 //! 在独立线程中运行 Simulation，处理命令
 
 use std::sync::mpsc::{Sender, Receiver};
-use agentora_core::simulation::{SimConfig, AgentDelta, Simulation};
+use agentora_core::simulation::{SimConfig, Delta, Simulation};
 use agentora_core::simulation::agent_loop::NarrativeEvent;
 use agentora_core::WorldSeed;
 use agentora_ai::{LlmProvider, config::LlmConfig};
@@ -13,7 +13,7 @@ use crate::bridge::SimCommand;
 /// 模拟入口函数（在独立线程中运行）
 pub fn run_simulation_with_api(
     snapshot_tx: Sender<agentora_core::WorldSnapshot>,
-    delta_tx: Sender<AgentDelta>,
+    delta_tx: Sender<Delta>,
     narrative_tx: Sender<NarrativeEvent>,
     cmd_rx: Receiver<SimCommand>,
     llm_provider: Option<Box<dyn LlmProvider>>,
@@ -28,7 +28,7 @@ pub fn run_simulation_with_api(
 /// 异步模拟主函数（使用 Simulation 结构体）
 async fn run_simulation_async_with_api(
     snapshot_tx: Sender<agentora_core::WorldSnapshot>,
-    delta_tx: Sender<AgentDelta>,
+    delta_tx: Sender<Delta>,
     narrative_tx: Sender<NarrativeEvent>,
     cmd_rx: Receiver<SimCommand>,
     llm_provider: Option<Box<dyn LlmProvider>>,

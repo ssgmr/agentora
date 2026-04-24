@@ -15,7 +15,7 @@ thiserror.workspace = true
 anyhow.workspace = true
 godot.workspace = true
 
-agentora-core = { workspace = true }
+agentora-core = { workspace = true, features = ["p2p"] }
 agentora-ai = { workspace = true }
 
 toml = "0.8"

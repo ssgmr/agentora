@@ -732,10 +732,6 @@ impl DecisionPipeline {
             "Wait" | "wait" | "等待" => Some(ActionType::Wait),
             "Eat" | "eat" | "进食" | "吃东西" => Some(ActionType::Eat),
             "Drink" | "drink" | "饮水" | "喝水" => Some(ActionType::Drink),
-            "Explore" | "explore" | "探索" => {
-                let region = json["params"]["target_region"].as_u64().unwrap_or(0) as u32;
-                Some(ActionType::Explore { target_region: region })
-            }
             "Talk" | "talk" | "对话" | "交流" => {
                 // 优先从 params.message 获取，其次从 target 获取，最后用默认值
                 let message = json["params"]["message"]

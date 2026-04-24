@@ -28,9 +28,9 @@ use crate::types::{AgentId, Position, ActionType, Action, TerrainType, Structure
 use crate::world::legacy::Legacy;
 use crate::strategy::decay::{decay_all_strategies, check_deprecation, auto_delete_deprecated};
 use crate::strategy::create::{should_create_strategy, create_strategy, scan_strategy_content};
-use crate::snapshot::NarrativeEvent;
+use crate::snapshot::{NarrativeEvent, NarrativeChannel, AgentSource};
 use crate::decision::SparkType;
-use crate::simulation::{DeltaEnvelope, SimMode};
+use crate::simulation::{Delta, DeltaEnvelope, SimMode};
 use std::collections::HashMap;
 
 /// 世界状态
@@ -148,6 +148,8 @@ impl World {
             event_type: event_type.to_string(),
             description: description.to_string(),
             color_code: color_code.to_string(),
+            channel: NarrativeChannel::Local,
+            agent_source: AgentSource::Local,
         });
     }
 
@@ -271,7 +273,6 @@ impl World {
             ActionType::Attack { .. } => 20,
             ActionType::AllyPropose { .. } | ActionType::AllyAccept { .. } => 15,
             ActionType::InteractLegacy { .. } => 20,
-            ActionType::Explore { .. } => 5,
             ActionType::MoveToward { .. } => 1,
             ActionType::Wait => 0,
             ActionType::Eat => 3,
@@ -296,6 +297,8 @@ impl World {
                 event_type: "level_up".to_string(),
                 description: format!("{} 升级到等级 {}！HP上限+10", agent.name, agent.level),
                 color_code: "#FF6B35".to_string(),
+                channel: NarrativeChannel::Local,
+                agent_source: AgentSource::Local,
             });
         }
 
@@ -307,7 +310,7 @@ impl World {
                 .unwrap_or(3);
             if should_create_strategy(is_success, candidate_count) {
                 let agent = self.agents.get_mut(agent_id).unwrap();
-                let spark_type = SparkType::Explore;
+                let spark_type = SparkType::CognitivePressure;
                 let _ = scan_strategy_content(&action.reasoning);
                 let _ = create_strategy(&agent.strategies, spark_type, self.tick as u32, &action.reasoning);
             }
@@ -373,33 +376,36 @@ impl World {
             return;
         }
 
-        // 尝试从 AgentMoved 创建或更新影子
-        let agent_id_str = envelope.delta.event_agent_id();
-        if agent_id_str.is_empty() {
-            return;
-        }
+        match &envelope.delta {
+            Delta::AgentStateChanged { agent_id, state, change_hint } => {
+                let id = AgentId::new(agent_id.clone());
 
-        let agent_id = AgentId::new(agent_id_str.clone());
+                // 如果是本地 Agent，跳过（本地回环过滤）
+                if self.is_local_agent(&id) {
+                    tracing::trace!("[World] 跳过本地 Agent delta: {}", agent_id);
+                    return;
+                }
 
-        // 如果是本地 Agent，跳过（本地回环过滤）
-        if self.is_local_agent(&agent_id) {
-            tracing::trace!("[World] 跳过本地 Agent delta: {}", agent_id.as_str());
-            return;
-        }
-
-        // 创建或更新影子 Agent
-        if let Some(shadow) = self.remote_agents.get_mut(&agent_id) {
-            shadow.apply_delta(&envelope.delta);
-            shadow.last_seen_tick = current_tick;
-            tracing::trace!("[World] 更新远程影子 Agent: {}", agent_id.as_str());
-        } else if let Some(new_shadow) = ShadowAgent::from_moved(
-            &envelope.delta,
-            &envelope.source_peer_id.clone().unwrap_or_default(),
-            current_tick
-        ) {
-            let id_str = new_shadow.id.clone();
-            self.remote_agents.insert(agent_id, new_shadow);
-            tracing::info!("[World] 创建远程影子 Agent: {}", id_str);
+                // 创建或更新影子 Agent
+                if let Some(shadow) = self.remote_agents.get_mut(&id) {
+                    shadow.apply_delta(&envelope.delta);
+                    shadow.last_seen_tick = current_tick;
+                    tracing::trace!("[World] 更新远程影子 Agent: {}", agent_id);
+                } else {
+                    // 创建新影子
+                    let new_shadow = ShadowAgent::from_state(
+                        state,
+                        &envelope.source_peer_id.clone().unwrap_or_default(),
+                        current_tick
+                    );
+                    self.remote_agents.insert(id, new_shadow);
+                    tracing::info!("[World] 创建远程影子 Agent: {}", agent_id);
+                }
+            }
+            Delta::WorldEvent(_) => {
+                // WorldEvent 不涉及 Agent 状态更新，暂不处理
+                tracing::trace!("[World] 收到 WorldEvent，暂不处理影子状态");
+            }
         }
     }
 
@@ -453,6 +459,8 @@ impl World {
                             event_type: "death".to_string(),
                             description: format!("{} 因饥饿或脱水而死", agent.name),
                             color_code: "#FF0000".to_string(),
+                            channel: NarrativeChannel::World, // 死亡是世界频道
+                            agent_source: AgentSource::Local,
                         });
                     }
                 }

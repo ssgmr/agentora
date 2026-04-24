@@ -1,4 +1,4 @@
-[gd_scene load_steps=9 format=3 uid="uid://main_scene"]
+[gd_scene load_steps=11 format=3 uid="uid://main_scene"]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="main_script"]
 [ext_resource type="Script" path="res://scripts/camera_controller.gd" id="camera_controller"]
@@ -7,6 +7,8 @@
 [ext_resource type="Script" path="res://scripts/narrative_feed.gd" id="narrative_feed"]
 [ext_resource type="Script" path="res://scripts/milestone_panel.gd" id="milestone_panel"]
 [ext_resource type="Script" path="res://scripts/agent_detail_panel.gd" id="agent_detail_panel"]
+[ext_resource type="Script" path="res://scripts/channel_selector.gd" id="channel_selector"]
+[ext_resource type="Script" path="res://scripts/agent_filter.gd" id="agent_filter"]
 
 [node name="Main" type="Node"]
 script = ExtResource("main_script")
@@ -83,3 +85,36 @@ anchor_bottom = 1.0
 offset_top = -220.0
 offset_right = -320.0
 script = ExtResource("narrative_feed")
+
+[node name="VBoxContainer" type="VBoxContainer" parent="UI/NarrativeFeed"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="FilterBar" type="HBoxContainer" parent="UI/NarrativeFeed/VBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="ChannelSelector" type="HBoxContainer" parent="UI/NarrativeFeed/VBoxContainer/FilterBar"]
+layout_mode = 2
+script = ExtResource("channel_selector")
+
+[node name="AgentFilter" type="HBoxContainer" parent="UI/NarrativeFeed/VBoxContainer/FilterBar"]
+layout_mode = 2
+script = ExtResource("agent_filter")
+
+[node name="ScrollContainer" type="ScrollContainer" parent="UI/NarrativeFeed/VBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+vertical_scroll_mode = 1
+
+[node name="EventText" type="RichTextLabel" parent="UI/NarrativeFeed/VBoxContainer/ScrollContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+bbcode_enabled = true
+fit_content = true
+scroll_active = false
+autowrap_mode = 2
+text = "[i]等待模拟开始...[/i]"

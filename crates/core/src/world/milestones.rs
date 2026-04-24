@@ -6,7 +6,7 @@ use crate::world::World;
 use crate::world::{Milestone, MilestoneType, resource};
 use crate::types::{StructureType, ResourceType, Position};
 use crate::agent::RelationType;
-use crate::snapshot::NarrativeEvent;
+use crate::snapshot::{NarrativeEvent, NarrativeChannel, AgentSource};
 
 impl World {
     /// 里程碑检查（将在 Task 5.3 完整实现）
@@ -53,6 +53,8 @@ impl World {
                         event_type: "milestone".to_string(),
                         description: format!("🏆 达成里程碑：【{}】", display_name),
                         color_code: "#FFD700".to_string(),
+                        channel: NarrativeChannel::World,
+                        agent_source: AgentSource::Local,
                     });
                 }
             }
@@ -82,6 +84,8 @@ impl World {
                     event_type: "milestone".to_string(),
                     description: "🏛 达成里程碑：【城邦雏形】".to_string(),
                     color_code: "#FFD700".to_string(),
+                    channel: NarrativeChannel::World,
+                    agent_source: AgentSource::Local,
                 });
             }
         }
@@ -104,6 +108,8 @@ impl World {
                     event_type: "milestone".to_string(),
                     description: "👑 达成里程碑：【文明黄金期】".to_string(),
                     color_code: "#FFD700".to_string(),
+                    channel: NarrativeChannel::World,
+                    agent_source: AgentSource::Local,
                 });
             }
         }
@@ -142,6 +148,8 @@ impl World {
                     event_type: "milestone".to_string(),
                     description: "🌱 营地周围涌现出新的食物和水源！".to_string(),
                     color_code: "#4CAF50".to_string(),
+                    channel: NarrativeChannel::World,
+                    agent_source: AgentSource::Local,
                 });
             }
             MilestoneType::FirstTrade => {
@@ -159,6 +167,8 @@ impl World {
                     event_type: "milestone".to_string(),
                     description: " 贸易带来繁荣，所有人获得额外补给！".to_string(),
                     color_code: "#4CAF50".to_string(),
+                    channel: NarrativeChannel::World,
+                    agent_source: AgentSource::Local,
                 });
             }
             MilestoneType::FirstFence => {
@@ -179,6 +189,8 @@ impl World {
                     event_type: "milestone".to_string(),
                     description: "🪵 围栏周围发现了新的木材资源！".to_string(),
                     color_code: "#4CAF50".to_string(),
+                    channel: NarrativeChannel::World,
+                    agent_source: AgentSource::Local,
                 });
             }
             MilestoneType::CityState => {
@@ -208,6 +220,8 @@ impl World {
                     event_type: "milestone".to_string(),
                     description: "🏛 城邦崛起！资源涌现，所有人恢复健康！".to_string(),
                     color_code: "#4CAF50".to_string(),
+                    channel: NarrativeChannel::World,
+                    agent_source: AgentSource::Local,
                 });
             }
             MilestoneType::GoldenAge => {
@@ -230,6 +244,8 @@ impl World {
                     event_type: "milestone".to_string(),
                     description: "👑 黄金时代降临！所有人满状态，资源充沛！".to_string(),
                     color_code: "#4CAF50".to_string(),
+                    channel: NarrativeChannel::World,
+                    agent_source: AgentSource::Local,
                 });
             }
             _ => {}

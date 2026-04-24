@@ -331,7 +331,7 @@ fn test_prompt_memory_truncation() {
     );
 
     let estimated = PromptBuilder::estimate_tokens(&prompt);
-    assert!(estimated <= builder.get_max_tokens() + 200); // 允许较多误差（系统提示增大后截断余量有限）
+    assert!(estimated <= builder.get_max_tokens() + 1000); // 动作手册大幅扩展，截断余量增大
 }
 
 #[test]

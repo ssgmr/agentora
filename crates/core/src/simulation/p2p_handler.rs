@@ -1,9 +1,10 @@
 //! P2P 消息处理器
 //!
 //! 处理远程 GossipSub 消息，过滤本地回环，更新影子状态。
+//! 使用统一的 Delta 和 AgentState 结构。
 
 use std::sync::mpsc::Sender;
-use crate::simulation::{AgentDelta, DeltaEnvelope};
+use crate::simulation::{Delta, DeltaEnvelope};
 use crate::agent::ShadowAgent;
 use crate::types::AgentId;
 use std::collections::HashMap;
@@ -17,14 +18,14 @@ pub struct P2PMessageHandler {
     /// 远程 Agent 影子状态存储
     shadow_agents: HashMap<AgentId, ShadowAgent>,
     /// 本地 mpsc 通道（用于通知渲染）
-    local_tx: Sender<AgentDelta>,
+    local_tx: Sender<Delta>,
     /// 超时 tick 数
     shadow_timeout_ticks: u64,
 }
 
 impl P2PMessageHandler {
     /// 创建新的 P2P 消息处理器
-    pub fn new(local_peer_id: String, local_tx: Sender<AgentDelta>, shadow_timeout_ticks: u64) -> Self {
+    pub fn new(local_peer_id: String, local_tx: Sender<Delta>, shadow_timeout_ticks: u64) -> Self {
         Self {
             local_peer_id,
             shadow_agents: HashMap::new(),
@@ -47,22 +48,25 @@ impl P2PMessageHandler {
 
         let source_peer_id = envelope.source_peer_id.clone().unwrap_or_default();
 
-        // 尝试从 AgentMoved 创建新影子
-        if let Some(new_shadow) = ShadowAgent::from_moved(&envelope.delta, &source_peer_id, current_tick) {
-            let agent_id = AgentId::new(new_shadow.id.clone());
-            let shadow_id = new_shadow.id.clone();
-            self.shadow_agents.insert(agent_id, new_shadow);
-            tracing::info!("[P2PHandler] 创建新影子 Agent: {}", shadow_id);
-        } else {
-            // 更新现有影子
-            let agent_id_str = envelope.delta.event_agent_id();
-            if !agent_id_str.is_empty() {
-                let agent_id = AgentId::new(agent_id_str);
-                if let Some(shadow) = self.shadow_agents.get_mut(&agent_id) {
+        match &envelope.delta {
+            Delta::AgentStateChanged { agent_id, state, change_hint } => {
+                let id = AgentId::new(agent_id.clone());
+
+                if let Some(shadow) = self.shadow_agents.get_mut(&id) {
+                    // 更新现有影子
                     shadow.apply_delta(&envelope.delta);
                     shadow.last_seen_tick = current_tick;
-                    tracing::trace!("[P2PHandler] 更新影子 Agent: {}", agent_id.as_str());
+                    tracing::trace!("[P2PHandler] 更新影子 Agent: {}", agent_id);
+                } else {
+                    // 创建新影子
+                    let new_shadow = ShadowAgent::from_state(state, &source_peer_id, current_tick);
+                    self.shadow_agents.insert(id, new_shadow);
+                    tracing::info!("[P2PHandler] 创建新影子 Agent: {}", agent_id);
                 }
+            }
+            Delta::WorldEvent(_) => {
+                // WorldEvent 不涉及 Agent 状态更新，直接转发
+                tracing::trace!("[P2PHandler] 收到 WorldEvent，直接转发");
             }
         }
 
@@ -93,21 +97,5 @@ impl P2PMessageHandler {
     /// 获取本地 peer ID
     pub fn local_peer_id(&self) -> &str {
         &self.local_peer_id
-    }
-}
-
-/// AgentDelta event_agent_id 辅助方法
-impl AgentDelta {
-    /// 获取事件涉及的 Agent ID（用于影子状态更新）
-    pub fn event_agent_id(&self) -> String {
-        match self {
-            AgentDelta::AgentMoved { id, .. } => id.clone(),
-            AgentDelta::AgentDied { id, .. } => id.clone(),
-            AgentDelta::AgentSpawned { id, .. } => id.clone(),
-            AgentDelta::HealedByCamp { agent_id, .. } => agent_id.clone(),
-            AgentDelta::SurvivalWarning { agent_id, .. } => agent_id.clone(),
-            // 其他事件可能不涉及特定 Agent ID
-            _ => String::new(),
-        }
     }
 }

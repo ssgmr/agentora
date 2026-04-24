@@ -25,7 +25,7 @@ pub use world::World;
 pub use seed::WorldSeed;
 pub use snapshot::WorldSnapshot;
 pub use narrative::{NarrativeBuilder, EventType, action_type_display};
-pub use simulation::{SimConfig, AgentDelta};
+pub use simulation::{SimConfig, Delta, DeltaEnvelope};
 
 // 重导出 legacy 和 vision 类型（已移动到 world 模块）
 pub use world::legacy::{Legacy, LegacyType, EchoLog, LegacyInteractionType, LegacyInteractionResult, LegacyEvent};

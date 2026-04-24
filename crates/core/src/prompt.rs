@@ -379,6 +379,12 @@ impl PromptBuilder {
                 - 你可以用资源建造建筑、与其他 Agent 交易或战斗\n\
                 - 你应该根据当前状态和环境，自主决定做什么\n\
                 \n\
+                【社交规则】\n\
+                - Talk对话能建立信任：对附近Agent说话会增加彼此信任值（越高越容易达成交易/结盟）\n\
+                - TradeOffer发起交易后，你提供的资源会被冻结，等待对方TradeAccept才能完成交换；对方拒绝或超时后资源退还给你。\n\
+                - AllyPropose结盟需要信任值>0.5；结盟后双方视为盟友，不能互相攻击。\n\
+                - 接受结盟请求使用AllyAccept（传入请求中显示的ally_id）\n\
+                \n\
                 【地形与资源分布规律】\n\
                 不同地形产出的资源类型不同，根据需要选择合适地形采集：\n\
                 - Forest(森林)：主要产出 wood(80%)，少量 food(15%)、stone(5%) — 找木材去森林\n\
@@ -512,9 +518,20 @@ impl PromptBuilder {
             return text.to_string();
         }
         let truncated: String = text.chars().take(max_chars).collect();
-        // 尝试在句号/换行处截断
-        if let Some(pos) = truncated.rfind(|c| c == '。' || c == '！' || c == '？' || c == '\n') {
-            return truncated[..pos + 1].to_string();
+        // 尝试在句号/换行处截断（使用char_indices避免UTF-8边界问题）
+        let mut char_pos = 0;
+        let mut last_sentence_end = None;
+        for (byte_idx, ch) in truncated.char_indices() {
+            if ch == '。' || ch == '！' || ch == '？' || ch == '\n' {
+                last_sentence_end = Some(byte_idx + ch.len_utf8());
+            }
+            char_pos += 1;
+            if char_pos >= max_chars {
+                break;
+            }
+        }
+        if let Some(end) = last_sentence_end {
+            return truncated[..end].to_string();
         }
         truncated
     }
@@ -539,19 +556,55 @@ impl PromptBuilder {
         s.push_str("方向值必须是：north / south / east / west（四个选项之一）\n");
         s.push_str("请参考「推荐路径」和「相邻格」部分的建议选择正确的方向。\n\n");
 
-        s.push_str("动作说明：\n");
-        s.push_str("- MoveToward: 移动到相邻格（只能1格）\n");
-        s.push_str("    params: {\"direction\": \"north/south/east/west\"}\n");
-        s.push_str("- Gather: 采集脚下资源（必须先移动到资源格）\n");
+        s.push_str("【可用动作手册】\n");
+        s.push_str("—— 生存类 ——\n");
+        s.push_str("- Eat：消耗背包中1个food，饱食度+30（不超过100）。饱食度/水分度≤30时会每tick掉HP，优先使用！\n");
+        s.push_str("- Drink：消耗背包中1个water，水分度+25（不超过100）。同上，危急时优先使用。\n");
+        s.push_str("- Gather：采集你脚下所在格的资源，每次获得2个。必须先用MoveToward到达资源格才能采集。\n");
         s.push_str("    params: {\"resource\": \"food/water/wood/stone/iron\"}\n");
-        s.push_str("- Eat: 消耗1个food，饱食度+30\n");
-        s.push_str("- Drink: 消耗1个water，水分度+25\n");
-        s.push_str("- Build: 建造建筑\n");
+        s.push_str("- MoveToward：向指定方向移动1格（只能到相邻格）。要到达远处需连续多次使用。\n");
+        s.push_str("    params: {\"direction\": \"north/south/east/west\"}\n");
+        s.push_str("- Wait：原地等待1回合（什么也不做），饱食度/水分度仍会正常衰减。\n");
+        s.push_str("\n");
+        s.push_str("—— 建造类 ——\n");
+        s.push_str("- Build：建造建筑，消耗对应资源。建筑可改变周围环境效果：\n");
+        s.push_str("    Camp（营地）：消耗wood×5+stone×2，范围内每tick恢复2HP（适合受伤时在旁边休息）\n");
+        s.push_str("    Fence（围栏）：消耗wood×2，低成本的防御/标记建筑\n");
+        s.push_str("    Warehouse（仓库）：消耗wood×10+stone×5，附近背包堆叠上限从20提升到40，适合大量囤积资源时使用。\n");
         s.push_str("    params: {\"structure\": \"Camp/Fence/Warehouse\"}\n");
-        s.push_str("- Talk: 与附近Agent对话\n");
-        s.push_str("- Attack: 攻击相邻格Agent\n");
-        s.push_str("- Explore: 随机移动1-3步探索\n");
-        s.push_str("- Wait: 原地等待\n\n");
+        s.push_str("\n");
+        s.push_str("—— 社交类 ——\n");
+        s.push_str("- Talk：与同格及附近3格范围内的所有Agent对话。内容自定义，可建立信任、传递信息、影响关系。\n");
+        s.push_str("    每回合对话会增加与对方的信任值。信任值高后对方更可能接受你的交易/结盟提议。\n");
+        s.push_str("    params: {\"message\": \"对话内容\"}\n");
+        s.push_str("- Attack：攻击相邻格（曼哈顿距离=1）的Agent，造成10点伤害。不能攻击盟友。\n");
+        s.push_str("    对方会反击并降低信任值。击败对方可获得经验，但会结仇。\n");
+        s.push_str("    params: {\"target_id\": \"Agent的ID\"}\n");
+        s.push_str("\n");
+        s.push_str("—— 交易类（双向资源交换）——\n");
+        s.push_str("- TradeOffer：向指定Agent发起交易提议。你提出用某些资源换取对方某些资源。\n");
+        s.push_str("    提议后，你提供的资源会被冻结（暂扣），对方需在下一回合用TradeAccept接受才能完成交换。\n");
+        s.push_str("    如果对方拒绝或超时，冻结资源会退还给你。\n");
+        s.push_str("    params: {\"target_id\": \"Agent的ID\", \"offer\": {\"wood\": 5}, \"want\": {\"food\": 3}}\n");
+        s.push_str("- TradeAccept：接受一个待处理的交易提议。接受后双方立即交换资源。\n");
+        s.push_str("    使用场景：当感知到「待处理交易」中有其他Agent向你发起提议时，用此动作接受。\n");
+        s.push_str("    params: {\"trade_id\": \"待处理交易中显示的trade_id\"}\n");
+        s.push_str("- TradeReject：拒绝一个待处理的交易提议。拒绝后对方的冻结资源退还，交易取消。\n");
+        s.push_str("    使用场景：不想接受某个交易时使用。\n");
+        s.push_str("    params: {\"trade_id\": \"待处理交易中显示的trade_id\"}\n");
+        s.push_str("\n");
+        s.push_str("—— 结盟类（建立盟友关系）——\n");
+        s.push_str("- AllyPropose：向信任值>0.5的Agent提议结盟。结盟后双方视为盟友，不能互相攻击。\n");
+        s.push_str("    params: {\"target_id\": \"Agent的ID\"}\n");
+        s.push_str("- AllyAccept：接受一个待处理的结盟请求。接受后双方正式成为盟友。\n");
+        s.push_str("    使用场景：当感知到「待处理结盟请求」中有其他Agent向你提议时，用此动作接受。\n");
+        s.push_str("    params: {\"ally_id\": \"待处理结盟请求中显示的ally_id\"}\n");
+        s.push_str("- AllyReject：拒绝一个待处理的结盟请求。\n");
+        s.push_str("    params: {\"ally_id\": \"待处理结盟请求中显示的ally_id\"}\n");
+        s.push_str("\n");
+        s.push_str("—— 遗产类 ——\n");
+        s.push_str("- InteractLegacy：与附近遗迹交互。Worship（祭拜）可获得经验或策略，Pickup（拾取）可获得遗物中的资源。\n");
+        s.push_str("    params: {\"legacy_id\": \"遗迹ID\", \"interaction\": \"Worship/Pickup\"}\n");
 
         s.push_str("决策优先级：\n");
         s.push_str("1. 生存危急（饱食度/水分度≤30）：优先 Eat/Drink 或移动到资源\n");

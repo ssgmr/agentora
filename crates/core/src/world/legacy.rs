@@ -142,7 +142,6 @@ impl EchoLog {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LegacyInteractionType {
     Worship,   // 祭拜
-    Explore,   // 探索遗迹
     Pickup,    // 拾取物品
 }
 
@@ -150,7 +149,6 @@ pub enum LegacyInteractionType {
 #[derive(Debug, Clone)]
 pub enum LegacyInteractionResult {
     Worshipped { legacy_id: String },
-    Explored { legacy_id: String, echo_gained: EchoLog },
     Pickup { legacy_id: String, items_gained: HashMap<String, u32> },
 }
 

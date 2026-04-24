@@ -13,7 +13,6 @@ pub enum EventType {
     // 移动类
     Move,
     MoveToward,
-    Explore,
 
     // 资源类
     Gather,
@@ -60,7 +59,7 @@ impl EventType {
             EventType::Move | EventType::MoveToward | EventType::Wait => "#FFFFFF",
 
             // 浅绿 - 探索/采集
-            EventType::Explore | EventType::Gather => "#88CC44",
+            EventType::Gather => "#88CC44",
 
             // 绿色 - 恢复/治愈
             EventType::Eat | EventType::Drink | EventType::Healed => "#4CAF50",
@@ -107,7 +106,6 @@ impl EventType {
         match self {
             EventType::Move => "move",
             EventType::MoveToward => "move_toward",
-            EventType::Explore => "explore",
             EventType::Gather => "gather",
             EventType::Eat => "eat",
             EventType::Drink => "drink",
@@ -278,7 +276,6 @@ pub fn action_type_display(action_type: ActionType) -> &'static str {
         ActionType::Build { .. } => "建造",
         ActionType::Attack { .. } => "攻击",
         ActionType::Talk { .. } => "对话",
-        ActionType::Explore { .. } => "探索",
         ActionType::TradeOffer { .. } => "交易提议",
         ActionType::TradeAccept { .. } => "交易接受",
         ActionType::TradeReject { .. } => "交易拒绝",

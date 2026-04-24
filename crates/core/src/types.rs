@@ -206,7 +206,6 @@ pub enum ActionType {
     AllyPropose { target_id: AgentId },
     AllyAccept { ally_id: AgentId },
     AllyReject { ally_id: AgentId },
-    Explore { target_region: u32 },
     Wait,
     Eat,
     Drink,
@@ -217,7 +216,6 @@ pub enum ActionType {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LegacyInteraction {
     Worship,   // 祭拜
-    Explore,   // 探索遗迹
     Pickup,    // 拾取物品
 }
 

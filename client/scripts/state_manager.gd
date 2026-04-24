@@ -13,6 +13,7 @@ signal resource_changed(x: int, y: int, resource_type: String, amount: int)
 signal structure_changed(x: int, y: int, structure_type: String, owner_id: String)
 signal narrative_added(event: Dictionary)
 signal milestone_reached(name: String, display_name: String, tick: int)
+signal filter_changed()  # 频道/过滤变化信号
 
 # ===== 状态容器 =====
 var _agents: Dictionary = {}  # agent_id -> agent_data
@@ -24,6 +25,8 @@ var _structures: Dictionary = {}  # (x,y) -> {type, owner_id}
 var _narrative_events: Array = []  # 叙事事件列表
 var _milestones: Array = []  # 里程碑列表
 var _current_tick: int = 0
+var _narrative_channel: String = "local"  # 当前叙事频道 (local/nearby/world)
+var _narrative_agent_filter: String = ""  # 当前叙事 Agent 过滤（空=全部）
 
 # ===== 查询接口 =====
 
@@ -72,6 +75,25 @@ func get_milestones() -> Array:
 ## 获取地形尺寸
 func get_map_size() -> Vector2i:
 	return Vector2i(_terrain_width, _terrain_height)
+
+## 获取当前叙事频道
+func get_narrative_channel() -> String:
+	return _narrative_channel
+
+## 设置叙事频道
+func set_narrative_channel(channel: String) -> void:
+	if channel in ["local", "nearby", "world"]:
+		_narrative_channel = channel
+		filter_changed.emit()
+
+## 获取叙事 Agent 过滤
+func get_narrative_agent_filter() -> String:
+	return _narrative_agent_filter
+
+## 设置叙事 Agent 过滤
+func set_narrative_agent_filter(agent_id: String) -> void:
+	_narrative_agent_filter = agent_id
+	filter_changed.emit()
 
 # ===== 内部方法 =====
 
@@ -133,80 +155,80 @@ func _on_world_updated(snapshot: Dictionary) -> void:
 	state_updated.emit(snapshot)
 
 ## 处理 agent_delta 信号（增量更新）
+## 新格式：agent_state_changed 或 world_event
 func _on_agent_delta(delta: Dictionary) -> void:
 	var event_type = delta.get("type", "")
 
 	match event_type:
-		"agent_moved":
-			var agent_id = delta.get("id", "")
-			var name = delta.get("name", "")
-			var pos = delta.get("position", Vector2.ZERO)
-			var health = delta.get("health", 100)
-			var max_health = delta.get("max_health", 100)
-			var is_alive = delta.get("is_alive", true)
-			var age = delta.get("age", 0)
+		"agent_state_changed":
+			var agent_id = delta.get("agent_id", "")
+			var state = delta.get("state", {})
+			var change_hint = delta.get("change_hint", "")
 
 			var agent_data = {
 				"id": agent_id,
-				"name": name,
-				"position": pos,
-				"health": health,
-				"max_health": max_health,
-				"is_alive": is_alive,
-				"age": age
+				"name": state.get("name", ""),
+				"position": Vector2(state.get("position", [0, 0])[0], state.get("position", [0, 0])[1]),
+				"health": state.get("health", 100),
+				"max_health": state.get("max_health", 100),
+				"satiety": state.get("satiety", 50),
+				"hydration": state.get("hydration", 50),
+				"is_alive": state.get("is_alive", true),
+				"age": state.get("age", 0),
+				"level": state.get("level", 1),
+				"current_action": state.get("current_action", ""),
+				"action_result": state.get("action_result", ""),
+				"reasoning": state.get("reasoning", ""),
+				"inventory_summary": state.get("inventory_summary", {}),
+				"change_hint": change_hint
 			}
 			_agents[agent_id] = agent_data
 			agent_changed.emit(agent_id, agent_data)
 
-		"agent_died":
-			var agent_id = delta.get("id", "")
-			if _agents.has(agent_id):
-				_agents[agent_id]["is_alive"] = false
-				agent_changed.emit(agent_id, _agents[agent_id])
+		"world_event":
+			var world_event_type = delta.get("event_type", "")
+			match world_event_type:
+				"structure_created":
+					var pos = delta.get("position", [0, 0])
+					var structure_type = delta.get("structure_type", "")
+					var owner_id = delta.get("owner_id", "")
+					var key = str(pos[0]) + "," + str(pos[1])
+					_structures[key] = {"type": structure_type, "owner_id": owner_id}
+					structure_changed.emit(pos[0], pos[1], structure_type, owner_id)
 
-		"agent_spawned":
-			var agent_id = delta.get("id", "")
-			var name = delta.get("name", "")
-			var pos = delta.get("position", Vector2.ZERO)
-			var health = delta.get("health", 100)
-			var max_health = delta.get("max_health", 100)
+				"structure_destroyed":
+					var pos = delta.get("position", [0, 0])
+					var key = str(pos[0]) + "," + str(pos[1])
+					_structures.erase(key)
+					structure_changed.emit(pos[0], pos[1], "", "")
 
-			var agent_data = {
-				"id": agent_id,
-				"name": name,
-				"position": pos,
-				"health": health,
-				"max_health": max_health,
-				"is_alive": true,
-				"age": 0
-			}
-			_agents[agent_id] = agent_data
-			agent_changed.emit(agent_id, agent_data)
+				"resource_changed":
+					var pos = delta.get("position", [0, 0])
+					var resource_type = delta.get("resource_type", "")
+					var amount = delta.get("amount", 0)
+					var key = str(pos[0]) + "," + str(pos[1])
+					_resources[key] = {"type": resource_type, "amount": amount}
+					resource_changed.emit(pos[0], pos[1], resource_type, amount)
 
-		"structure_created":
-			var x = delta.get("position", Vector2.ZERO).x
-			var y = delta.get("position", Vector2.ZERO).y
-			var structure_type = delta.get("structure_type", "")
-			var owner_id = delta.get("owner_id", "")
-			var key = str(int(x)) + "," + str(int(y))
-			_structures[key] = {"type": structure_type, "owner_id": owner_id}
-			structure_changed.emit(int(x), int(y), structure_type, owner_id)
+				"milestone_reached":
+					var name = delta.get("name", "")
+					var display_name = delta.get("display_name", "")
+					var tick = delta.get("tick", 0)
+					_milestones.append({"name": name, "display_name": display_name, "tick": tick})
+					milestone_reached.emit(name, display_name, tick)
 
-		"resource_changed":
-			var x = delta.get("position", Vector2.ZERO).x
-			var y = delta.get("position", Vector2.ZERO).y
-			var resource_type = delta.get("resource_type", "")
-			var amount = delta.get("amount", 0)
-			var key = str(int(x)) + "," + str(int(y))
-			_resources[key] = {"type": resource_type, "amount": amount}
-			resource_changed.emit(int(x), int(y), resource_type, amount)
-
-		"milestone_reached":
-			var name = delta.get("name", "")
-			var display_name = delta.get("display_name", "")
-			var tick = delta.get("tick", 0)
-			_milestones.append({"name": name, "display_name": display_name, "tick": tick})
-			milestone_reached.emit(name, display_name, tick)
+				"agent_narrative":
+					var narrative = delta.get("narrative_tick", 0)
+					var event_data = {
+						"tick": delta.get("narrative_tick", 0),
+						"agent_id": delta.get("narrative_agent_id", ""),
+						"agent_name": delta.get("narrative_agent_name", ""),
+						"event_type": delta.get("narrative_event_type", ""),
+						"description": delta.get("narrative_description", ""),
+						"color_code": delta.get("narrative_color", "#FFFFFF")
+					}
+					_narrative_events.append(event_data)
+					narrative_added.emit(event_data)
 
 ## 处理 narrative_event 信号
 func _on_narrative_event(event: Dictionary) -> void:

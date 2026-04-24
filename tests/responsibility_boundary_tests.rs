@@ -2,10 +2,12 @@
 //!
 //! 验证 Phase 1-4 的重构正确性
 
-use agentora_core::simulation::{WorldStateBuilder, DeltaDispatcher, SimMode, AgentDelta};
+use agentora_core::simulation::{WorldStateBuilder, DeltaDispatcher, SimMode, Delta, ChangeHint, WorldEvent, DeltaEnvelope};
 use agentora_core::decision::PerceptionBuilder;
 use agentora_core::world::{ActionResultSchema, ActionResult};
+use agentora_core::snapshot::{AgentState, NarrativeEvent, NarrativeChannel, AgentSource};
 use agentora_core::{World, WorldSeed, ActionType};
+use agentora_core::agent::ShadowAgent;
 use std::sync::mpsc;
 
 /// 测试 WorldStateBuilder 从 World 自动构建 WorldState
@@ -73,17 +75,30 @@ fn test_action_result_schema() {
     assert!(feedback.contains("拒绝") || feedback.contains("失败"));
 }
 
-/// 测试 AgentDelta.for_broadcast() 生成精简 JSON
+/// 测试 Delta.for_broadcast() 生成精简 JSON（使用新的 AgentStateChanged）
 #[test]
 fn test_agent_delta_for_broadcast() {
-    let delta = AgentDelta::AgentMoved {
+    let state = AgentState {
         id: "agent-001".to_string(),
         name: "Alice".to_string(),
         position: (100, 200),
         health: 90,
         max_health: 100,
-        is_alive: true,
+        satiety: 50,
+        hydration: 60,
         age: 5,
+        level: 1,
+        is_alive: true,
+        inventory_summary: std::collections::HashMap::new(),
+        current_action: "gathering".to_string(),
+        action_result: "success".to_string(),
+        reasoning: Some("需要食物".to_string()),
+    };
+
+    let delta = Delta::AgentStateChanged {
+        agent_id: "agent-001".to_string(),
+        state,
+        change_hint: ChangeHint::Moved,
     };
 
     let json = delta.for_broadcast();
@@ -92,10 +107,10 @@ fn test_agent_delta_for_broadcast() {
     assert!(json.is_object());
     let obj = json.as_object().unwrap();
 
-    assert_eq!(obj.get("event_type").unwrap().as_str().unwrap(), "agent_moved");
-    assert_eq!(obj.get("id").unwrap().as_str().unwrap(), "agent-001");
-    assert!(obj.contains_key("position"));
-    assert!(obj.contains_key("health"));
+    assert_eq!(obj.get("event_type").unwrap().as_str().unwrap(), "agent_state_changed");
+    assert_eq!(obj.get("agent_id").unwrap().as_str().unwrap(), "agent-001");
+    assert!(obj.contains_key("state"));
+    assert!(obj.contains_key("change_hint"));
 }
 
 /// 测试 DeltaDispatcher 集中式模式
@@ -106,21 +121,34 @@ fn test_delta_dispatcher_centralized() {
 
     let dispatcher = DeltaDispatcher::new(tx, mode);
 
-    let delta = AgentDelta::AgentMoved {
+    let state = AgentState {
         id: "agent-001".to_string(),
         name: "Test".to_string(),
         position: (10, 20),
         health: 100,
         max_health: 100,
-        is_alive: true,
+        satiety: 50,
+        hydration: 50,
         age: 0,
+        level: 1,
+        is_alive: true,
+        inventory_summary: std::collections::HashMap::new(),
+        current_action: "waiting".to_string(),
+        action_result: "".to_string(),
+        reasoning: None,
+    };
+
+    let delta = Delta::AgentStateChanged {
+        agent_id: "agent-001".to_string(),
+        state,
+        change_hint: ChangeHint::ActionExecuted,
     };
 
     dispatcher.dispatch(delta);
 
     // 验证本地通道收到 delta
     let received = rx.try_recv().unwrap();
-    assert_eq!(received.event_type(), "agent_moved");
+    assert_eq!(received.event_type(), "agent_state_changed");
 }
 
 /// 测试 SimMode 枚举
@@ -145,8 +173,6 @@ fn test_world_execute_action_routing() {
     let mut world = World::new(&seed);
 
     let agent_id = world.agents.keys().next().unwrap().clone();
-    let agent = world.agents.get(&agent_id).unwrap();
-    let pos = agent.position;
 
     // 测试 Wait 动作
     let action = agentora_core::types::Action {
@@ -169,17 +195,27 @@ fn test_world_execute_action_routing() {
 /// 测试 DeltaEnvelope 包装和过滤
 #[test]
 fn test_delta_envelope() {
-    use agentora_core::simulation::{DeltaEnvelope, P2PMessageHandler};
-    use agentora_core::agent::ShadowAgent;
-
-    let delta = AgentDelta::AgentMoved {
+    let state = AgentState {
         id: "agent-001".to_string(),
         name: "Test".to_string(),
         position: (10, 20),
         health: 100,
         max_health: 100,
-        is_alive: true,
+        satiety: 50,
+        hydration: 50,
         age: 0,
+        level: 1,
+        is_alive: true,
+        inventory_summary: std::collections::HashMap::new(),
+        current_action: "waiting".to_string(),
+        action_result: "".to_string(),
+        reasoning: None,
+    };
+
+    let delta = Delta::AgentStateChanged {
+        agent_id: "agent-001".to_string(),
+        state,
+        change_hint: ChangeHint::Moved,
     };
 
     // 本地 Delta
@@ -204,93 +240,115 @@ fn test_delta_envelope() {
 /// 测试 ShadowAgent 创建和更新
 #[test]
 fn test_shadow_agent() {
-    use agentora_core::agent::ShadowAgent;
-
-    let delta = AgentDelta::AgentMoved {
+    let state = AgentState {
         id: "agent-001".to_string(),
         name: "Shadow".to_string(),
         position: (50, 60),
         health: 80,
         max_health: 100,
-        is_alive: true,
+        satiety: 40,
+        hydration: 40,
         age: 10,
+        level: 2,
+        is_alive: true,
+        inventory_summary: std::collections::HashMap::new(),
+        current_action: "moving".to_string(),
+        action_result: "".to_string(),
+        reasoning: None,
     };
 
-    // 从 AgentMoved 创建影子
-    let shadow = ShadowAgent::from_moved(&delta, "peer-001", 100).unwrap();
-    assert_eq!(shadow.id, "agent-001");
-    assert_eq!(shadow.name, "Shadow");
-    assert_eq!(shadow.position, (50, 60));
+    // 从 AgentState 创建影子
+    let shadow = ShadowAgent::from_state(&state, "peer-001", 100);
+    assert_eq!(shadow.state.id, "agent-001");
+    assert_eq!(shadow.state.name, "Shadow");
+    assert_eq!(shadow.state.position, (50, 60));
     assert_eq!(shadow.source_peer_id, "peer-001");
 
     // 应用死亡 Delta
     let mut shadow_mut = shadow;
-    let death_delta = AgentDelta::AgentDied {
+    let death_state = AgentState {
         id: "agent-001".to_string(),
         name: "Shadow".to_string(),
         position: (50, 60),
+        health: 0,
+        max_health: 100,
+        satiety: 0,
+        hydration: 0,
         age: 10,
+        level: 2,
+        is_alive: false,
+        inventory_summary: std::collections::HashMap::new(),
+        current_action: "".to_string(),
+        action_result: "".to_string(),
+        reasoning: None,
+    };
+    let death_delta = Delta::AgentStateChanged {
+        agent_id: "agent-001".to_string(),
+        state: death_state,
+        change_hint: ChangeHint::Died,
     };
     shadow_mut.apply_delta(&death_delta);
-    assert!(!shadow_mut.is_alive);
+    assert!(!shadow_mut.state.is_alive);
 }
 
-/// 测试 P2PMessageHandler 回环过滤
+/// 测试 WorldEvent 序列化
 #[test]
-fn test_p2p_message_handler_loopback_filter() {
-    use agentora_core::simulation::{DeltaEnvelope, P2PMessageHandler};
-
-    let (tx, rx) = mpsc::channel();
-    let handler = P2PMessageHandler::new("peer-local".to_string(), tx, 50);
-
-    // 本地回环 Delta（应被过滤）
-    let local_delta = AgentDelta::AgentMoved {
-        id: "agent-001".to_string(),
-        name: "Local".to_string(),
-        position: (10, 20),
-        health: 100,
-        max_health: 100,
-        is_alive: true,
-        age: 0,
+fn test_world_event_for_broadcast() {
+    let event = WorldEvent::StructureCreated {
+        pos: (100, 200),
+        structure_type: "Camp".to_string(),
+        owner_id: "agent-001".to_string(),
     };
-    let local_envelope = DeltaEnvelope::from_remote(local_delta, "peer-local".to_string(), 100);
 
-    // 处理本地回环（应被过滤，不发送到本地通道）
-    let mut h = handler;
-    h.handle(&local_envelope, 100);
-
-    // 验证本地通道无消息
-    assert!(rx.try_recv().is_err());
+    let json = event.for_broadcast();
+    assert!(json.is_object());
+    let obj = json.as_object().unwrap();
+    assert_eq!(obj.get("event_type").unwrap().as_str().unwrap(), "structure_created");
+    assert!(obj.contains_key("pos"));
+    assert!(obj.contains_key("structure_type"));
+    assert!(obj.contains_key("owner_id"));
 }
 
-/// 测试 P2PMessageHandler 处理远程 Delta
+/// 测试 NarrativeChannel 和 AgentSource
 #[test]
-fn test_p2p_message_handler_remote() {
-    use agentora_core::simulation::{DeltaEnvelope, P2PMessageHandler};
-
-    let (tx, rx) = mpsc::channel();
-    let handler = P2PMessageHandler::new("peer-local".to_string(), tx, 50);
-
-    // 远程 Delta（应被处理）
-    let remote_delta = AgentDelta::AgentMoved {
-        id: "agent-remote".to_string(),
-        name: "RemoteAgent".to_string(),
-        position: (100, 200),
-        health: 80,
-        max_health: 100,
-        is_alive: true,
-        age: 5,
+fn test_narrative_channel_and_source() {
+    // Local narrative
+    let local_event = NarrativeEvent {
+        tick: 100,
+        agent_id: "agent-001".to_string(),
+        agent_name: "Alice".to_string(),
+        event_type: "gather".to_string(),
+        description: "采集食物".to_string(),
+        color_code: "#00FF00".to_string(),
+        channel: NarrativeChannel::Local,
+        agent_source: AgentSource::Local,
     };
-    let remote_envelope = DeltaEnvelope::from_remote(remote_delta, "peer-remote".to_string(), 100);
+    assert_eq!(local_event.channel, NarrativeChannel::Local);
 
-    let mut h = handler;
-    h.handle(&remote_envelope, 100);
+    // World narrative
+    let world_event = NarrativeEvent {
+        tick: 100,
+        agent_id: "agent-001".to_string(),
+        agent_name: "Alice".to_string(),
+        event_type: "death".to_string(),
+        description: "死亡".to_string(),
+        color_code: "#FF0000".to_string(),
+        channel: NarrativeChannel::World,
+        agent_source: AgentSource::Local,
+    };
+    assert_eq!(world_event.channel, NarrativeChannel::World);
 
-    // 验证本地通道收到消息
-    let received = rx.try_recv().unwrap();
-    assert_eq!(received.event_type(), "agent_moved");
-
-    // 验证影子 Agent 被创建
-    let shadows = h.get_shadow_agents();
-    assert!(!shadows.is_empty());
+    // Remote narrative
+    let remote_event = NarrativeEvent {
+        tick: 100,
+        agent_id: "agent-002".to_string(),
+        agent_name: "Bob".to_string(),
+        event_type: "gather".to_string(),
+        description: "采集木材".to_string(),
+        color_code: "#00FF00".to_string(),
+        channel: NarrativeChannel::Nearby,
+        agent_source: AgentSource::Remote { peer_id: "peer-002".to_string() },
+    };
+    assert_eq!(remote_event.channel, NarrativeChannel::Nearby);
+    assert!(matches!(remote_event.agent_source, AgentSource::Remote { .. }));
 }

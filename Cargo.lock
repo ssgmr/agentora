@@ -92,6 +92,7 @@ name = "agentora-core"
 version = "0.1.0"
 dependencies = [
  "agentora-ai",
+ "agentora-network",
  "agentora-sync",
  "anyhow",
  "async-trait",

@@ -3,9 +3,10 @@
 extends Node2D
 
 const AGENT_COLOR = Color(0.2, 0.6, 0.9)
-const AGENT_SIZE = 24
+const AGENT_SIZE = 32
 const SELECTION_COLOR = Color.YELLOW
 const LABEL_FONT_SIZE = 11
+const GLOW_RADIUS = 20
 
 var _agent_idle_texture: Texture2D
 var _agent_selected_texture: Texture2D
@@ -43,8 +44,23 @@ func _physics_process(delta: float) -> void:
 	# 累加效果时间
 	_effect_time += delta
 
+	# 更新 Agent 脉动光环（所有 Agent 持续可见）
+	_update_glow_effects()
+
 	# 更新 Agent 闪烁效果
 	_update_flash_effects(delta)
+
+
+func _update_glow_effects() -> void:
+	"""所有 Agent 的持续脉动光环"""
+	var pulse = sin(_effect_time * 2.5) * 0.3 + 0.7  # 0.4 ~ 1.0
+	for agent_id in _agent_nodes.keys():
+		var agent_node: Node2D = _agent_nodes[agent_id]
+		var glow = agent_node.get_node_or_null("Glow")
+		if glow:
+			# 脉动透明度
+			var alpha = 0.12 * pulse
+			glow.color = Color(0.2, 0.7, 1.0, alpha)
 
 
 func _on_state_updated(snapshot: Dictionary) -> void:
@@ -138,13 +154,13 @@ func _create_agent_node(agent_id: String, data: Dictionary) -> Node2D:
 	var container = Node2D.new()
 	container.name = agent_id
 
-	# 半透明黑色背景（增强对比）
-	var bg = ColorRect.new()
-	bg.name = "Bg"
-	bg.custom_minimum_size = Vector2(AGENT_SIZE + 4, AGENT_SIZE + 4)
-	bg.position = Vector2(-(AGENT_SIZE + 4) / 2.0, -(AGENT_SIZE + 4) / 2.0)
-	bg.color = Color(0, 0, 0, 0.3)
-	container.add_child(bg)
+	# 脉动光环（让 Agent 更明显）
+	var glow = ColorRect.new()
+	glow.name = "Glow"
+	glow.custom_minimum_size = Vector2(GLOW_RADIUS, GLOW_RADIUS)
+	glow.position = Vector2(-GLOW_RADIUS / 2.0, -GLOW_RADIUS / 2.0)
+	glow.color = Color(0.2, 0.7, 1.0, 0.15)
+	container.add_child(glow)
 
 	# Agent 主体 - 使用 PNG 纹理
 	var sprite = Sprite2D.new()
@@ -154,10 +170,10 @@ func _create_agent_node(agent_id: String, data: Dictionary) -> Node2D:
 	sprite.scale = Vector2(AGENT_SIZE / 32.0, AGENT_SIZE / 32.0)
 	container.add_child(sprite)
 
-	# 创建标签（带阴影）
+	# 创建标签（带阴影，放在 Agent 上方）
 	var label = Label.new()
 	label.name = "Label"
-	label.position = Vector2(-30, -AGENT_SIZE / 2.0 - 14)
+	label.position = Vector2(-40, -AGENT_SIZE / 2.0 - 16)
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.add_theme_font_size_override("font_size", LABEL_FONT_SIZE)
 	label.add_theme_color_override("font_shadow_color", Color.BLACK)
@@ -217,7 +233,7 @@ func _input(event: InputEvent) -> void:
 			var agent_node: Node2D = _agent_nodes[agent_id]
 			var distance = agent_node.position.distance_to(mouse_pos)
 
-			if distance < AGENT_SIZE:
+			if distance < AGENT_SIZE / 2.0 + 4:
 				var bridge = BridgeAccessor.get_bridge()
 				if bridge:
 					bridge.select_agent(agent_id)

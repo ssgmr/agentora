@@ -6,7 +6,7 @@
 provider = "openai"
 api_base = "http://localhost:1234"
 api_key = ""  # 本地LLM通常不需要真实key
-model = "gemma-4-e4b-it"
+model = "qwen3.5-4b@q4_k_m"
 timeout_seconds = 30
 
 # Anthropic兼容端点 (备用)

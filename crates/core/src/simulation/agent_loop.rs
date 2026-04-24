@@ -19,10 +19,10 @@ use std::collections::HashMap;
 
 use crate::{World, AgentId, Action, ActionType};
 use crate::decision::{DecisionPipeline, infer_state_mode, PerceptionBuilder};
-use crate::simulation::{WorldStateBuilder, AgentDelta, DeltaEmitter, NarrativeEmitter, MemoryRecorder};
+use crate::simulation::{WorldStateBuilder, Delta, DeltaEmitter, NarrativeEmitter, MemoryRecorder};
 
 /// 叙事事件（推送至前端）
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct NarrativeEvent {
     pub tick: u64,
     pub agent_id: String,
@@ -32,13 +32,57 @@ pub struct NarrativeEvent {
     pub color_code: String,
 }
 
+impl Default for NarrativeEvent {
+    fn default() -> Self {
+        Self {
+            tick: 0,
+            agent_id: String::new(),
+            agent_name: String::new(),
+            event_type: String::new(),
+            description: String::new(),
+            color_code: String::new(),
+        }
+    }
+}
+
+impl Default for super::delta::DeltaEnvelope {
+    fn default() -> Self {
+        use super::delta::ChangeHint;
+        use crate::snapshot::AgentState;
+        Self {
+            delta: Delta::AgentStateChanged {
+                agent_id: String::new(),
+                state: AgentState {
+                    id: String::new(),
+                    name: String::new(),
+                    position: (0, 0),
+                    health: 0,
+                    max_health: 0,
+                    satiety: 0,
+                    hydration: 0,
+                    age: 0,
+                    level: 0,
+                    is_alive: true,
+                    inventory_summary: std::collections::HashMap::new(),
+                    current_action: String::new(),
+                    action_result: String::new(),
+                    reasoning: None,
+                },
+                change_hint: ChangeHint::Spawned,
+            },
+            source_peer_id: None,
+            tick: 0,
+        }
+    }
+}
+
 /// Agent 同步决策+执行循环
 /// 每个 Agent 独立 task，在同一个 task 内顺序完成：读取状态 → LLM 决策 → 应用动作 → 推送 delta
 pub async fn run_agent_loop(
     world: Arc<Mutex<World>>,
     agent_id: AgentId,
     pipeline: Arc<DecisionPipeline>,
-    delta_tx: Sender<AgentDelta>,
+    delta_tx: Sender<Delta>,
     narrative_tx: Sender<NarrativeEvent>,
     is_npc: bool,
     interval_secs: u32,

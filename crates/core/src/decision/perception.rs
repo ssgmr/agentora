@@ -104,6 +104,12 @@ impl PerceptionBuilder {
         // 附近遗产
         Self::build_legacies_section(&mut summary, world_state);
 
+        // 待处理交易
+        Self::build_pending_trades_section(&mut summary, world_state);
+
+        // 待处理结盟请求
+        Self::build_pending_ally_requests_section(&mut summary, world_state);
+
         // 宏观区域上下文
         Self::build_region_context(&mut summary, world_state);
 
@@ -316,6 +322,54 @@ impl PerceptionBuilder {
                     legacy.legacy_type, dir_desc, legacy.original_agent_name, items_hint
                 ));
             }
+        }
+    }
+
+    /// 构建待处理交易部分
+    fn build_pending_trades_section(summary: &mut String, world_state: &WorldState) {
+        if !world_state.pending_trades.is_empty() {
+            summary.push_str(&format!("待处理交易 ({} 个)：\n", world_state.pending_trades.len()));
+            summary.push_str("  【提示】以下是其他Agent向你发起的交易提议。你可以：\n");
+            summary.push_str("    - 用 TradeAccept 接受交易（交换双方资源）\n");
+            summary.push_str("    - 用 TradeReject 拒绝交易（取消提议）\n");
+            for trade in &world_state.pending_trades {
+                let offer_str: Vec<String> = trade.offer.iter()
+                    .map(|(r, n)| format!("{} x{}", r.as_str(), n))
+                    .collect();
+                let want_str: Vec<String> = trade.want.iter()
+                    .map(|(r, n)| format!("{} x{}", r.as_str(), n))
+                    .collect();
+                let offer_display = if offer_str.is_empty() { "无".to_string() } else { offer_str.join(" + ") };
+                let want_display = if want_str.is_empty() { "无".to_string() } else { want_str.join(" + ") };
+                summary.push_str(&format!(
+                    "  [trade_id:{}] {} [ID:{}] 提议：用 {} 换你的 {}\n",
+                    trade.trade_id,
+                    trade.proposer_name,
+                    trade.proposer_id.as_str(),
+                    offer_display,
+                    want_display,
+                ));
+            }
+            summary.push('\n');
+        }
+    }
+
+    /// 构建待处理结盟请求部分
+    fn build_pending_ally_requests_section(summary: &mut String, world_state: &WorldState) {
+        if !world_state.pending_ally_requests.is_empty() {
+            summary.push_str(&format!("待处理结盟请求 ({} 个)：\n", world_state.pending_ally_requests.len()));
+            summary.push_str("  【提示】以下是其他Agent向你发起的结盟请求。你可以：\n");
+            summary.push_str("    - 用 AllyAccept 接受结盟（成为盟友，不能互相攻击）\n");
+            summary.push_str("    - 用 AllyReject 拒绝结盟（取消请求）\n");
+            for request in &world_state.pending_ally_requests {
+                summary.push_str(&format!(
+                    "  [ally_id:{}] {} 请求与你结盟（使用 AllyAccept ally_id:{} 接受）\n",
+                    request.ally_id.as_str(),
+                    request.proposer_name,
+                    request.ally_id.as_str(),
+                ));
+            }
+            summary.push('\n');
         }
     }
 

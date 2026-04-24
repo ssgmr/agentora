@@ -21,6 +21,7 @@ noise.workspace = true
 
 agentora-ai = { workspace = true }
 agentora-sync = { workspace = true }
+agentora-network = { workspace = true, optional = true }
 
 sha2 = "0.10"
 hex = "0.4"
@@ -29,3 +30,6 @@ serde_yaml = "0.9"
 
 [dev-dependencies]
 tokio-test = "0.4"
+
+[features]
+p2p = ["agentora-network"]

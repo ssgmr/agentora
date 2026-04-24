@@ -7,7 +7,7 @@ use crate::world::resource;
 use crate::world::legacy::{Legacy, LegacyEvent};
 use crate::world::TradeStatus;
 use crate::types::{AgentId, ResourceType, StructureType, Position};
-use crate::snapshot::NarrativeEvent;
+use crate::snapshot::{NarrativeEvent, NarrativeChannel, AgentSource};
 use std::collections::HashMap;
 
 impl World {
@@ -79,6 +79,8 @@ impl World {
                 event_type: "trade_timeout".to_string(),
                 description: format!("{} 的交易提议超时取消，资源已解冻", proposer_name),
                 color_code: "#888888".to_string(),
+                channel: NarrativeChannel::Local,
+                agent_source: AgentSource::Local,
             });
 
             tracing::info!("交易 {} 超时取消，proposer {}", trade.trade_id, proposer_name);
@@ -191,6 +193,8 @@ impl World {
                 event_type: "death".to_string(),
                 description: format!("{} 已死亡{}{}", agent_name, res_desc, if !scattered.is_empty() { "，资源散落在地".to_string() } else { String::new() }),
                 color_code: "#FF0000".to_string(),
+                channel: NarrativeChannel::World, // 死亡是世界频道
+                agent_source: AgentSource::Local,
             });
 
             tracing::info!("Agent {} 死亡，产生遗产 {}", agent_name, legacy_event.legacy_id);

@@ -33,6 +33,7 @@ impl Default for SimMode {
 pub struct SimConfigFile {
     simulation: Option<SimSection>,
     inventory: Option<InvSection>,
+    p2p: Option<P2PSection>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -51,6 +52,16 @@ struct InvSection {
     max_slots: Option<usize>,
     max_stack_size: Option<u32>,
     warehouse_limit_multiplier: Option<u32>,
+}
+
+/// P2P 配置段
+#[derive(Debug, Clone, Deserialize)]
+struct P2PSection {
+    mode: Option<String>,
+    local_agent_ids: Option<Vec<String>>,
+    region_size: Option<u32>,
+    port: Option<u16>,
+    seed_peer: Option<String>,
 }
 
 /// 模拟配置（运行时使用的扁平结构）
@@ -78,6 +89,10 @@ pub struct SimConfig {
     pub inventory_max_stack_size: u32,
     /// 仓库附近堆叠上限倍率
     pub inventory_warehouse_multiplier: u32,
+    /// P2P 端口（仅 P2P 模式）
+    pub p2p_port: u16,
+    /// 种子节点地址（仅 P2P 模式）
+    pub seed_peer: Option<String>,
 }
 
 impl Default for SimConfig {
@@ -94,6 +109,8 @@ impl Default for SimConfig {
             inventory_max_slots: 20,
             inventory_max_stack_size: 20,
             inventory_warehouse_multiplier: 2,
+            p2p_port: 4001,
+            seed_peer: None,
         }
     }
 }
@@ -120,9 +137,27 @@ impl SimConfig {
                             if let Some(v) = inv.max_stack_size { cfg.inventory_max_stack_size = v; }
                             if let Some(v) = inv.warehouse_limit_multiplier { cfg.inventory_warehouse_multiplier = v; }
                         }
-                        tracing::info!("[SimConfig] 配置加载成功 [agents={} npc={} tick_interval={}s npc_interval={}s player_interval={}s vision_radius={} trade_timeout={} inv_slots={} inv_stack={} warehouse_mult={}]",
+                        // 解析 P2P 配置
+                        if let Some(p2p) = file.p2p {
+                            if let Some(mode_str) = p2p.mode {
+                                if mode_str == "p2p" {
+                                    let local_agent_ids = p2p.local_agent_ids.unwrap_or_default();
+                                    let region_size = p2p.region_size.unwrap_or(32);
+                                    cfg.mode = SimMode::P2P { local_agent_ids, region_size };
+                                }
+                            }
+                            if let Some(v) = p2p.port { cfg.p2p_port = v; }
+                            if let Some(v) = p2p.seed_peer {
+                                if !v.is_empty() {
+                                    cfg.seed_peer = Some(v);
+                                }
+                            }
+                        }
+                        tracing::info!("[SimConfig] 配置加载成功 [mode={} agents={} npc={} tick_interval={}s npc_interval={}s player_interval={}s vision_radius={} trade_timeout={} inv_slots={} inv_stack={} warehouse_mult={} p2p_port={} seed_peer={:?}]",
+                            if matches!(cfg.mode, SimMode::P2P { .. }) { "P2P" } else { "Centralized" },
                             cfg.initial_agent_count, cfg.npc_count, cfg.tick_interval_secs, cfg.npc_decision_interval_secs, cfg.player_decision_interval_secs, cfg.vision_radius, cfg.trade_timeout_ticks,
-                            cfg.inventory_max_slots, cfg.inventory_max_stack_size, cfg.inventory_warehouse_multiplier);
+                            cfg.inventory_max_slots, cfg.inventory_max_stack_size, cfg.inventory_warehouse_multiplier,
+                            cfg.p2p_port, cfg.seed_peer);
                         cfg
                     }
                     Err(e) => {

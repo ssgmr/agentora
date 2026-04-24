@@ -1,0 +1,25 @@
+# Node B 配置 - P2P 连接节点
+# 运行 1 个本地 Agent，端口 4002，连接到 Node A
+
+[simulation]
+initial_agent_count = 1
+npc_count = 0
+tick_interval_secs = 5
+npc_decision_interval_secs = 3
+player_decision_interval_secs = 2
+vision_radius = 10
+trade_timeout_ticks = 50
+
+[inventory]
+max_slots = 20
+max_stack_size = 20
+warehouse_limit_multiplier = 2
+
+[p2p]
+mode = "p2p"
+# local_agent_ids 为空，自动分配本地生成的 Agent
+local_agent_ids = []
+region_size = 32
+port = 4002
+# 连接到种子节点 Node A
+seed_peer = "/ip4/127.0.0.1/tcp/4001"

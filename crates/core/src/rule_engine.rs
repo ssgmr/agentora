@@ -5,6 +5,23 @@ use crate::types::{ActionType, AgentId, Position, TerrainType, ResourceType, Str
 use crate::world::vision::{NearbyAgentInfo, NearbyStructureInfo, NearbyLegacyInfo};
 use std::collections::{HashMap, HashSet};
 
+/// 待处理交易信息
+#[derive(Debug, Clone)]
+pub struct PendingTradeInfo {
+    pub trade_id: String,
+    pub proposer_name: String,
+    pub proposer_id: AgentId,
+    pub offer: HashMap<ResourceType, u32>,
+    pub want: HashMap<ResourceType, u32>,
+}
+
+/// 待处理结盟请求信息
+#[derive(Debug, Clone)]
+pub struct PendingAllyRequestInfo {
+    pub ally_id: AgentId,
+    pub proposer_name: String,
+}
+
 /// 世界状态快照（用于规则校验）
 #[derive(Debug, Clone)]
 pub struct WorldState {
@@ -28,6 +45,10 @@ pub struct WorldState {
     pub temp_preferences: Vec<(String, f32, u32)>, // (key, boost, remaining_ticks)
     /// Agent性格描述（用于Prompt注入，任务 2.6）
     pub agent_personality: Option<PersonalitySeed>,
+    /// 待处理的交易提议
+    pub pending_trades: Vec<PendingTradeInfo>,
+    /// 待处理的结盟请求
+    pub pending_ally_requests: Vec<PendingAllyRequestInfo>,
 }
 
 impl Default for WorldState {
@@ -49,6 +70,8 @@ impl Default for WorldState {
             last_move_direction: None,
             temp_preferences: Vec::new(),
             agent_personality: None,
+            pending_trades: Vec::new(),
+            pending_ally_requests: Vec::new(),
         }
     }
 }
@@ -419,9 +442,6 @@ impl RuleEngine {
                 } else {
                     (true, None)
                 }
-            }
-            ActionType::Explore { .. } => {
-                (true, None)
             }
             ActionType::Wait => {
                 (true, None)

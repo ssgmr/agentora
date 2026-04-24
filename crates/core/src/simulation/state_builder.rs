@@ -87,6 +87,21 @@ impl WorldStateBuilder {
                 .map(|p| (p.key.clone(), p.boost, p.remaining_ticks))
                 .collect(),
             agent_personality: Some(agent.personality.clone()),
+            pending_trades: world.pending_trades.iter()
+                .filter(|t| t.acceptor_id == *agent_id)
+                .map(|t| crate::rule_engine::PendingTradeInfo {
+                    trade_id: t.trade_id.clone(),
+                    proposer_name: world.agents.get(&t.proposer_id).map(|a| a.name.clone()).unwrap_or_else(|| "未知".to_string()),
+                    proposer_id: t.proposer_id.clone(),
+                    offer: t.offer_resources.iter()
+                        .filter_map(|(k, v)| Some((k.parse().ok()?, *v)))
+                        .collect(),
+                    want: t.want_resources.iter()
+                        .filter_map(|(k, v)| Some((k.parse().ok()?, *v)))
+                        .collect(),
+                })
+                .collect(),
+            pending_ally_requests: Vec::new(),
         })
     }
 

@@ -1,11 +1,12 @@
 //! Delta 发射器
 //!
-//! 从 Agent 动作结果构建 AgentDelta 事件并发送到 delta channel。
-//! 从 agent_loop.rs 迁移，实现职责单一化。
+//! 从 Agent 动作结果构建 Delta 事件并发送到 delta channel。
+//! 使用统一的 AgentState 和简化后的 Delta（AgentStateChanged + WorldEvent）。
 
 use crate::world::World;
 use crate::types::{AgentId, ActionType, Action};
-use super::delta::AgentDelta;
+use crate::snapshot::AgentState;
+use super::delta::{Delta, ChangeHint, WorldEvent};
 use super::agent_loop::NarrativeEvent;
 use std::sync::mpsc::Sender;
 
@@ -13,39 +14,55 @@ use std::sync::mpsc::Sender;
 pub struct DeltaEmitter;
 
 impl DeltaEmitter {
-    /// 构建并发送 Agent 移动/状态 delta
+    /// 构建并发送 Agent 状态 delta
     ///
-    /// # 参数
-    /// - `delta_tx`: delta 发送通道
-    /// - `world`: 世界状态引用
-    /// - `agent_id`: Agent ID
-    ///
-    /// # 返回
-    /// 发送的 delta 数量
+    /// 使用统一的 AgentState 结构
     pub fn emit_agent_state(
-        delta_tx: &Sender<AgentDelta>,
+        delta_tx: &Sender<Delta>,
         world: &World,
         agent_id: &AgentId,
+        change_hint: ChangeHint,
     ) -> usize {
         let delta = match world.agents.get(agent_id) {
             Some(agent) if agent.is_alive => {
-                Some(AgentDelta::AgentMoved {
+                // 使用 Agent::to_state() 构建统一状态
+                let state = AgentState {
                     id: agent.id.as_str().to_string(),
                     name: agent.name.clone(),
                     position: (agent.position.x, agent.position.y),
                     health: agent.health,
                     max_health: agent.max_health,
-                    is_alive: true,
+                    satiety: agent.satiety,
+                    hydration: agent.hydration,
                     age: agent.age,
-                })
+                    level: agent.level,
+                    is_alive: true,
+                    inventory_summary: agent.inventory.clone(),
+                    current_action: agent.last_action_type.clone().unwrap_or_default(),
+                    action_result: agent.last_action_result.clone().unwrap_or_default(),
+                    reasoning: None, // 本地有但不发送到远程
+                };
+                Some(state.to_delta(change_hint))
             }
             Some(agent) => {
-                Some(AgentDelta::AgentDied {
+                // 死亡状态
+                let state = AgentState {
                     id: agent.id.as_str().to_string(),
                     name: agent.name.clone(),
                     position: (agent.position.x, agent.position.y),
+                    health: 0,
+                    max_health: agent.max_health,
+                    satiety: 0,
+                    hydration: 0,
                     age: agent.age,
-                })
+                    level: agent.level,
+                    is_alive: false,
+                    inventory_summary: std::collections::HashMap::new(),
+                    current_action: String::new(),
+                    action_result: String::new(),
+                    reasoning: None,
+                };
+                Some(state.to_delta(ChangeHint::Died))
             }
             None => None,
         };
@@ -61,32 +78,21 @@ impl DeltaEmitter {
         sent_count
     }
 
-    /// 根据动作类型生成额外 delta
-    ///
-    /// # 参数
-    /// - `delta_tx`: delta 发送通道
-    /// - `world`: 世界状态引用
-    /// - `agent_id`: Agent ID
-    /// - `action`: 执行的动作
-    /// - `events`: 当前 tick 的叙事事件（用于提取交易/结盟信息）
-    ///
-    /// # 返回
-    /// 发送的额外 delta 数量
+    /// 根据动作类型生成 WorldEvent delta
     pub fn emit_action_deltas(
-        delta_tx: &Sender<AgentDelta>,
+        delta_tx: &Sender<Delta>,
         world: &World,
         agent_id: &AgentId,
         action: &Action,
         events: &[NarrativeEvent],
     ) -> usize {
-        let mut extra_deltas: Vec<AgentDelta> = Vec::new();
+        let mut world_events: Vec<WorldEvent> = Vec::new();
 
         match &action.action_type {
             ActionType::Build { structure } => {
                 if let Some(agent) = world.agents.get(agent_id) {
-                    extra_deltas.push(AgentDelta::StructureCreated {
-                        x: agent.position.x,
-                        y: agent.position.y,
+                    world_events.push(WorldEvent::StructureCreated {
+                        pos: (agent.position.x, agent.position.y),
                         structure_type: format!("{:?}", structure),
                         owner_id: agent_id.as_str().to_string(),
                     });
@@ -95,9 +101,8 @@ impl DeltaEmitter {
             ActionType::Gather { resource } => {
                 if let Some(agent) = world.agents.get(agent_id) {
                     if let Some(node) = world.resources.get(&agent.position) {
-                        extra_deltas.push(AgentDelta::ResourceChanged {
-                            x: agent.position.x,
-                            y: agent.position.y,
+                        world_events.push(WorldEvent::ResourceChanged {
+                            pos: (agent.position.x, agent.position.y),
                             resource_type: resource.as_str().to_string(),
                             amount: node.current_amount,
                         });
@@ -106,7 +111,7 @@ impl DeltaEmitter {
             }
             ActionType::TradeAccept { .. } => {
                 if let Some(event) = events.iter().find(|e| e.event_type == "trade") {
-                    extra_deltas.push(AgentDelta::TradeCompleted {
+                    world_events.push(WorldEvent::TradeCompleted {
                         from_id: agent_id.as_str().to_string(),
                         to_id: "unknown".to_string(),
                         items: event.description.clone(),
@@ -115,7 +120,7 @@ impl DeltaEmitter {
             }
             ActionType::AllyAccept { .. } => {
                 if events.iter().any(|e| e.event_type == "ally") {
-                    extra_deltas.push(AgentDelta::AllianceFormed {
+                    world_events.push(WorldEvent::AllianceFormed {
                         id1: agent_id.as_str().to_string(),
                         id2: "unknown".to_string(),
                     });
@@ -125,9 +130,10 @@ impl DeltaEmitter {
         }
 
         let mut sent_count = 0;
-        for extra in extra_deltas {
-            if let Err(e) = delta_tx.send(extra) {
-                tracing::error!("[DeltaEmitter] extra delta 发送失败: {:?}", e);
+        for world_event in world_events {
+            let delta = Delta::WorldEvent(world_event);
+            if let Err(e) = delta_tx.send(delta) {
+                tracing::error!("[DeltaEmitter] world event delta 发送失败: {:?}", e);
             } else {
                 sent_count += 1;
             }
@@ -135,18 +141,59 @@ impl DeltaEmitter {
         sent_count
     }
 
-    /// 发送所有 delta（状态 + 动作相关）
-    ///
-    /// 组合 emit_agent_state 和 emit_action_deltas
+    /// 发送叙事事件作为 WorldEvent
+    pub fn emit_narratives(
+        delta_tx: &Sender<Delta>,
+        events: &[NarrativeEvent],
+    ) -> usize {
+        use crate::snapshot::{NarrativeEvent as SnapshotNarrativeEvent, NarrativeChannel, AgentSource};
+
+        let mut sent_count = 0;
+        for event in events {
+            // 转换为 snapshot 的 NarrativeEvent 格式
+            let snapshot_event = SnapshotNarrativeEvent {
+                tick: event.tick,
+                agent_id: event.agent_id.clone(),
+                agent_name: event.agent_name.clone(),
+                event_type: event.event_type.clone(),
+                description: event.description.clone(),
+                color_code: event.color_code.clone(),
+                channel: NarrativeChannel::Local, // 默认本地
+                agent_source: AgentSource::Local,
+            };
+
+            let delta = Delta::WorldEvent(WorldEvent::AgentNarrative {
+                narrative: snapshot_event,
+            });
+
+            if let Err(e) = delta_tx.send(delta) {
+                tracing::error!("[DeltaEmitter] narrative delta 发送失败: {:?}", e);
+            } else {
+                sent_count += 1;
+            }
+        }
+        sent_count
+    }
+
+    /// 发送所有 delta（状态 + 动作相关 + 叙事）
     pub fn emit_all(
-        delta_tx: &Sender<AgentDelta>,
+        delta_tx: &Sender<Delta>,
         world: &World,
         agent_id: &AgentId,
         action: &Action,
         events: &[NarrativeEvent],
     ) -> usize {
-        let state_count = Self::emit_agent_state(delta_tx, world, agent_id);
+        // 根据动作类型判定 change_hint
+        let change_hint = match &action.action_type {
+            ActionType::MoveToward { .. } => ChangeHint::Moved,
+            ActionType::Eat | ActionType::Drink => ChangeHint::ActionExecuted,
+            ActionType::Wait { .. } => ChangeHint::ActionExecuted,
+            _ => ChangeHint::ActionExecuted,
+        };
+
+        let state_count = Self::emit_agent_state(delta_tx, world, agent_id, change_hint);
         let action_count = Self::emit_action_deltas(delta_tx, world, agent_id, action, events);
-        state_count + action_count
+        let narrative_count = Self::emit_narratives(delta_tx, events);
+        state_count + action_count + narrative_count
     }
 }

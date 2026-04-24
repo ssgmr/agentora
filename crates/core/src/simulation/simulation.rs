@@ -13,9 +13,16 @@ use crate::agent::inventory::{InventoryConfig, init_inventory_config};
 use agentora_ai::{LlmProvider, LlmConfig};
 
 use super::config::SimConfig;
-use super::delta::AgentDelta;
+#[cfg(feature = "p2p")]
+use super::config::SimMode;
+use super::delta::Delta;
 use super::agent_loop::NarrativeEvent;
 use super::p2p_handler::P2PMessageHandler;
+
+#[cfg(feature = "p2p")]
+use agentora_network::{Libp2pTransport, Transport, NetworkMessage, AgentDeltaMessage, NarrativeMessage};
+#[cfg(feature = "p2p")]
+use agentora_network::gossip::RegionTopicManager;
 
 /// 模拟编排结构体
 ///
@@ -35,7 +42,7 @@ pub struct Simulation {
     /// Snapshot 广播通道
     snapshot_tx: Sender<WorldSnapshot>,
     /// Delta 广播通道
-    delta_tx: Sender<AgentDelta>,
+    delta_tx: Sender<Delta>,
     /// Narrative 广播通道
     narrative_tx: Sender<NarrativeEvent>,
     /// Agent task handles
@@ -48,6 +55,15 @@ pub struct Simulation {
     p2p_handler: Option<P2PMessageHandler>,
     /// 本地 peer ID（P2P 模式）
     local_peer_id: Option<String>,
+    /// libp2p 传输层（P2P 模式）
+    #[cfg(feature = "p2p")]
+    transport: Option<Libp2pTransport>,
+    /// 区域 topic 管理器（P2P 模式）
+    #[cfg(feature = "p2p")]
+    region_topic_manager: Option<RegionTopicManager>,
+    /// P2P 网络消息循环 handle（P2P 模式）
+    #[cfg(feature = "p2p")]
+    p2p_network_handle: Option<JoinHandle<()>>,
 }
 
 impl Simulation {
@@ -67,7 +83,7 @@ impl Simulation {
         llm_provider: Option<Box<dyn LlmProvider>>,
         llm_config: &LlmConfig,
         snapshot_tx: Sender<WorldSnapshot>,
-        delta_tx: Sender<AgentDelta>,
+        delta_tx: Sender<Delta>,
         narrative_tx: Sender<NarrativeEvent>,
     ) -> Self {
         // 初始化背包配置
@@ -117,6 +133,12 @@ impl Simulation {
             snapshot_handle: None,
             p2p_handler: None,
             local_peer_id: None,
+            #[cfg(feature = "p2p")]
+            transport: None,
+            #[cfg(feature = "p2p")]
+            region_topic_manager: None,
+            #[cfg(feature = "p2p")]
+            p2p_network_handle: None,
         }
     }
 
@@ -131,12 +153,14 @@ impl Simulation {
         llm_provider: Option<Box<dyn LlmProvider>>,
         llm_config: &LlmConfig,
         snapshot_tx: Sender<WorldSnapshot>,
-        delta_tx: Sender<AgentDelta>,
+        delta_tx: Sender<Delta>,
         narrative_tx: Sender<NarrativeEvent>,
         local_peer_id: String,
     ) -> Self {
-        // 先 clone delta_tx，因为后面会 move
+        // 先 clone 通道，因为后面会 move
+        let delta_tx_for_network = delta_tx.clone();
         let delta_tx_for_p2p = delta_tx.clone();
+        let narrative_tx_for_network = narrative_tx.clone();
         let local_peer_id_for_log = local_peer_id.clone();
 
         let mut sim = Self::new(
@@ -156,6 +180,44 @@ impl Simulation {
             300, // shadow_timeout_ticks
         ));
         sim.local_peer_id = Some(local_peer_id);
+
+        #[cfg(feature = "p2p")]
+        {
+            // 创建 libp2p 传输层
+            match Libp2pTransport::new() {
+                Ok(mut transport) => {
+                    // 注册 region topic 消息处理器
+                    let delta_tx_for_handler = delta_tx_for_network.clone();
+                    let narrative_tx_for_handler = narrative_tx_for_network.clone();
+                    let peer_id = sim.local_peer_id.clone().unwrap_or_default();
+
+                    // 将 transport 的消息接收器取出，在网络循环中消费
+                    let message_rx = transport.take_message_receiver();
+
+                    // 创建区域 topic 管理器
+                    let topic_manager = RegionTopicManager::new();
+
+                    // 启动网络消息循环（在独立 task 中消费网络消息）
+                    let network_handle = tokio::spawn(async move {
+                        Self::run_p2p_network_loop(
+                            message_rx,
+                            delta_tx_for_handler,
+                            narrative_tx_for_handler,
+                            &peer_id,
+                        ).await;
+                    });
+
+                    sim.transport = Some(transport);
+                    sim.region_topic_manager = Some(topic_manager);
+                    sim.p2p_network_handle = Some(network_handle);
+
+                    tracing::info!("[Simulation] libp2p 传输层已创建，等待连接...");
+                }
+                Err(e) => {
+                    tracing::error!("[Simulation] 创建 libp2p 传输层失败: {:?}", e);
+                }
+            }
+        }
 
         tracing::info!("[Simulation] P2P 模式启用，local_peer_id={}", local_peer_id_for_log);
 
@@ -230,6 +292,14 @@ impl Simulation {
         // Spawn Tick 循环（根据 SimMode 选择不同的 tick 方法）
         self.tick_handle = Some(self.spawn_tick_loop());
 
+        // P2P 模式：连接种子节点并订阅 topic
+        #[cfg(feature = "p2p")]
+        {
+            if let SimMode::P2P { .. } = &self.config.mode {
+                self.init_p2p_network().await;
+            }
+        }
+
         tracing::info!(
             "[Simulation] 模拟已启动 [{} Agent（{} LLM + {} NPC）]",
             agent_ids.len() + npc_ids.len(),
@@ -244,7 +314,7 @@ impl Simulation {
     }
 
     /// 获取 Delta sender（供外部 clone）
-    pub fn delta_sender(&self) -> Sender<AgentDelta> {
+    pub fn delta_sender(&self) -> Sender<Delta> {
         self.delta_tx.clone()
     }
 
@@ -382,5 +452,224 @@ impl Simulation {
     /// 获取 P2P handler（供外部消费网络消息）
     pub fn p2p_handler(&self) -> Option<&P2PMessageHandler> {
         self.p2p_handler.as_ref()
+    }
+
+    // ===== P2P 网络集成 =====
+
+    /// 初始化 P2P 网络：连接种子节点、订阅 topic
+    #[cfg(feature = "p2p")]
+    async fn init_p2p_network(&mut self) {
+        let transport = match self.transport.as_ref() {
+            Some(t) => t,
+            None => {
+                tracing::warn!("[P2P] 传输层未创建，跳过网络初始化");
+                return;
+            }
+        };
+
+        // 连接种子节点
+        if let Some(ref seed_peer) = self.config.seed_peer {
+            tracing::info!("[P2P] 连接种子节点: {}", seed_peer);
+            if let Err(e) = transport.connect_to_seed(seed_peer).await {
+                tracing::warn!("[P2P] 连接种子节点失败: {:?}", e);
+            } else {
+                tracing::info!("[P2P] 种子节点连接成功");
+            }
+        } else {
+            tracing::info!("[P2P] 未配置种子节点，等待对等点发现");
+        }
+
+        // 订阅世界事件 topic
+        if let Some(topic_mgr) = self.region_topic_manager.as_mut() {
+            if let Err(e) = topic_mgr.subscribe_world_events(transport).await {
+                tracing::warn!("[P2P] 订阅世界事件 topic 失败: {:?}", e);
+            } else {
+                tracing::info!("[P2P] 已订阅世界事件 topic");
+            }
+        }
+
+        // 订阅 region_0 topic（初始区域）
+        if let Some(_topic_mgr) = self.region_topic_manager.as_mut() {
+            let region_topic = agentora_network::gossip::RegionTopicManager::topic_name(0);
+            let region_topic_ref: &str = &region_topic;
+            // 注意：这里需要一个临时的 handler，实际消息由网络循环处理
+            use agentora_network::NullMessageHandler;
+            if let Err(e) = transport.subscribe(region_topic_ref, Box::new(NullMessageHandler)).await {
+                tracing::warn!("[P2P] 订阅 region_0 topic 失败: {:?}", e);
+            } else {
+                tracing::info!("[P2P] 已订阅 region_0 topic");
+            }
+        }
+
+        // 发布本地 peer 信息
+        if let Some(ref peer_id) = self.local_peer_id {
+            let peer_info = NetworkMessage::PeerInfo {
+                peer_id: peer_id.clone(),
+                position: (0, 0), // 初始位置
+            };
+            // 通过 region_0 发布 peer 信息
+            let region_topic = agentora_network::gossip::RegionTopicManager::topic_name(0);
+            if let Err(e) = transport.publish(&region_topic, &peer_info.to_bytes()).await {
+                tracing::warn!("[P2P] 发布 peer 信息失败: {:?}", e);
+            }
+        }
+
+        tracing::info!("[P2P] 网络初始化完成");
+    }
+
+    /// P2P 网络消息循环
+    ///
+    /// 在独立 task 中运行，消费 libp2p 消息并分发给 P2PMessageHandler
+    #[cfg(feature = "p2p")]
+    async fn run_p2p_network_loop(
+        mut message_rx: Option<tokio::sync::mpsc::Receiver<NetworkMessage>>,
+        delta_tx: Sender<Delta>,
+        narrative_tx: Sender<NarrativeEvent>,
+        local_peer_id: &str,
+    ) {
+        use serde_json;
+        use crate::simulation::DeltaEnvelope;
+
+        tracing::info!("[P2P-Network] 网络消息循环已启动 [peer={}]", local_peer_id);
+
+        let mut rx = match message_rx.take() {
+            Some(rx) => rx,
+            None => {
+                tracing::error!("[P2P-Network] 消息接收器不可用，网络循环退出");
+                return;
+            }
+        };
+
+        loop {
+            match rx.recv().await {
+                Some(msg) => {
+                    match msg {
+                        NetworkMessage::AgentDelta(delta_msg) => {
+                            // 过滤本地回环
+                            if delta_msg.source_peer_id == local_peer_id {
+                                tracing::trace!("[P2P-Network] 过滤本地回环 delta");
+                                continue;
+                            }
+
+                            // 解析 delta JSON 并构建 DeltaEnvelope
+                            if let Ok(delta) = serde_json::from_value::<Delta>(delta_msg.delta_json.clone()) {
+                                let envelope = DeltaEnvelope::from_remote(
+                                    delta,
+                                    delta_msg.source_peer_id.clone(),
+                                    delta_msg.tick,
+                                );
+
+                                // 转发到本地 delta 通道（触发渲染更新）
+                                if let Err(e) = delta_tx.send(envelope.delta.clone()) {
+                                    tracing::error!("[P2P-Network] delta 转发失败: {:?}", e);
+                                }
+
+                                tracing::debug!("[P2P-Network] 收到远程 delta: {} from peer={}",
+                                    envelope.delta.event_type(), delta_msg.source_peer_id);
+                            } else {
+                                tracing::warn!("[P2P-Network] delta JSON 解析失败: {:?}", delta_msg.delta_json);
+                            }
+                        }
+                        NetworkMessage::Narrative(narrative_msg) => {
+                            // 过滤本地回环
+                            if narrative_msg.source_peer_id == local_peer_id {
+                                tracing::trace!("[P2P-Network] 过滤本地回环 narrative");
+                                continue;
+                            }
+
+                            // 解析 narrative JSON 并构建 NarrativeEvent
+                            if let Ok(event) = serde_json::from_value::<NarrativeEvent>(narrative_msg.narrative_json.clone()) {
+                                // 转发到本地 narrative 通道
+                                if let Err(e) = narrative_tx.send(event) {
+                                    tracing::error!("[P2P-Network] narrative 转发失败: {:?}", e);
+                                }
+
+                                tracing::debug!("[P2P-Network] 收到远程 narrative from peer={}",
+                                    narrative_msg.source_peer_id);
+                            } else {
+                                tracing::warn!("[P2P-Network] narrative JSON 解析失败: {:?}", narrative_msg.narrative_json);
+                            }
+                        }
+                        _ => {
+                            // 其他消息类型暂不处理
+                            tracing::trace!("[P2P-Network] 收到未处理消息类型，跳过");
+                        }
+                    }
+                }
+                None => {
+                    tracing::warn!("[P2P-Network] 消息通道已关闭，网络循环退出");
+                    break;
+                }
+            }
+        }
+    }
+
+    /// 通过 P2P 发布 Delta
+    #[cfg(feature = "p2p")]
+    pub async fn publish_delta_p2p(&self, delta: &Delta, tick: u64, region_id: u32) {
+        let transport = match self.transport.as_ref() {
+            Some(t) => t,
+            None => return,
+        };
+
+        let peer_id = match &self.local_peer_id {
+            Some(id) => id.clone(),
+            None => return,
+        };
+
+        let delta_msg = NetworkMessage::AgentDelta(AgentDeltaMessage {
+            delta_json: delta.for_broadcast(),
+            source_peer_id: peer_id,
+            tick,
+        });
+
+        let topic = agentora_network::gossip::RegionTopicManager::topic_name(region_id);
+        if let Err(e) = transport.publish(&topic, &delta_msg.to_bytes()).await {
+            tracing::warn!("[P2P] delta 发布失败 [topic={}]: {:?}", topic, e);
+        }
+    }
+
+    /// 通过 P2P 发布 Narrative
+    #[cfg(feature = "p2p")]
+    pub async fn publish_narrative_p2p(&self, event: &NarrativeEvent, tick: u64, channel: &str) {
+        let transport = match self.transport.as_ref() {
+            Some(t) => t,
+            None => return,
+        };
+
+        let peer_id = match &self.local_peer_id {
+            Some(id) => id.clone(),
+            None => return,
+        };
+
+        // 将 NarrativeEvent 转换为可序列化的字典
+        let narrative_dict = serde_json::json!({
+            "tick": event.tick,
+            "agent_id": event.agent_id,
+            "agent_name": event.agent_name,
+            "event_type": event.event_type,
+            "description": event.description,
+            "color_code": event.color_code,
+        });
+
+        let narrative_msg = NetworkMessage::Narrative(NarrativeMessage {
+            narrative_json: narrative_dict,
+            source_peer_id: peer_id,
+            tick,
+            channel: channel.to_string(),
+        });
+
+        // 根据频道选择 topic
+        let topic = match channel {
+            "world" => agentora_network::gossip::RegionTopicManager::world_topic_name().to_string(),
+            "nearby" => agentora_network::gossip::RegionTopicManager::topic_name(0), // 初始区域
+            _ => return, // local 频道不广播
+        };
+
+        if let Err(e) = transport.publish(&topic, &narrative_msg.to_bytes()).await {
+            tracing::warn!("[P2P] narrative 发布失败 [topic={}]: {:?}", topic, e);
+        } else {
+            tracing::debug!("[P2P] narrative 已发布 [topic={} channel={}]", topic, channel);
+        }
     }
 }

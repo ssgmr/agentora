@@ -3,115 +3,117 @@
 //! 将 Rust 类型转换为 GDScript Dictionary
 
 use godot::prelude::*;
-use agentora_core::simulation::AgentDelta;
-use agentora_core::snapshot::AgentSnapshot;
+use agentora_core::simulation::{Delta, WorldEvent, ChangeHint};
+use agentora_core::snapshot::AgentState;
 
-/// 将 AgentDelta 转为 GDScript Dictionary
-pub fn delta_to_dict(delta: &AgentDelta) -> Variant {
+/// 将 Delta 转为 GDScript Dictionary
+pub fn delta_to_dict(delta: &Delta) -> Variant {
     let mut dict: Dictionary<GString, Variant> = Dictionary::new();
     match delta {
-        AgentDelta::AgentMoved { id, name, position, health, max_health, is_alive, age } => {
-            dict.set("type", &"agent_moved".to_variant());
-            dict.set("id", &id.to_variant());
-            dict.set("name", &name.to_variant());
-            let pos = Vector2::new(position.0 as f32, position.1 as f32);
-            dict.set("position", &pos.to_variant());
-            dict.set("health", &(Variant::from(*health as i64)));
-            dict.set("max_health", &(Variant::from(*max_health as i64)));
-            dict.set("is_alive", &is_alive.to_variant());
-            dict.set("age", &(Variant::from(*age as i64)));
-        }
-        AgentDelta::AgentDied { id, name, position, age } => {
-            dict.set("type", &"agent_died".to_variant());
-            dict.set("id", &id.to_variant());
-            dict.set("name", &name.to_variant());
-            let pos = Vector2::new(position.0 as f32, position.1 as f32);
-            dict.set("position", &pos.to_variant());
-            dict.set("age", &(Variant::from(*age as i64)));
-        }
-        AgentDelta::AgentSpawned { id, name, position, health, max_health } => {
-            dict.set("type", &"agent_spawned".to_variant());
-            dict.set("id", &id.to_variant());
-            dict.set("name", &name.to_variant());
-            let pos = Vector2::new(position.0 as f32, position.1 as f32);
-            dict.set("position", &pos.to_variant());
-            dict.set("health", &(Variant::from(*health as i64)));
-            dict.set("max_health", &(Variant::from(*max_health as i64)));
-        }
-        AgentDelta::StructureCreated { x, y, structure_type, owner_id } => {
-            dict.set("type", &"structure_created".to_variant());
-            dict.set("structure_type", &structure_type.to_variant());
-            dict.set("owner_id", &owner_id.to_variant());
-            let pos = Vector2::new(*x as f32, *y as f32);
-            dict.set("position", &pos.to_variant());
-        }
-        AgentDelta::StructureDestroyed { x, y, structure_type } => {
-            dict.set("type", &"structure_destroyed".to_variant());
-            dict.set("structure_type", &structure_type.to_variant());
-            let pos = Vector2::new(*x as f32, *y as f32);
-            dict.set("position", &pos.to_variant());
-        }
-        AgentDelta::ResourceChanged { x, y, resource_type, amount } => {
-            dict.set("type", &"resource_changed".to_variant());
-            dict.set("resource_type", &resource_type.to_variant());
-            dict.set("amount", &(Variant::from(*amount as i64)));
-            let pos = Vector2::new(*x as f32, *y as f32);
-            dict.set("position", &pos.to_variant());
-        }
-        AgentDelta::TradeCompleted { from_id, to_id, items } => {
-            dict.set("type", &"trade_completed".to_variant());
-            dict.set("from_id", &from_id.to_variant());
-            dict.set("to_id", &to_id.to_variant());
-            dict.set("items", &items.to_variant());
-        }
-        AgentDelta::AllianceFormed { id1, id2 } => {
-            dict.set("type", &"alliance_formed".to_variant());
-            dict.set("id1", &id1.to_variant());
-            dict.set("id2", &id2.to_variant());
-        }
-        AgentDelta::AllianceBroken { id1, id2, reason } => {
-            dict.set("type", &"alliance_broken".to_variant());
-            dict.set("id1", &id1.to_variant());
-            dict.set("id2", &id2.to_variant());
-            dict.set("reason", &reason.to_variant());
-        }
-        AgentDelta::HealedByCamp { agent_id, agent_name, hp_restored } => {
-            dict.set("type", &"healed_by_camp".to_variant());
+        Delta::AgentStateChanged { agent_id, state, change_hint } => {
+            dict.set("type", &"agent_state_changed".to_variant());
             dict.set("agent_id", &agent_id.to_variant());
-            dict.set("agent_name", &agent_name.to_variant());
-            dict.set("hp_restored", &(Variant::from(*hp_restored as i64)));
+            dict.set("change_hint", &change_hint_to_str(change_hint).to_variant());
+
+            // Agent state
+            dict.set("name", &state.name.clone().to_variant());
+            let pos = Vector2::new(state.position.0 as f32, state.position.1 as f32);
+            dict.set("position", &pos.to_variant());
+            dict.set("health", &(Variant::from(state.health as i64)));
+            dict.set("max_health", &(Variant::from(state.max_health as i64)));
+            dict.set("satiety", &(Variant::from(state.satiety as i64)));
+            dict.set("hydration", &(Variant::from(state.hydration as i64)));
+            dict.set("is_alive", &state.is_alive.to_variant());
+            dict.set("age", &(Variant::from(state.age as i64)));
+            dict.set("level", &(Variant::from(state.level as i64)));
+            dict.set("current_action", &state.current_action.clone().to_variant());
+            dict.set("action_result", &state.action_result.clone().to_variant());
+            dict.set("reasoning", &state.reasoning.clone().unwrap_or_default().to_variant());
+
+            // Inventory
+            let mut inv_dict: Dictionary<GString, Variant> = Dictionary::new();
+            for (k, v) in &state.inventory_summary {
+                inv_dict.set(k, &(Variant::from(*v as i64)));
+            }
+            dict.set("inventory_summary", &inv_dict.to_variant());
         }
-        AgentDelta::SurvivalWarning { agent_id, agent_name, satiety, hydration, hp } => {
-            dict.set("type", &"survival_warning".to_variant());
-            dict.set("agent_id", &agent_id.to_variant());
-            dict.set("agent_name", &agent_name.to_variant());
-            dict.set("satiety", &(Variant::from(*satiety as i64)));
-            dict.set("hydration", &(Variant::from(*hydration as i64)));
-            dict.set("hp", &(Variant::from(*hp as i64)));
-        }
-        AgentDelta::MilestoneReached { name, display_name, tick } => {
-            dict.set("type", &"milestone_reached".to_variant());
-            dict.set("name", &name.to_variant());
-            dict.set("display_name", &display_name.to_variant());
-            dict.set("tick", &(Variant::from(*tick as i64)));
-        }
-        AgentDelta::PressureStarted { pressure_type, description, duration } => {
-            dict.set("type", &"pressure_started".to_variant());
-            dict.set("pressure_type", &pressure_type.to_variant());
-            dict.set("description", &description.to_variant());
-            dict.set("duration", &(Variant::from(*duration as i64)));
-        }
-        AgentDelta::PressureEnded { pressure_type, description } => {
-            dict.set("type", &"pressure_ended".to_variant());
-            dict.set("pressure_type", &pressure_type.to_variant());
-            dict.set("description", &description.to_variant());
+        Delta::WorldEvent(world_event) => {
+            dict.set("type", &"world_event".to_variant());
+            dict.set("event_type", &world_event.event_type().to_variant());
+            match world_event {
+                WorldEvent::StructureCreated { pos, structure_type, owner_id } => {
+                    let position = Vector2::new(pos.0 as f32, pos.1 as f32);
+                    dict.set("position", &position.to_variant());
+                    dict.set("structure_type", &structure_type.to_variant());
+                    dict.set("owner_id", &owner_id.to_variant());
+                }
+                WorldEvent::StructureDestroyed { pos, structure_type } => {
+                    let position = Vector2::new(pos.0 as f32, pos.1 as f32);
+                    dict.set("position", &position.to_variant());
+                    dict.set("structure_type", &structure_type.to_variant());
+                }
+                WorldEvent::ResourceChanged { pos, resource_type, amount } => {
+                    let position = Vector2::new(pos.0 as f32, pos.1 as f32);
+                    dict.set("position", &position.to_variant());
+                    dict.set("resource_type", &resource_type.to_variant());
+                    dict.set("amount", &(Variant::from(*amount as i64)));
+                }
+                WorldEvent::TradeCompleted { from_id, to_id, items } => {
+                    dict.set("from_id", &from_id.to_variant());
+                    dict.set("to_id", &to_id.to_variant());
+                    dict.set("items", &items.to_variant());
+                }
+                WorldEvent::AllianceFormed { id1, id2 } => {
+                    dict.set("id1", &id1.to_variant());
+                    dict.set("id2", &id2.to_variant());
+                }
+                WorldEvent::AllianceBroken { id1, id2, reason } => {
+                    dict.set("id1", &id1.to_variant());
+                    dict.set("id2", &id2.to_variant());
+                    dict.set("reason", &reason.to_variant());
+                }
+                WorldEvent::MilestoneReached { name, display_name, tick } => {
+                    dict.set("name", &name.to_variant());
+                    dict.set("display_name", &display_name.to_variant());
+                    dict.set("tick", &(Variant::from(*tick as i64)));
+                }
+                WorldEvent::PressureStarted { pressure_type, description, duration } => {
+                    dict.set("pressure_type", &pressure_type.to_variant());
+                    dict.set("description", &description.to_variant());
+                    dict.set("duration", &(Variant::from(*duration as i64)));
+                }
+                WorldEvent::PressureEnded { pressure_type, description } => {
+                    dict.set("pressure_type", &pressure_type.to_variant());
+                    dict.set("description", &description.to_variant());
+                }
+                WorldEvent::AgentNarrative { narrative } => {
+                    dict.set("narrative_tick", &(Variant::from(narrative.tick as i64)));
+                    dict.set("narrative_agent_id", &narrative.agent_id.to_variant());
+                    dict.set("narrative_agent_name", &narrative.agent_name.to_variant());
+                    dict.set("narrative_event_type", &narrative.event_type.to_variant());
+                    dict.set("narrative_description", &narrative.description.to_variant());
+                    dict.set("narrative_color", &narrative.color_code.to_variant());
+                }
+            }
         }
     }
     dict.to_variant()
 }
 
-/// 将 AgentSnapshot 转为 GDScript Dictionary
-pub fn agent_to_dict(agent: &AgentSnapshot) -> Variant {
+/// 将 ChangeHint 转为字符串
+fn change_hint_to_str(hint: &ChangeHint) -> &'static str {
+    match hint {
+        ChangeHint::Spawned => "spawned",
+        ChangeHint::Moved => "moved",
+        ChangeHint::ActionExecuted => "action_executed",
+        ChangeHint::Died => "died",
+        ChangeHint::SurvivalLow => "survival_low",
+        ChangeHint::Healed => "healed",
+    }
+}
+
+/// 将 AgentState 转为 GDScript Dictionary
+pub fn agent_to_dict(agent: &AgentState) -> Variant {
     let mut dict: Dictionary<GString, Variant> = Dictionary::new();
     dict.set("id", &agent.id.clone().to_variant());
     dict.set("name", &agent.name.clone().to_variant());
@@ -124,6 +126,7 @@ pub fn agent_to_dict(agent: &AgentSnapshot) -> Variant {
     dict.set("level", &(Variant::from(agent.level as i64)));
     dict.set("current_action", &agent.current_action.clone().to_variant());
     dict.set("action_result", &agent.action_result.clone().to_variant());
+    dict.set("reasoning", &agent.reasoning.clone().unwrap_or_default().to_variant());
     let pos = Vector2::new(agent.position.0 as f32, agent.position.1 as f32);
     dict.set("position", &pos.to_variant());
     let mut inv_dict: Dictionary<GString, Variant> = Dictionary::new();

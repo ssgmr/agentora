@@ -51,7 +51,6 @@ impl World {
             }
             ActionType::Attack { target_id } => format!("攻击 {}", target_id.as_str()),
             ActionType::Talk { .. } => "对话".to_string(),
-            ActionType::Explore { .. } => "探索".to_string(),
             ActionType::TradeOffer { .. } => "交易".to_string(),
             ActionType::TradeAccept { .. } => "接受交易".to_string(),
             ActionType::TradeReject { .. } => "拒绝交易".to_string(),

@@ -201,6 +201,8 @@ mod tests {
                 last_move_direction: None,
                 temp_preferences: Vec::new(),
                 agent_personality: None,
+                pending_ally_requests: Vec::new(),
+                pending_trades: Vec::new(),
             }
         }
     }

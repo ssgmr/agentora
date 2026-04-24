@@ -117,11 +117,31 @@ fn get_neighbor_regions(region_id: u32) -> Vec<u32> {
 }
 
 /// 空消息处理器（用于订阅时占位）
-struct NullMessageHandler;
+pub struct NullMessageHandler;
 
 #[async_trait::async_trait]
 impl crate::transport::MessageHandler for NullMessageHandler {
     async fn handle(&self, _message: crate::codec::NetworkMessage) {
         // 空实现，实际消息处理由上层负责
+    }
+}
+
+/// 世界事件 Topic（全局广播）
+pub const WORLD_EVENTS_TOPIC: &str = "world_events";
+
+impl RegionTopicManager {
+    /// 获取世界事件 topic 名称
+    pub fn world_topic_name() -> &'static str {
+        WORLD_EVENTS_TOPIC
+    }
+
+    /// 订阅世界事件 topic
+    pub async fn subscribe_world_events(
+        &mut self,
+        transport: &Libp2pTransport,
+    ) -> Result<(), TransportError> {
+        transport.subscribe(WORLD_EVENTS_TOPIC, Box::new(NullMessageHandler)).await?;
+        tracing::info!("订阅世界事件 topic: {}", WORLD_EVENTS_TOPIC);
+        Ok(())
     }
 }

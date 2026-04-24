@@ -52,6 +52,19 @@ pub struct AgentDeltaMessage {
     pub tick: u64,
 }
 
+/// 叙事事件广播消息（P2P 模式）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NarrativeMessage {
+    /// 叙事事件 JSON
+    pub narrative_json: serde_json::Value,
+    /// 来源 peer ID
+    pub source_peer_id: String,
+    /// tick 时间戳
+    pub tick: u64,
+    /// 叙事频道（"local" / "nearby" / "world"）
+    pub channel: String,
+}
+
 /// 网络消息类型
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum NetworkMessage {
@@ -62,6 +75,8 @@ pub enum NetworkMessage {
     PeerInfo { peer_id: String, position: (u32, u32) },
     /// Agent Delta 广播（P2P 模式）
     AgentDelta(AgentDeltaMessage),
+    /// 叙事事件广播（P2P 模式）
+    Narrative(NarrativeMessage),
 }
 
 /// 遗产广播消息

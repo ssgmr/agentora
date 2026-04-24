@@ -8,7 +8,8 @@ pub mod gossip;
 pub mod codec;
 
 pub use transport::Transport;
-pub use codec::{CrdtOp, NetworkMessage};
+pub use codec::{CrdtOp, NetworkMessage, AgentDeltaMessage, NarrativeMessage};
+pub use gossip::NullMessageHandler;
 pub use libp2p_transport::{
     Libp2pTransport, NatStatus, ConnectionType,
     DcutrConfig, AutonatConfig, HybridStrategyConfig,

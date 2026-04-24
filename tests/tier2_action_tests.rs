@@ -1104,28 +1104,6 @@ fn test_wait_full_health() {
     assert_eq!(agent.health, 100); // 不超过最大值
 }
 
-// ===== handle_explore 测试 =====
-
-#[test]
-fn test_explore_moves() {
-    let mut world = create_test_world();
-    let pos = Position::new(10, 10);
-    let (agent_id, agent) = create_test_agent("a1", "探索者", pos);
-    world.insert_agent_at(agent_id.clone(), agent);
-
-    let action = Action {
-        reasoning: "探索".into(),
-        action_type: ActionType::Explore { target_region: 0 },
-        target: None,
-        params: HashMap::new(),
-        build_type: None,
-        direction: None,
-    };
-
-    let result = world.apply_action(&agent_id, &action);
-    assert!(matches!(result, ActionResult::SuccessWithDetail(_)));
-}
-
 // ===== handle_legacy_interaction 测试 =====
 
 #[test]

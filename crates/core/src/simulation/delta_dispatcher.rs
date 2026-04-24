@@ -1,21 +1,22 @@
 //! Delta 分发器
 //!
 //! 同时发送到本地 mpsc 和 P2P GossipSub（可选）。
+//! 使用简化后的 Delta 结构。
 
 use std::sync::mpsc::Sender;
-use crate::simulation::{AgentDelta, SimMode};
+use crate::simulation::{Delta, SimMode};
 
 /// Delta 分发器：双通道分发（本地 + P2P）
 pub struct DeltaDispatcher {
     /// 本地 mpsc 通道
-    local_tx: Sender<AgentDelta>,
+    local_tx: Sender<Delta>,
     /// 运行模式
     mode: SimMode,
 }
 
 impl DeltaDispatcher {
     /// 创建新的分发器
-    pub fn new(local_tx: Sender<AgentDelta>, mode: SimMode) -> Self {
+    pub fn new(local_tx: Sender<Delta>, mode: SimMode) -> Self {
         Self { local_tx, mode }
     }
 
@@ -23,9 +24,9 @@ impl DeltaDispatcher {
     ///
     /// 集中式模式：只发送 local_tx
     /// P2P 模式：同时发送 local_tx 和 P2P GossipSub（待实现）
-    pub fn dispatch(&self, delta: AgentDelta) {
+    pub fn dispatch(&self, delta: Delta) {
         // 始终发送到本地通道（用于渲染）
-        if let Err(e) = self.local_tx.send(delta) {
+        if let Err(e) = self.local_tx.send(delta.clone()) {
             tracing::error!("[DeltaDispatcher] local delta send failed: {:?}", e);
         }
 

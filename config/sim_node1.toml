@@ -1,0 +1,26 @@
+# Agentora 模拟配置 - Node 1
+# P2P 模式：本地只运行 Agent_1
+
+[simulation]
+initial_agent_count = 1
+npc_count = 0
+tick_interval_secs = 5
+npc_decision_interval_secs = 3
+player_decision_interval_secs = 2
+vision_radius = 10
+trade_timeout_ticks = 50
+
+[inventory]
+max_slots = 20
+max_stack_size = 20
+warehouse_limit_multiplier = 2
+
+# P2P 模式配置
+[p2p]
+mode = "p2p"
+local_agent_ids = ["Agent_1"]
+region_size = 32
+# P2P 端口（node1 用 4001）
+port = 4001
+# 种子节点（空表示自己是种子）
+seed_peer = ""

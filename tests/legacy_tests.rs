@@ -100,12 +100,13 @@ fn test_multi_agent_legacy_interaction() {
 
     println!("✅ 祭拜动作成功");
 
-    // 测试探索动作
-    let explore_action = Action {
-        reasoning: "探索遗迹获取回响".to_string(),
+    // 测试拾取动作（先在遗产上放点物品）
+    world.legacies[0].items.insert("food".to_string(), 3);
+    let pickup_action = Action {
+        reasoning: "拾取遗物中的物品".to_string(),
         action_type: ActionType::InteractLegacy {
             legacy_id: legacy_id.clone(),
-            interaction: LegacyInteraction::Explore
+            interaction: LegacyInteraction::Pickup
         },
         target: Some(legacy_id.clone()),
         params: HashMap::new(),
@@ -113,11 +114,11 @@ fn test_multi_agent_legacy_interaction() {
         direction: None,
     };
 
-    let result = world.apply_action(&agent2_id, &explore_action);
+    let result = world.apply_action(&agent2_id, &pickup_action);
     assert!(matches!(result, agentora_core::world::ActionResult::SuccessWithDetail(_)),
-            "探索动作应该成功");
+            "拾取动作应该成功");
 
-    println!("✅ 探索动作成功");
+    println!("✅ 拾取动作成功");
 }
 
 /// 遗产广播正确性验证

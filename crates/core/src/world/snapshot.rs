@@ -1,8 +1,9 @@
 //! 世界快照生成
 //!
 //! 生成 WorldSnapshot 用于客户端渲染和网络同步。
+//! 使用统一的 AgentState 结构。
 
-use crate::snapshot::{WorldSnapshot, AgentSnapshot, CellChange, NarrativeEvent, LegacyEvent, PressureSnapshot, MilestoneSnapshot};
+use crate::snapshot::{WorldSnapshot, AgentState, CellChange, NarrativeEvent, LegacyEvent, PressureSnapshot, MilestoneSnapshot, NarrativeChannel, AgentSource};
 use crate::world::World;
 use crate::types::Position;
 use std::collections::HashSet;
@@ -26,7 +27,7 @@ impl World {
 
                 let action_result = agent.last_action_result.as_deref().unwrap_or("").to_string();
 
-                AgentSnapshot {
+                AgentState {
                     id: agent.id.as_str().to_string(),
                     name: agent.name.clone(),
                     position: (agent.position.x, agent.position.y),
@@ -34,31 +35,33 @@ impl World {
                     max_health: agent.max_health,
                     satiety: agent.satiety,
                     hydration: agent.hydration,
+                    age: agent.age,
+                    level: agent.level,
+                    is_alive: agent.is_alive,
                     inventory_summary: agent.inventory.iter()
                         .map(|(k, v)| (k.clone(), *v))
                         .collect(),
                     current_action,
                     action_result,
-                    reasoning,
-                    age: agent.age,
-                    is_alive: agent.is_alive,
-                    level: agent.level,
+                    reasoning: Some(reasoning),
                 }
             })
             .collect();
 
-        // 从 tick_events 填充 events
-        let events = self.tick_events.iter().map(|e| NarrativeEvent {
+        // 从 tick_events 填充 events（带频道信息）
+        let events: Vec<NarrativeEvent> = self.tick_events.iter().map(|e| NarrativeEvent {
             tick: e.tick,
             agent_id: e.agent_id.clone(),
             agent_name: e.agent_name.clone(),
             event_type: e.event_type.clone(),
             description: e.description.clone(),
             color_code: e.color_code.clone(),
+            channel: NarrativeChannel::Local, // 本地默认
+            agent_source: AgentSource::Local,
         }).collect();
 
         // 从 legacies 填充 legacies
-        let legacies = self.legacies.iter().map(|l| LegacyEvent {
+        let legacies: Vec<LegacyEvent> = self.legacies.iter().map(|l| LegacyEvent {
             id: l.id.clone(),
             position: (l.position.x, l.position.y),
             legacy_type: "agent_legacy".to_string(),
@@ -122,8 +125,8 @@ impl World {
             terrain_width: Some(width),
             terrain_height: Some(height),
             map_changes,
-            events,
-            legacies,
+            structures: std::collections::HashMap::new(), // 可后续填充
+            resources: std::collections::HashMap::new(),   // 可后续填充
             pressures,
             milestones: self.milestones.iter().map(|m| MilestoneSnapshot {
                 name: m.name.clone(),

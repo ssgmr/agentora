@@ -6,7 +6,7 @@
 //!
 //! - `simulation` — Simulation 结构体（封装完整编排逻辑）
 //! - `config` — SimConfig 配置加载（Agent数量、决策间隔、视野半径）
-//! - `delta` — AgentDelta 增量事件（实时推送到前端）
+//! - `delta` — Delta 增量事件（实时推送到前端）
 //! - `agent_loop` — Agent 决策循环（LLM 或规则引擎）
 //! - `tick_loop` — 世界时间推进（advance_tick、生存消耗）
 //! - `snapshot_loop` — 定期快照生成（完整状态兜底）
@@ -54,7 +54,7 @@ pub mod p2p_handler;
 // 重导出核心类型
 pub use simulation::Simulation;
 pub use config::{SimConfig, SimMode};
-pub use delta::{AgentDelta, DeltaEnvelope};
+pub use delta::{Delta, DeltaEnvelope, ChangeHint, WorldEvent};
 pub use agent_loop::NarrativeEvent;
 pub use state_builder::WorldStateBuilder;
 pub use delta_emitter::DeltaEmitter;

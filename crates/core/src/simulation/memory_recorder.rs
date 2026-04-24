@@ -63,7 +63,6 @@ impl MemoryRecorder {
             ActionType::Attack { .. } => (vec!["aggressive".to_string(), "angry".to_string()], 0.8),
             ActionType::Talk { .. } => (vec!["social".to_string()], 0.5),
             ActionType::Build { .. } => (vec!["creative".to_string()], 0.6),
-            ActionType::Explore { .. } => (vec!["curious".to_string()], 0.5),
             ActionType::TradeOffer { .. } | ActionType::TradeAccept { .. } => (vec!["cooperative".to_string()], 0.6),
             ActionType::AllyPropose { .. } | ActionType::AllyAccept { .. } => (vec!["trust".to_string(), "bonding".to_string()], 0.7),
             ActionType::InteractLegacy { .. } => (vec!["reverent".to_string()], 0.7),

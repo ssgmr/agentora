@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use crate::world::World;
 use crate::types::{AgentId, ResourceType};
-use crate::snapshot::NarrativeEvent;
+use crate::snapshot::{NarrativeEvent, NarrativeChannel, AgentSource};
 
 /// 压力事件类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -159,6 +159,8 @@ impl World {
                 event_type: "pressure_start".to_string(),
                 description: format!("⚠️ {}", description),
                 color_code: "#FF9800".to_string(),
+                channel: NarrativeChannel::World, // 压力事件是世界频道
+                agent_source: AgentSource::Local,
             });
             self.pressure_pool.push(event);
             self.next_pressure_tick = self.tick + rng.gen_range(40..80);
@@ -195,6 +197,8 @@ impl World {
                 event_type: "pressure_end".to_string(),
                 description: format!("✓ {} 已结束", event.description),
                 color_code: "#8BC34A".to_string(),
+                channel: NarrativeChannel::World, // 压力事件是世界频道
+                agent_source: AgentSource::Local,
             });
         }
     }

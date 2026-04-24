@@ -6,7 +6,7 @@ use godot::prelude::*;
 use godot::classes::{Node, INode};
 use std::sync::mpsc::{self, Sender, Receiver};
 
-use agentora_core::simulation::AgentDelta;
+use agentora_core::simulation::Delta;
 use agentora_core::simulation::agent_loop::NarrativeEvent;
 use agentora_core::WorldSnapshot;
 use agentora_ai::{load_llm_config, OpenAiProvider, FallbackChain, LlmProvider};
@@ -36,7 +36,7 @@ pub struct SimulationBridge {
     base: Base<Node>,
     command_sender: Option<Sender<SimCommand>>,
     snapshot_receiver: Option<Receiver<WorldSnapshot>>,
-    delta_receiver: Option<Receiver<AgentDelta>>,
+    delta_receiver: Option<Receiver<Delta>>,
     narrative_receiver: Option<Receiver<NarrativeEvent>>,
     current_tick: i64,
     #[var]
@@ -151,7 +151,7 @@ impl SimulationBridge {
         godot::global::print(&[Variant::from("SimulationBridge: 启动模拟...")]);
 
         let (snapshot_tx, snapshot_rx) = mpsc::channel::<WorldSnapshot>();
-        let (delta_tx, delta_rx) = mpsc::channel::<AgentDelta>();
+        let (delta_tx, delta_rx) = mpsc::channel::<Delta>();
         let (narrative_tx, narrative_rx) = mpsc::channel::<NarrativeEvent>();
         let (cmd_tx, cmd_rx) = mpsc::channel::<SimCommand>();
 
@@ -275,7 +275,7 @@ impl SimulationBridge {
                 dict.set("level", &(Variant::from(agent.level as i64)));
                 dict.set("current_action", &agent.current_action.clone().to_variant());
                 dict.set("action_result", &agent.action_result.clone().to_variant());
-                dict.set("reasoning", &agent.reasoning.clone().to_variant());
+                dict.set("reasoning", &agent.reasoning.clone().unwrap_or_default().to_variant());
                 let pos = Vector2::new(agent.position.0 as f32, agent.position.1 as f32);
                 dict.set("position", &pos.to_variant());
                 let mut inv_dict: Dictionary<GString, Variant> = Dictionary::new();
