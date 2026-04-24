@@ -21,6 +21,7 @@ use crate::{World, AgentId, Action, ActionType};
 use crate::decision::{DecisionPipeline, infer_state_mode, PerceptionBuilder};
 use crate::simulation::{WorldStateBuilder, Delta, DeltaEmitter, NarrativeEmitter, MemoryRecorder};
 use crate::snapshot::NarrativeEvent;
+use crate::strategy::StrategyHub;
 
 impl Default for super::delta::DeltaEnvelope {
     fn default() -> Self {
@@ -65,6 +66,7 @@ pub async fn run_agent_loop(
     interval_secs: u32,
     vision_radius: u32,
     is_paused: Arc<AtomicBool>,
+    strategy_hub: Option<StrategyHub>,
 ) {
     tracing::info!("[AgentLoop] Agent {:?} 启动 (is_npc={}, interval={}s, vision_radius={})", agent_id, is_npc, interval_secs, vision_radius);
 
@@ -111,6 +113,9 @@ pub async fn run_agent_loop(
         // ===== 阶段 2: 感知摘要构建（锁外 I/O） =====
         let perception_summary = PerceptionBuilder::build_perception_summary(&world_state);
 
+        // 保存 spark_type 供 apply_action 使用
+        let spark_type = infer_state_mode(&world_state);
+
         // ===== 阶段 3: 决策阶段 =====
         tracing::debug!("[AgentLoop] Agent {:?} ({}) 开始决策{}", agent_id.as_str(), agent_clone.name,
             if is_npc { " (NPC 规则决策)" } else { "" });
@@ -142,7 +147,7 @@ pub async fn run_agent_loop(
             // Player Agent：LLM 决策
             let action_feedback = agent_clone.last_action_result.as_deref();
             let start = std::time::Instant::now();
-            let result = pipeline.execute(&agent_clone.id, &world_state, &perception_summary, memory_summary_opt.as_deref(), action_feedback).await;
+            let result = pipeline.execute(&agent_clone.id, &world_state, &perception_summary, memory_summary_opt.as_deref(), action_feedback, strategy_hub.as_ref()).await;
             let elapsed = start.elapsed().as_secs_f32();
 
             if result.error_info.is_some() {
@@ -177,7 +182,7 @@ pub async fn run_agent_loop(
                 let mut w = world.lock().await;
 
                 // 阶段 4: 应用动作
-                w.apply_action(&agent_id, &action);
+                w.apply_action(&agent_id, &action, Some(spark_type));
 
                 // 阶段 5: 记录记忆（使用 MemoryRecorder）
                 MemoryRecorder::record(&mut w, &agent_id, &action);

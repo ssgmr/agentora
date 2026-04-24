@@ -94,7 +94,7 @@ fn test_multi_agent_legacy_interaction() {
         direction: None,
     };
 
-    let result = world.apply_action(&agent2_id, &worship_action);
+    let result = world.apply_action(&agent2_id, &worship_action, None);
     assert!(matches!(result, agentora_core::world::ActionResult::SuccessWithDetail(_)),
             "祭拜动作应该成功");
 
@@ -114,7 +114,7 @@ fn test_multi_agent_legacy_interaction() {
         direction: None,
     };
 
-    let result = world.apply_action(&agent2_id, &pickup_action);
+    let result = world.apply_action(&agent2_id, &pickup_action, None);
     assert!(matches!(result, agentora_core::world::ActionResult::SuccessWithDetail(_)),
             "拾取动作应该成功");
 
@@ -198,7 +198,7 @@ fn test_legacy_interaction_effects() {
         direction: None,
     };
 
-    let result = world.apply_action(&agent_id, &worship_action);
+    let result = world.apply_action(&agent_id, &worship_action, None);
     assert!(matches!(result, agentora_core::world::ActionResult::SuccessWithDetail(_)),
             "祭拜动作应该成功");
 

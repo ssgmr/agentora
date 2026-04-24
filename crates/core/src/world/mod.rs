@@ -235,7 +235,10 @@ impl World {
     }
 
     /// 应用动作到世界（路由模式：校验 → 路由 → 统一处理结果）
-    pub fn apply_action(&mut self, agent_id: &AgentId, action: &Action) -> ActionResult {
+    ///
+    /// # 参数
+    /// - `spark_type`: 当前决策情境的 SparkType，用于策略创建（传入 None 时使用 fallback 推断）
+    pub fn apply_action(&mut self, agent_id: &AgentId, action: &Action, spark_type: Option<SparkType>) -> ActionResult {
         // 前置校验
         if !self.agents.contains_key(agent_id) {
             return ActionResult::InvalidAgent;
@@ -310,7 +313,8 @@ impl World {
                 .unwrap_or(3);
             if should_create_strategy(is_success, candidate_count) {
                 let agent = self.agents.get_mut(agent_id).unwrap();
-                let spark_type = SparkType::CognitivePressure;
+                // 使用传入的 spark_type，确保与决策检索时使用相同的推断逻辑
+                let spark_type = spark_type.unwrap_or_else(|| SparkType::Explore);
                 let _ = scan_strategy_content(&action.reasoning);
                 let _ = create_strategy(&agent.strategies, spark_type, self.tick as u32, &action.reasoning);
             }

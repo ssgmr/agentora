@@ -16,7 +16,7 @@ fn test_rules_manual_default_values() {
     assert_eq!(manual.survival.hydration_decay_per_tick, 1);
     assert_eq!(manual.recovery.eat_satiety_gain, 30);
     assert_eq!(manual.recovery.drink_hydration_gain, 25);
-    assert_eq!(manual.gather.gather_amount, 2);
+    assert_eq!(manual.gather.gather_amount, 1);
     assert_eq!(manual.inventory.default_stack_limit, 20);
     assert_eq!(manual.inventory.warehouse_stack_limit, 40);
     assert_eq!(manual.structure.camp_heal_per_tick, 2);

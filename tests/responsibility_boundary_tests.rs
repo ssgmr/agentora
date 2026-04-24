@@ -184,7 +184,7 @@ fn test_world_execute_action_routing() {
         direction: None,
     };
 
-    let result = world.apply_action(&agent_id, &action);
+    let result = world.apply_action(&agent_id, &action, None);
 
     // 验证结果类型
     assert!(matches!(result, ActionResult::SuccessWithDetail(_)));

@@ -45,7 +45,6 @@ pub struct DecisionPipeline {
     rule_engine: RuleEngine,
     prompt_builder: PromptBuilder,
     llm_provider: Option<Box<dyn LlmProvider>>,
-    strategy_hub: Option<StrategyHub>,
     max_tokens: u32,
     temperature: f32,
 }
@@ -57,7 +56,6 @@ impl DecisionPipeline {
             rule_engine: RuleEngine::new(),
             prompt_builder: PromptBuilder::from_config(config),
             llm_provider: None,
-            strategy_hub: None,
             max_tokens: 500,
             temperature: 0.7,
         }
@@ -73,16 +71,9 @@ impl DecisionPipeline {
             rule_engine: RuleEngine::new(),
             prompt_builder: PromptBuilder::new(),
             llm_provider: None,
-            strategy_hub: None,
             max_tokens: 500,
             temperature: 0.7,
         }
-    }
-
-    /// 设置策略枢纽
-    pub fn with_strategy_hub(mut self, hub: StrategyHub) -> Self {
-        self.strategy_hub = Some(hub);
-        self
     }
 
     /// 设置 LLM Provider
@@ -117,13 +108,14 @@ impl DecisionPipeline {
         perception_summary: &str,
         memory_summary: Option<&str>,
         action_feedback: Option<&str>,
+        strategy_hub: Option<&StrategyHub>,
     ) -> DecisionResult {
         let pipeline_start = std::time::Instant::now();
         tracing::info!("[⏱️ Decision] 开始决策管道 for agent {}", agent_id.as_str());
 
         // 阶段 1: 上下文构建 (Prompt 组装)
         let phase1_start = std::time::Instant::now();
-        let prompt = self.build_prompt(agent_id, world_state, perception_summary, memory_summary, action_feedback);
+        let prompt = self.build_prompt(agent_id, world_state, perception_summary, memory_summary, action_feedback, strategy_hub);
         let phase1_elapsed = phase1_start.elapsed();
         tracing::info!("[⏱️ Decision] 阶段1-Prompt构建 {:.2}ms", phase1_elapsed.as_millis());
         tracing::debug!("[📝 Decision] Prompt for agent {}:\n========== BEGIN ==========\n{}\n========== END ==========", agent_id.as_str(), prompt);
@@ -234,13 +226,14 @@ impl DecisionPipeline {
         perception_summary: &str,
         memory_summary: Option<&str>,
         action_feedback: Option<&str>,
+        strategy_hub: Option<&StrategyHub>,
     ) -> String {
         // 使用传入的感知摘要（不再自行构建）
         // 使用传入的记忆摘要，默认为空
         let memory_summary = memory_summary.unwrap_or("");
 
         // 构建策略提示（基于 Agent 当前状态推断模式）
-        let strategy_hint = self.strategy_hub.as_ref().and_then(|hub| {
+        let strategy_hint = strategy_hub.and_then(|hub| {
             let state_mode = infer_state_mode(world_state);
             retrieve_strategy(hub, state_mode).map(|strategy| {
                 let summary = get_strategy_summary(&strategy);

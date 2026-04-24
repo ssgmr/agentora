@@ -5,6 +5,7 @@
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::collections::HashMap;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
@@ -12,6 +13,7 @@ use crate::{World, WorldSeed, WorldSnapshot, AgentId, DecisionPipeline};
 use crate::agent::inventory::{InventoryConfig, init_inventory_config};
 use agentora_ai::{LlmProvider, LlmConfig};
 use crate::snapshot::NarrativeEvent;
+use crate::strategy::StrategyHub;
 
 use super::config::SimConfig;
 #[cfg(feature = "p2p")]
@@ -33,6 +35,8 @@ pub struct Simulation {
     world: Arc<Mutex<World>>,
     /// 决策管道
     pipeline: Arc<DecisionPipeline>,
+    /// Agent 策略库（每个 Agent 独立）
+    strategy_hubs: HashMap<AgentId, StrategyHub>,
     /// 模拟配置
     config: SimConfig,
     /// 暂停状态
@@ -110,6 +114,14 @@ impl Simulation {
                 .with_llm_params(llm_config.decision.max_tokens, llm_config.decision.temperature)
         };
 
+        // 为每个初始 Agent 创建策略库
+        let mut strategy_hubs: HashMap<AgentId, StrategyHub> = HashMap::new();
+        for agent_id in world.agents.keys() {
+            let mut hub = StrategyHub::new(&format!("{:?}", agent_id));
+            let _ = hub.load_all_strategies();
+            strategy_hubs.insert(agent_id.clone(), hub);
+        }
+
         tracing::info!(
             "[Simulation] 创建成功 [agents={} npc={} world_size={}x{} mode={:?}]",
             config.initial_agent_count,
@@ -122,6 +134,7 @@ impl Simulation {
         Self {
             world: Arc::new(Mutex::new(world)),
             pipeline: Arc::new(pipeline),
+            strategy_hubs,
             config,
             is_paused: Arc::new(AtomicBool::new(false)),
             is_running: AtomicBool::new(false),
@@ -273,6 +286,12 @@ impl Simulation {
                 npc_ids = Vec::new();
             }
         }
+        // 为 NPC 创建策略库
+        for npc_id in &npc_ids {
+            let mut hub = StrategyHub::new(&format!("{:?}", npc_id));
+            let _ = hub.load_all_strategies();
+            self.strategy_hubs.insert(npc_id.clone(), hub);
+        }
         for npc_id in &npc_ids {
             let handle = self.spawn_agent_loop(npc_id.clone(), true);
             self.agent_handles.push(handle);
@@ -384,6 +403,7 @@ impl Simulation {
             self.config.player_decision_interval_secs
         };
         let vision_radius = self.config.vision_radius;
+        let strategy_hub = self.strategy_hubs.get(&agent_id).cloned();
 
         tokio::spawn(async move {
             super::agent_loop::run_agent_loop(
@@ -396,6 +416,7 @@ impl Simulation {
                 interval_secs as u32,
                 vision_radius,
                 is_paused,
+                strategy_hub,
             ).await;
         })
     }

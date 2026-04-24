@@ -52,7 +52,7 @@ fn test_gather_success() {
         direction: None,
     };
 
-    let result = world.apply_action(&agent_id, &action);
+    let result = world.apply_action(&agent_id, &action, None);
     assert!(matches!(result, ActionResult::SuccessWithDetail(_)));
 
     // 验证背包增加了资源
@@ -76,7 +76,7 @@ fn test_gather_no_resource_node() {
         direction: None,
     };
 
-    let result = world.apply_action(&agent_id, &action);
+    let result = world.apply_action(&agent_id, &action, None);
     assert!(matches!(result, ActionResult::Blocked(ref r) if r.contains("没有资源节点") || r.contains("没有food")));
 }
 
@@ -101,7 +101,7 @@ fn test_gather_wrong_resource_type() {
         direction: None,
     };
 
-    let result = world.apply_action(&agent_id, &action);
+    let result = world.apply_action(&agent_id, &action, None);
     assert!(matches!(result, ActionResult::Blocked(ref r) if r.contains("资源节点") || r.contains("不是")));
 }
 
@@ -126,7 +126,7 @@ fn test_gather_depleted_node() {
         direction: None,
     };
 
-    let result = world.apply_action(&agent_id, &action);
+    let result = world.apply_action(&agent_id, &action, None);
     assert!(matches!(result, ActionResult::Blocked(ref r) if r.contains("枯竭")));
 }
 
@@ -148,7 +148,7 @@ fn test_build_fence_success() {
         direction: None,
     };
 
-    let result = world.apply_action(&agent_id, &action);
+    let result = world.apply_action(&agent_id, &action, None);
     assert!(matches!(result, ActionResult::SuccessWithDetail(_)));
 
     // 验证建筑已创建
@@ -175,7 +175,7 @@ fn test_build_camp_success() {
         direction: None,
     };
 
-    let result = world.apply_action(&agent_id, &action);
+    let result = world.apply_action(&agent_id, &action, None);
     assert!(matches!(result, ActionResult::SuccessWithDetail(_)));
     assert!(world.structures.contains_key(&pos));
 
@@ -204,7 +204,7 @@ fn test_build_insufficient_resources() {
         direction: None,
     };
 
-    let result = world.apply_action(&agent_id, &action);
+    let result = world.apply_action(&agent_id, &action, None);
     assert!(matches!(result, ActionResult::Blocked(ref r) if r.contains("资源不足")));
 
     // 验证建筑未创建
@@ -227,7 +227,7 @@ fn test_build_existing_structure() {
         build_type: Some(StructureType::Fence),
         direction: None,
     };
-    world.apply_action(&agent_id, &action1);
+    world.apply_action(&agent_id, &action1, None);
 
     // 再建一个（同一位置）
     let action2 = Action {
@@ -239,7 +239,7 @@ fn test_build_existing_structure() {
         direction: None,
     };
 
-    let result = world.apply_action(&agent_id, &action2);
+    let result = world.apply_action(&agent_id, &action2, None);
     assert!(matches!(result, ActionResult::Blocked(ref r) if r.contains("已有建筑")));
 }
 
@@ -264,7 +264,7 @@ fn test_attack_success() {
         direction: None,
     };
 
-    let result = world.apply_action(&attacker_id, &action);
+    let result = world.apply_action(&attacker_id, &action, None);
     assert!(matches!(result, ActionResult::SuccessWithDetail(_)));
 
     // 验证目标受到伤害
@@ -296,7 +296,7 @@ fn test_attack_kills_target() {
         direction: None,
     };
 
-    let result = world.apply_action(&attacker_id, &action);
+    let result = world.apply_action(&attacker_id, &action, None);
     assert!(matches!(result, ActionResult::SuccessWithDetail(_)));
 
     let target = world.agents.get(&target_id).unwrap();
@@ -323,7 +323,7 @@ fn test_attack_dead_target() {
         direction: None,
     };
 
-    let result = world.apply_action(&attacker_id, &action);
+    let result = world.apply_action(&attacker_id, &action, None);
     assert!(matches!(result, ActionResult::Blocked(ref r) if r.contains("已死亡")));
 }
 
@@ -355,7 +355,7 @@ fn test_trade_offer_success() {
         direction: None,
     };
 
-    let result = world.apply_action(&proposer_id, &action);
+    let result = world.apply_action(&proposer_id, &action, None);
     assert!(matches!(result, ActionResult::SuccessWithDetail(_)));
 
     // 验证待处理交易已创建
@@ -389,7 +389,7 @@ fn test_trade_offer_insufficient_resources() {
         direction: None,
     };
 
-    let result = world.apply_action(&proposer_id, &action);
+    let result = world.apply_action(&proposer_id, &action, None);
     assert!(matches!(result, ActionResult::Blocked(ref r) if r.contains("资源不足")));
     assert!(world.pending_trades.is_empty());
 }
@@ -418,7 +418,7 @@ fn test_trade_offer_dead_target() {
         direction: None,
     };
 
-    let result = world.apply_action(&proposer_id, &action);
+    let result = world.apply_action(&proposer_id, &action, None);
     assert!(matches!(result, ActionResult::Blocked(ref r) if r.contains("已死亡")));
 }
 
@@ -476,7 +476,7 @@ fn test_trade_accept_success() {
         direction: None,
     };
 
-    let result = world.apply_action(&acceptor_id, &action);
+    let result = world.apply_action(&acceptor_id, &action, None);
     assert!(matches!(result, ActionResult::SuccessWithDetail(_)));
 
     // 验证交易已移除
@@ -513,7 +513,7 @@ fn test_trade_accept_no_pending() {
         direction: None,
     };
 
-    let result = world.apply_action(&agent_id, &action);
+    let result = world.apply_action(&agent_id, &action, None);
     assert!(matches!(result, ActionResult::Blocked(ref r) if r.contains("待处理")));
 }
 
@@ -549,7 +549,7 @@ fn test_trade_reject_success() {
         direction: None,
     };
 
-    let result = world.apply_action(&acceptor_id, &action);
+    let result = world.apply_action(&acceptor_id, &action, None);
     assert!(matches!(result, ActionResult::SuccessWithDetail(_)));
     assert!(world.pending_trades.is_empty());
 }
@@ -580,7 +580,7 @@ fn test_ally_propose_success() {
         direction: None,
     };
 
-    let result = world.apply_action(&proposer_id, &action);
+    let result = world.apply_action(&proposer_id, &action, None);
     assert!(matches!(result, ActionResult::SuccessWithDetail(_)));
 }
 
@@ -608,7 +608,7 @@ fn test_ally_propose_low_trust() {
         direction: None,
     };
 
-    let result = world.apply_action(&proposer_id, &action);
+    let result = world.apply_action(&proposer_id, &action, None);
     assert!(matches!(result, ActionResult::Blocked(ref r) if r.contains("信任")));
 }
 
@@ -631,7 +631,7 @@ fn test_ally_propose_no_relation() {
         direction: None,
     };
 
-    let result = world.apply_action(&proposer_id, &action);
+    let result = world.apply_action(&proposer_id, &action, None);
     assert!(matches!(result, ActionResult::Blocked(ref r) if r.contains("信任")));
 }
 
@@ -655,7 +655,7 @@ fn test_ally_accept_success() {
         direction: None,
     };
 
-    let result = world.apply_action(&acceptor_id, &action);
+    let result = world.apply_action(&acceptor_id, &action, None);
     assert!(matches!(result, ActionResult::SuccessWithDetail(_)));
 
     // 验证双方都建立了联盟关系
@@ -685,7 +685,7 @@ fn test_ally_reject_success() {
         direction: None,
     };
 
-    let result = world.apply_action(&acceptor_id, &action);
+    let result = world.apply_action(&acceptor_id, &action, None);
     assert!(matches!(result, ActionResult::SuccessWithDetail(_)));
 }
 
@@ -707,7 +707,7 @@ fn test_error_narrative_gather_no_resource() {
         direction: None,
     };
 
-    world.apply_action(&agent_id, &action);
+    world.apply_action(&agent_id, &action, None);
 
     // 验证生成了错误叙事事件
     let error_events: Vec<_> = world.tick_events.iter()
@@ -738,7 +738,7 @@ fn test_error_narrative_build_existing_structure() {
         direction: None,
     };
 
-    world.apply_action(&agent_id, &action);
+    world.apply_action(&agent_id, &action, None);
 
     let error_events: Vec<_> = world.tick_events.iter()
         .filter(|e| e.event_type == "error")
@@ -766,7 +766,7 @@ fn test_error_narrative_attack_dead_target() {
         direction: None,
     };
 
-    world.apply_action(&attacker_id, &action);
+    world.apply_action(&attacker_id, &action, None);
 
     let error_events: Vec<_> = world.tick_events.iter()
         .filter(|e| e.event_type == "error")
@@ -791,7 +791,7 @@ fn test_no_error_narrative_on_success() {
         direction: None,
     };
 
-    world.apply_action(&agent_id, &action);
+    world.apply_action(&agent_id, &action, None);
 
     let error_events: Vec<_> = world.tick_events.iter()
         .filter(|e| e.event_type == "error")
@@ -965,7 +965,7 @@ fn test_wait_does_not_restore_satiety() {
         direction: None,
     };
 
-    let result = world.apply_action(&agent_id, &action);
+    let result = world.apply_action(&agent_id, &action, None);
     assert!(matches!(result, ActionResult::SuccessWithDetail(_)));
 
     let agent = world.agents.get(&agent_id).unwrap();
@@ -996,7 +996,7 @@ fn test_eat_restores_satiety() {
         direction: None,
     };
 
-    let result = world.apply_action(&agent_id, &action);
+    let result = world.apply_action(&agent_id, &action, None);
     assert!(matches!(result, ActionResult::SuccessWithDetail(_)));
 
     let agent = world.agents.get(&agent_id).unwrap();
@@ -1026,7 +1026,7 @@ fn test_drink_restores_hydration() {
         direction: None,
     };
 
-    let result = world.apply_action(&agent_id, &action);
+    let result = world.apply_action(&agent_id, &action, None);
     assert!(matches!(result, ActionResult::SuccessWithDetail(_)));
 
     let agent = world.agents.get(&agent_id).unwrap();
@@ -1054,7 +1054,7 @@ fn test_eat_without_food_fails() {
         direction: None,
     };
 
-    let result = world.apply_action(&agent_id, &action);
+    let result = world.apply_action(&agent_id, &action, None);
     assert_eq!(result, ActionResult::Blocked("背包中没有food。当前背包：空".into()));
 }
 
@@ -1076,7 +1076,7 @@ fn test_drink_without_water_fails() {
         direction: None,
     };
 
-    let result = world.apply_action(&agent_id, &action);
+    let result = world.apply_action(&agent_id, &action, None);
     assert_eq!(result, ActionResult::Blocked("背包中没有water。当前背包：空".into()));
 }
 
@@ -1098,7 +1098,7 @@ fn test_wait_full_health() {
         direction: None,
     };
 
-    world.apply_action(&agent_id, &action);
+    world.apply_action(&agent_id, &action, None);
 
     let agent = world.agents.get(&agent_id).unwrap();
     assert_eq!(agent.health, 100); // 不超过最大值
@@ -1143,7 +1143,7 @@ fn test_legacy_pickup_success() {
         direction: None,
     };
 
-    let result = world.apply_action(&agent_id, &action);
+    let result = world.apply_action(&agent_id, &action, None);
     assert!(matches!(result, ActionResult::SuccessWithDetail(_)));
 
     let agent = world.agents.get(&agent_id).unwrap();
@@ -1184,7 +1184,7 @@ fn test_legacy_pickup_empty() {
         direction: None,
     };
 
-    let result = world.apply_action(&agent_id, &action);
+    let result = world.apply_action(&agent_id, &action, None);
     assert!(matches!(result, ActionResult::Blocked(ref r) if r.contains("无物品")));
 }
 
@@ -1221,7 +1221,7 @@ fn test_legacy_worship() {
         direction: None,
     };
 
-    let result = world.apply_action(&agent_id, &action);
+    let result = world.apply_action(&agent_id, &action, None);
     assert!(matches!(result, ActionResult::SuccessWithDetail(_)));
 }
 
@@ -1240,7 +1240,7 @@ fn test_apply_action_invalid_agent() {
         direction: None,
     };
 
-    let result = world.apply_action(&fake_id, &action);
+    let result = world.apply_action(&fake_id, &action, None);
     assert_eq!(result, ActionResult::InvalidAgent);
 }
 
@@ -1261,7 +1261,7 @@ fn test_apply_action_dead_agent() {
         direction: None,
     };
 
-    let result = world.apply_action(&agent_id, &action);
+    let result = world.apply_action(&agent_id, &action, None);
     assert_eq!(result, ActionResult::AgentDead);
 }
 
@@ -1285,7 +1285,7 @@ fn test_snapshot_structure_owner_id() {
         build_type: Some(StructureType::Camp),
         direction: None,
     };
-    let _ = world.apply_action(&agent_id, &action);
+    let _ = world.apply_action(&agent_id, &action, None);
 
     // 生成快照
     let snapshot: WorldSnapshot = world.snapshot();
