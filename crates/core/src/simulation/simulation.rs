@@ -11,12 +11,12 @@ use tokio::task::JoinHandle;
 use crate::{World, WorldSeed, WorldSnapshot, AgentId, DecisionPipeline};
 use crate::agent::inventory::{InventoryConfig, init_inventory_config};
 use agentora_ai::{LlmProvider, LlmConfig};
+use crate::snapshot::NarrativeEvent;
 
 use super::config::SimConfig;
 #[cfg(feature = "p2p")]
 use super::config::SimMode;
 use super::delta::Delta;
-use super::agent_loop::NarrativeEvent;
 use super::p2p_handler::P2PMessageHandler;
 
 #[cfg(feature = "p2p")]

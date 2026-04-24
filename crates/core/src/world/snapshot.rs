@@ -95,6 +95,7 @@ impl World {
         let map_changes = positions_to_send.iter().map(|pos| {
             let terrain = format!("{:?}", self.map.get_terrain(*pos));
             let structure = self.structures.get(pos).map(|s| format!("{:?}", s.structure_type));
+            let structure_owner_id = self.structures.get(pos).and_then(|s| s.owner_id.as_ref().map(|id| id.as_str().to_string()));
             let (resource_type, resource_amount) = self.resources.get(pos)
                 .filter(|n| !n.is_depleted && n.current_amount > 0)
                 .map(|n| (Some(n.resource_type.as_str().to_string()), Some(n.current_amount)))
@@ -105,6 +106,7 @@ impl World {
                 y: pos.y,
                 terrain,
                 structure,
+                structure_owner_id,
                 resource_type,
                 resource_amount,
             }

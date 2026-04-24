@@ -20,30 +20,7 @@ use std::collections::HashMap;
 use crate::{World, AgentId, Action, ActionType};
 use crate::decision::{DecisionPipeline, infer_state_mode, PerceptionBuilder};
 use crate::simulation::{WorldStateBuilder, Delta, DeltaEmitter, NarrativeEmitter, MemoryRecorder};
-
-/// 叙事事件（推送至前端）
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct NarrativeEvent {
-    pub tick: u64,
-    pub agent_id: String,
-    pub agent_name: String,
-    pub event_type: String,
-    pub description: String,
-    pub color_code: String,
-}
-
-impl Default for NarrativeEvent {
-    fn default() -> Self {
-        Self {
-            tick: 0,
-            agent_id: String::new(),
-            agent_name: String::new(),
-            event_type: String::new(),
-            description: String::new(),
-            color_code: String::new(),
-        }
-    }
-}
+use crate::snapshot::NarrativeEvent;
 
 impl Default for super::delta::DeltaEnvelope {
     fn default() -> Self {

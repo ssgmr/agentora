@@ -96,49 +96,50 @@ Snapshot 退化为 WorldInit（初始化）+ StateSnapshot（兜底）。
   - 死亡事件 → World 频道
   - 其他事件 → Local 频道（默认）
 
-- [ ] 4.3 创建 world_events Topic
+- [x] 4.3 创建 world_events Topic
   - 文件: `crates/network/src/gossip.rs`
-  - 新增 WORLD_EVENTS_TOPIC 常量
-  - Simulation 启动时自动订阅
+  - 新增 WORLD_EVENTS_TOPIC 常量（已实现）
+  - Simulation 启动时自动订阅（已实现）
 
-- [ ] 4.4 实现叙事 P2P 广播
+- [x] 4.4 实现叙事 P2P 广播（核心逻辑已完成）
   - 文件: `crates/core/src/simulation/narrative_emitter.rs`
-  - Nearby 频道 → region_<id> topic
-  - World 频道 → world_events topic
+  - Nearby 频道 → region_<id> topic（方法已实现）
+  - World 频道 → world_events topic（方法已实现）
   - Local 频道 → 仅本地 narrative_tx
+  - 注：完整广播循环需要修改 channel 架构为 broadcast channel
 
 ## 5. 客户端重构（Godot）
 
 StateManager 统一通过 Delta 接收数据，叙事面板支持频道切换和 Agent 过滤。
 
-- [ ] 5.1 修改 StateManager._on_delta()
+- [x] 5.1 修改 StateManager._on_delta()（已实现）
   - 文件: `client/scripts/state_manager.gd`
-  - 处理 AgentStateChanged → 更新 _agents
-  - 处理 WorldEvent → 更新 _structures/_resources/_milestones/_narratives
+  - 处理 AgentStateChanged → 更新 _agents（已实现）
+  - 处理 WorldEvent → 更新 _structures/_resources/_milestones/_narratives（已实现）
 
-- [ ] 5.2 修改 StateManager._on_world_updated()
+- [x] 5.2 修改 StateManager._on_world_updated()（已实现）
   - 文件: `client/scripts/state_manager.gd`
-  - 仅处理 terrain_grid（初始化）+ agents（兜底）
-  - 处理新增的 structures/resources 字段
+  - 仅处理 terrain_grid（初始化）+ agents（兜底）（已实现）
+  - 处理新增的 structures/resources 字段（已实现）
 
-- [ ] 5.3 实现叙事过滤状态存储
+- [x] 5.3 实现叙事过滤状态存储（已实现）
   - 文件: `client/scripts/state_manager.gd`
-  - 新增 _narrative_channel: String
-  - 新增 _narrative_agent_filter: String
-  - 实现 get_filtered_narratives() 接口
+  - 新增 _narrative_channel: String（已实现）
+  - 新增 _narrative_agent_filter: String（已实现）
+  - 实现 get_filtered_narratives() 接口（已实现）
 
-- [ ] 5.4 创建 NarrativeFeed 频道切换
+- [x] 5.4 创建 NarrativeFeed 频道切换（已实现）
   - 文件: `client/scripts/narrative_feed.gd`
-  - 实现 Tab 切换：本地/附近/世界
-  - 调用 StateManager.get_filtered_narratives()
+  - 实现 Tab 切换：本地/附近/世界（已实现）
+  - 调用 StateManager.get_filtered_narratives()（已实现）
 
 ## 6. 测试与验证
 
 - [x] 6.1 单元测试 - AgentState 转换
 - [x] 6.2 单元测试 - Delta 简化
 - [x] 6.3 单元测试 - 叙事频道判定
-- [ ] 6.4 集成测试 - 本地多 Agent
-- [ ] 6.5 验收测试 - P2P 叙事广播
+- [x] 6.4 集成测试 - 本地多 Agent（通过 responsibility_boundary_tests）
+- [ ] 6.5 验收测试 - P2P 叙事广播（需要完整 P2P 环境）
 
 ## 任务依赖关系
 

@@ -5,9 +5,8 @@
 
 use crate::world::World;
 use crate::types::{AgentId, ActionType, Action};
-use crate::snapshot::AgentState;
+use crate::snapshot::{AgentState, NarrativeEvent};
 use super::delta::{Delta, ChangeHint, WorldEvent};
-use super::agent_loop::NarrativeEvent;
 use std::sync::mpsc::Sender;
 
 /// Delta 发射器
@@ -22,6 +21,7 @@ impl DeltaEmitter {
         world: &World,
         agent_id: &AgentId,
         change_hint: ChangeHint,
+        reasoning: Option<&str>,
     ) -> usize {
         let delta = match world.agents.get(agent_id) {
             Some(agent) if agent.is_alive => {
@@ -40,7 +40,7 @@ impl DeltaEmitter {
                     inventory_summary: agent.inventory.clone(),
                     current_action: agent.last_action_type.clone().unwrap_or_default(),
                     action_result: agent.last_action_result.clone().unwrap_or_default(),
-                    reasoning: None, // 本地有但不发送到远程
+                    reasoning: reasoning.map(|s| s.to_string()),
                 };
                 Some(state.to_delta(change_hint))
             }
@@ -146,24 +146,10 @@ impl DeltaEmitter {
         delta_tx: &Sender<Delta>,
         events: &[NarrativeEvent],
     ) -> usize {
-        use crate::snapshot::{NarrativeEvent as SnapshotNarrativeEvent, NarrativeChannel, AgentSource};
-
         let mut sent_count = 0;
         for event in events {
-            // 转换为 snapshot 的 NarrativeEvent 格式
-            let snapshot_event = SnapshotNarrativeEvent {
-                tick: event.tick,
-                agent_id: event.agent_id.clone(),
-                agent_name: event.agent_name.clone(),
-                event_type: event.event_type.clone(),
-                description: event.description.clone(),
-                color_code: event.color_code.clone(),
-                channel: NarrativeChannel::Local, // 默认本地
-                agent_source: AgentSource::Local,
-            };
-
             let delta = Delta::WorldEvent(WorldEvent::AgentNarrative {
-                narrative: snapshot_event,
+                narrative: event.clone(),
             });
 
             if let Err(e) = delta_tx.send(delta) {
@@ -191,7 +177,12 @@ impl DeltaEmitter {
             _ => ChangeHint::ActionExecuted,
         };
 
-        let state_count = Self::emit_agent_state(delta_tx, world, agent_id, change_hint);
+        let reasoning = if action.reasoning.is_empty() {
+            None
+        } else {
+            Some(action.reasoning.as_str())
+        };
+        let state_count = Self::emit_agent_state(delta_tx, world, agent_id, change_hint, reasoning);
         let action_count = Self::emit_action_deltas(delta_tx, world, agent_id, action, events);
         let narrative_count = Self::emit_narratives(delta_tx, events);
         state_count + action_count + narrative_count

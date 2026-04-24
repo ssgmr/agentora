@@ -15,7 +15,7 @@ pub fn delta_to_dict(delta: &Delta) -> Variant {
             dict.set("agent_id", &agent_id.to_variant());
             dict.set("change_hint", &change_hint_to_str(change_hint).to_variant());
 
-            // Agent state
+            // Agent state（扁平结构，与 snapshot agent_to_dict 格式一致）
             dict.set("name", &state.name.clone().to_variant());
             let pos = Vector2::new(state.position.0 as f32, state.position.1 as f32);
             dict.set("position", &pos.to_variant());
@@ -93,6 +93,13 @@ pub fn delta_to_dict(delta: &Delta) -> Variant {
                     dict.set("narrative_event_type", &narrative.event_type.to_variant());
                     dict.set("narrative_description", &narrative.description.to_variant());
                     dict.set("narrative_color", &narrative.color_code.to_variant());
+                    // 添加频道字段
+                    let channel_str = match narrative.channel {
+                        agentora_core::snapshot::NarrativeChannel::Local => "local",
+                        agentora_core::snapshot::NarrativeChannel::Nearby => "nearby",
+                        agentora_core::snapshot::NarrativeChannel::World => "world",
+                    };
+                    dict.set("narrative_channel", &channel_str.to_variant());
                 }
             }
         }
@@ -159,6 +166,9 @@ pub fn snapshot_to_dict(snapshot: &agentora_core::WorldSnapshot) -> Variant {
         change_dict.set("terrain", &change.terrain.to_variant());
         if let Some(structure) = &change.structure {
             change_dict.set("structure", &structure.to_variant());
+        }
+        if let Some(owner_id) = &change.structure_owner_id {
+            change_dict.set("owner_id", &owner_id.to_variant());
         }
         if let Some(resource_type) = &change.resource_type {
             change_dict.set("resource_type", &resource_type.to_variant());

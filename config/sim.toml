@@ -15,7 +15,7 @@ tick_interval_secs = 5
 npc_decision_interval_secs = 3
 
 # 玩家 Agent 决策间隔（秒）
-player_decision_interval_secs = 0.1
+player_decision_interval_secs = 2
 
 # Agent 视野扫描半径（格子数），决定 Agent 能看到多远的周边环境
 vision_radius = 10

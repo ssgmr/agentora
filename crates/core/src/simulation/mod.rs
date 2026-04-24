@@ -55,7 +55,7 @@ pub mod p2p_handler;
 pub use simulation::Simulation;
 pub use config::{SimConfig, SimMode};
 pub use delta::{Delta, DeltaEnvelope, ChangeHint, WorldEvent};
-pub use agent_loop::NarrativeEvent;
+pub use crate::snapshot::NarrativeEvent;
 pub use state_builder::WorldStateBuilder;
 pub use delta_emitter::DeltaEmitter;
 pub use narrative_emitter::NarrativeEmitter;

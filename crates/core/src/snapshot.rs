@@ -120,6 +120,9 @@ pub struct CellChange {
     pub y: u32,
     pub terrain: String,
     pub structure: Option<String>,
+    /// 建筑所有者 ID（仅当 structure 为 Some 时有效）
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub structure_owner_id: Option<String>,
     pub resource_type: Option<String>,
     pub resource_amount: Option<u32>,
 }

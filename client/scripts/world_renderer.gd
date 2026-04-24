@@ -362,10 +362,10 @@ func _on_resource_changed(x: int, y: int, resource_type: String, amount: int) ->
 	queue_redraw()
 
 
-func _on_structure_changed(x: int, y: int, structure_type: String, _owner_id: String) -> void:
+func _on_structure_changed(x: int, y: int, structure_type: String, owner_id: String) -> void:
 	var key = "%d_%d" % [x, y]
 	if structure_type != "":
-		_structures[key] = {"type": _normalize_structure_type(structure_type)}
+		_structures[key] = {"type": _normalize_structure_type(structure_type), "owner_id": owner_id}
 	else:
 		_structures.erase(key)
 	queue_redraw()

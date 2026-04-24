@@ -4,7 +4,7 @@
 
 use std::sync::mpsc::{Sender, Receiver};
 use agentora_core::simulation::{SimConfig, Delta, Simulation};
-use agentora_core::simulation::agent_loop::NarrativeEvent;
+use agentora_core::snapshot::NarrativeEvent;
 use agentora_core::WorldSeed;
 use agentora_ai::{LlmProvider, config::LlmConfig};
 

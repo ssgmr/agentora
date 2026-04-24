@@ -1264,3 +1264,38 @@ fn test_apply_action_dead_agent() {
     let result = world.apply_action(&agent_id, &action);
     assert_eq!(result, ActionResult::AgentDead);
 }
+
+// ===== 快照 owner_id 测试 =====
+
+#[test]
+fn test_snapshot_structure_owner_id() {
+    use agentora_core::snapshot::WorldSnapshot;
+
+    let mut world = create_test_world();
+    let pos = Position::new(5, 5);
+    let (agent_id, agent) = create_test_agent("a1", "建造者", pos);
+    world.insert_agent_at(agent_id.clone(), agent);
+
+    // 建造建筑
+    let action = Action {
+        reasoning: "建造营地".into(),
+        action_type: ActionType::Build { structure: StructureType::Camp },
+        target: None,
+        params: HashMap::new(),
+        build_type: Some(StructureType::Camp),
+        direction: None,
+    };
+    let _ = world.apply_action(&agent_id, &action);
+
+    // 生成快照
+    let snapshot: WorldSnapshot = world.snapshot();
+
+    // 验证 map_changes 中包含建筑且带有 owner_id
+    let cell_change = snapshot.map_changes.iter().find(|c| c.x == pos.x && c.y == pos.y);
+    assert!(cell_change.is_some(), "建筑位置应在 map_changes 中");
+    let change = cell_change.unwrap();
+    assert!(change.structure.is_some(), "建筑位置应有 structure 字段");
+    assert_eq!(change.structure.as_ref().unwrap(), "Camp");
+    assert!(change.structure_owner_id.is_some(), "建筑应有 structure_owner_id");
+    assert_eq!(change.structure_owner_id.as_ref().unwrap(), agent_id.as_str());
+}

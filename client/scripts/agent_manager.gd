@@ -66,6 +66,7 @@ func _update_glow_effects() -> void:
 func _on_state_updated(snapshot: Dictionary) -> void:
 	# 从 StateManager 获取完整 snapshot，进行一致性校验
 	var agents: Dictionary = StateManager.get_all_agents()
+	print("[AgentManager] _on_state_updated: StateManager agents count=%d, _agent_nodes count=%d" % [agents.size(), _agent_nodes.size()])
 
 	# 一致性校验：创建 snapshot 中有但本地缺失的 agent
 	for agent_id in agents.keys():
@@ -74,8 +75,8 @@ func _on_state_updated(snapshot: Dictionary) -> void:
 			var agent_node = _create_agent_node(agent_id, agent_data)
 			add_child(agent_node)
 			_agent_nodes[agent_id] = agent_node
-			var pos: Vector2 = agent_data.get("position", Vector2.ZERO)
-			print("[AgentManager] 一致性修复：创建缺失的 Agent %s 在 (%.0f, %.0f)" % [agent_id, pos.x, pos.y])
+			var pos = _parse_position(agent_data)
+			print("[AgentManager] 一致性修复：创建缺失的 Agent %s 在 (%d,%d)" % [agent_id, pos.x, pos.y])
 
 	# 一致性校验：删除本地有但 StateManager 中不存在的 agent（幽灵 agent）
 	var to_remove = []
@@ -85,26 +86,32 @@ func _on_state_updated(snapshot: Dictionary) -> void:
 
 	for agent_id in to_remove:
 		_remove_agent(agent_id)
-		print("[AgentManager] 一致性修复：移除幽灵 Agent ", agent_id)
+		print("[AgentManager] 一致性修复：移除幽灵 Agent %s" % [agent_id])
 
 
 func _on_agent_changed(agent_id: String, agent_data: Dictionary) -> void:
 	# 处理单个 Agent 的增量更新
 	var is_alive: bool = agent_data.get("is_alive", true)
+	var removed: bool = agent_data.get("removed", false)
+	var pos = _parse_position(agent_data)
+	print("[AgentManager] _on_agent_changed: id=%s is_alive=%s removed=%s pos=(%d,%d)" % [agent_id, is_alive, removed, pos.x, pos.y])
 
-	if not is_alive:
-		# Agent 死亡
+	# Agent 已移除（死亡或 snapshot 一致性删除）
+	if removed or not is_alive:
 		if _agent_nodes.has(agent_id):
-			_agent_nodes[agent_id].visible = false
+			_remove_agent(agent_id)
+			print("[AgentManager] Agent %s 已移除（死亡）" % agent_id)
 		return
 
 	if not _agent_nodes.has(agent_id):
 		# 新 Agent，创建节点
+		print("[AgentManager] 创建新 Agent 节点: %s pos=(%d,%d)" % [agent_id, pos.x, pos.y])
 		var agent_node = _create_agent_node(agent_id, agent_data)
 		add_child(agent_node)
 		_agent_nodes[agent_id] = agent_node
 	else:
 		# 更新现有 Agent
+		print("[AgentManager] 更新 Agent 节点: %s pos=(%d,%d)" % [agent_id, pos.x, pos.y])
 		_update_agent_node(agent_id, agent_data)
 
 	# 检查是否触发闪烁（采集动作）
@@ -116,25 +123,24 @@ func _update_agent_node(agent_id: String, data: Dictionary) -> void:
 	if agent_node == null:
 		return
 
-	# 更新位置
-	var pos: Vector2 = data.get("position", Vector2.ZERO)
+	# 更新位置（兼容 Vector2 和 Dictionary{x,y} 格式）
+	var pos = _parse_position(data)
 	agent_node.position = pos * 16  # 转换为像素坐标
 
-	# 更新健康值（通过 modulate 调整透明度）- 但闪烁期间跳过
+	# 不再根据健康值改变透明度（Agent 应始终可见）
+	# 闪烁期间除外
 	if not _flash_agents.has(agent_id):
 		var sprite: Sprite2D = agent_node.get_node_or_null("Sprite")
 		if sprite:
-			var health_ratio: float = float(data.get("health", 100)) / float(data.get("max_health", 100))
-			sprite.modulate.a = health_ratio
+			sprite.modulate.a = 1.0  # 始终完全可见
 
 	# 更新标签
 	var label: Label = agent_node.get_node_or_null("Label")
 	if label:
 		label.text = data.get("name", agent_id)
 
-	# 更新 Alive 状态
-	var is_alive: bool = data.get("is_alive", true)
-	agent_node.visible = is_alive
+	# Agent 应始终可见（死亡 Agent 在 _on_agent_changed 中已被移除）
+	agent_node.visible = true
 
 
 func _check_and_trigger_flash(agent_id: String) -> void:
@@ -182,11 +188,25 @@ func _create_agent_node(agent_id: String, data: Dictionary) -> Node2D:
 	label.text = data.get("name", agent_id)
 	container.add_child(label)
 
-	# 设置初始位置
-	var pos: Vector2 = data.get("position", Vector2.ZERO)
+	# 设置初始位置（兼容 Vector2 和 Dictionary{x,y} 格式）
+	var pos = _parse_position(data)
 	container.position = pos * 16
 
 	return container
+
+
+## 解析 position 数据（兼容 Vector2 和 Dictionary{x,y} 格式）
+func _parse_position(data: Dictionary) -> Vector2:
+	var pos_variant = data.get("position", Vector2.ZERO)
+	# 如果是 Vector2，直接返回
+	if pos_variant is Vector2:
+		return pos_variant
+	# 如果是 Dictionary{x, y} 格式，转换
+	if pos_variant is Dictionary:
+		var d = pos_variant as Dictionary
+		return Vector2(d.get("x", 0), d.get("y", 0))
+	# 其他情况，返回默认值
+	return Vector2.ZERO
 
 
 func _remove_agent(agent_id: String) -> void:

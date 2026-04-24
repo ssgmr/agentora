@@ -7,7 +7,7 @@ use godot::classes::{Node, INode};
 use std::sync::mpsc::{self, Sender, Receiver};
 
 use agentora_core::simulation::Delta;
-use agentora_core::simulation::agent_loop::NarrativeEvent;
+use agentora_core::snapshot::NarrativeEvent;
 use agentora_core::WorldSnapshot;
 use agentora_ai::{load_llm_config, OpenAiProvider, FallbackChain, LlmProvider};
 
@@ -115,13 +115,6 @@ impl INode for SimulationBridge {
                 self.last_snapshot = Some(snapshot.clone());
 
                 let snapshot_dict = snapshot_to_dict(&snapshot);
-                let mc_count = snapshot.map_changes.len();
-                let terrain_info = if snapshot.terrain_grid.is_some() {
-                    format!("含 terrain_grid {}x{}", snapshot.terrain_width.unwrap_or(0), snapshot.terrain_height.unwrap_or(0))
-                } else {
-                    "无 terrain_grid".to_string()
-                };
-                tracing::debug!("[SimulationBridge] physics_process: 发送 snapshot 含 {} 个 map_changes, {}", mc_count, terrain_info);
                 self.base_mut().emit_signal("world_updated", &[snapshot_dict.to_variant()]);
             }
         }

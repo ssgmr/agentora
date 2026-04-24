@@ -95,6 +95,34 @@ func set_narrative_agent_filter(agent_id: String) -> void:
 	_narrative_agent_filter = agent_id
 	filter_changed.emit()
 
+## 获取过滤后的叙事事件列表
+##
+## 根据当前频道和 Agent 过滤返回叙事事件
+## - 世界频道忽略 Agent 过滤（显示所有世界事件）
+## - 其他频道组合频道和 Agent 过滤
+func get_filtered_narratives() -> Array:
+	var filtered = _narrative_events.duplicate()
+
+	# 世界频道：只显示世界事件，忽略 Agent 过滤
+	if _narrative_channel == "world":
+		return filtered.filter(func(e):
+			return e.get("channel", "local") == "world"
+		)
+
+	# 其他频道：先按频道过滤
+	if _narrative_channel != "":
+		filtered = filtered.filter(func(e):
+			return e.get("channel", "local") == _narrative_channel
+		)
+
+	# 然后按 Agent 过滤（可选）
+	if _narrative_agent_filter != "":
+		filtered = filtered.filter(func(e):
+			return e.get("agent_id", "") == _narrative_agent_filter
+		)
+
+	return filtered
+
 # ===== 内部方法 =====
 
 func _terrain_byte_to_type(byte: int) -> String:
@@ -105,6 +133,15 @@ func _terrain_byte_to_type(byte: int) -> String:
 		3: return "water"
 		4: return "desert"
 		_: return "plains"
+
+## 解析 position 数据（兼容 Vector2 和 Dictionary{x,y} 格式）
+func _parse_position_variant(pos_variant) -> Vector2:
+	if pos_variant is Vector2:
+		return pos_variant
+	if pos_variant is Dictionary:
+		var d = pos_variant as Dictionary
+		return Vector2(d.get("x", 0), d.get("y", 0))
+	return Vector2.ZERO
 
 # ===== Bridge 信号处理 =====
 
@@ -155,31 +192,41 @@ func _on_world_updated(snapshot: Dictionary) -> void:
 	state_updated.emit(snapshot)
 
 ## 处理 agent_delta 信号（增量更新）
-## 新格式：agent_state_changed 或 world_event
+## 扁平格式（与 snapshot agent_to_dict 一致）
 func _on_agent_delta(delta: Dictionary) -> void:
 	var event_type = delta.get("type", "")
 
 	match event_type:
 		"agent_state_changed":
 			var agent_id = delta.get("agent_id", "")
-			var state = delta.get("state", {})
+			var is_alive: bool = delta.get("is_alive", true)
 			var change_hint = delta.get("change_hint", "")
+
+			# 死亡 Agent：从 _agents 移除（与 snapshot 过滤逻辑一致）
+			if not is_alive:
+				if _agents.has(agent_id):
+					_agents.erase(agent_id)
+					agent_changed.emit(agent_id, {"is_alive": false, "removed": true})
+				return
+
+			# 解析 position（兼容 Vector2 和 Dictionary{x,y} 格式）
+			var pos = _parse_position_variant(delta.get("position", Vector2.ZERO))
 
 			var agent_data = {
 				"id": agent_id,
-				"name": state.get("name", ""),
-				"position": Vector2(state.get("position", [0, 0])[0], state.get("position", [0, 0])[1]),
-				"health": state.get("health", 100),
-				"max_health": state.get("max_health", 100),
-				"satiety": state.get("satiety", 50),
-				"hydration": state.get("hydration", 50),
-				"is_alive": state.get("is_alive", true),
-				"age": state.get("age", 0),
-				"level": state.get("level", 1),
-				"current_action": state.get("current_action", ""),
-				"action_result": state.get("action_result", ""),
-				"reasoning": state.get("reasoning", ""),
-				"inventory_summary": state.get("inventory_summary", {}),
+				"name": delta.get("name", ""),
+				"position": pos,
+				"health": delta.get("health", 100),
+				"max_health": delta.get("max_health", 100),
+				"satiety": delta.get("satiety", 50),
+				"hydration": delta.get("hydration", 50),
+				"is_alive": true,
+				"age": delta.get("age", 0),
+				"level": delta.get("level", 1),
+				"current_action": delta.get("current_action", ""),
+				"action_result": delta.get("action_result", ""),
+				"reasoning": delta.get("reasoning", ""),
+				"inventory_summary": delta.get("inventory_summary", {}),
 				"change_hint": change_hint
 			}
 			_agents[agent_id] = agent_data
@@ -218,14 +265,14 @@ func _on_agent_delta(delta: Dictionary) -> void:
 					milestone_reached.emit(name, display_name, tick)
 
 				"agent_narrative":
-					var narrative = delta.get("narrative_tick", 0)
 					var event_data = {
 						"tick": delta.get("narrative_tick", 0),
 						"agent_id": delta.get("narrative_agent_id", ""),
 						"agent_name": delta.get("narrative_agent_name", ""),
 						"event_type": delta.get("narrative_event_type", ""),
 						"description": delta.get("narrative_description", ""),
-						"color_code": delta.get("narrative_color", "#FFFFFF")
+						"color_code": delta.get("narrative_color", "#FFFFFF"),
+							"channel": delta.get("narrative_channel", "local")
 					}
 					_narrative_events.append(event_data)
 					narrative_added.emit(event_data)
