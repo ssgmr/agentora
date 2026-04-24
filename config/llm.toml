@@ -15,7 +15,7 @@ provider = "anthropic"
 api_base = "http://localhost:1234"
 api_key = ""
 model = "gemma-4-e2b-it"
-timeout_seconds = 300
+timeout_seconds = 30
 
 # 决策配置
 [decision]

@@ -72,8 +72,6 @@ pub async fn run_agent_loop(
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     loop {
-        interval.tick().await;
-
         // 暂停检查：跳过决策
         if is_paused.load(Ordering::SeqCst) {
             tracing::trace!("[AgentLoop] Agent {:?} 暂停中，跳过决策", agent_id);

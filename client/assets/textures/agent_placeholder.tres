@@ -1,8 +1,0 @@
-[gd_resource type="Texture2D" load_steps=3 format=3 uid="uid://agent_placeholder"]
-
-[ext_resource type="Texture2D" path="res://assets/sprites/agent_idle.png" id="idle"]
-[ext_resource type="Texture2D" path="res://assets/sprites/agent_selected.png" id="selected"]
-
-[resource]
-idle = ExtResource("idle")
-selected = ExtResource("selected")

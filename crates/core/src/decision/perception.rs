@@ -417,6 +417,29 @@ impl PerceptionBuilder {
 
     /// 构建优先资源路径（有生存压力时）
     fn build_priority_path(summary: &mut String, world_state: &WorldState, priority: ResourceType) {
+        let have_in_bag = world_state.agent_inventory.get(&priority).copied().unwrap_or(0);
+        let effective_limit = get_config().max_stack_size;
+
+        // 如果背包已满，采集没有意义，优先提示使用背包资源
+        if have_in_bag >= effective_limit {
+            summary.push_str("【推荐路径】\n");
+            summary.push_str(&format!(
+                "  背包中{:?}已满（{}/{}），无法继续采集！建议考虑 Eat/Drink 或前往仓库扩充上限。\n",
+                priority, have_in_bag, effective_limit
+            ));
+            // 如果生存危急且有库存，提示直接使用
+            let urgent = world_state.agent_satiety <= 30 || world_state.agent_hydration <= 30;
+            if urgent {
+                summary.push_str(&format!(
+                    "  → 背包有{}×{}，可直接{}恢复（优先级更高）\n",
+                    priority.as_str(), have_in_bag,
+                    if priority == ResourceType::Food { "Eat" } else { "Drink" }
+                ));
+            }
+            summary.push_str("\n");
+            return;
+        }
+
         let nearest = world_state.resources_at.iter()
             .filter(|(_, (r, _))| *r == priority)
             .min_by_key(|(pos, _)| pos.manhattan_distance(&world_state.agent_position));
@@ -481,16 +504,14 @@ impl PerceptionBuilder {
                 }
             }
 
-            let have_in_bag = world_state.agent_inventory.get(&priority).copied().unwrap_or(0);
-            if have_in_bag > 0 {
-                let urgent = world_state.agent_satiety <= 30 || world_state.agent_hydration <= 30;
-                if urgent {
-                    summary.push_str(&format!(
-                        "  → 或者：背包有{}×{}，可直接{}恢复（优先级更高）\n",
-                        priority.as_str(), have_in_bag,
-                        if priority == ResourceType::Food { "Eat" } else { "Drink" }
-                    ));
-                }
+            // 如果生存危急且有库存，提示直接使用
+            let urgent = world_state.agent_satiety <= 30 || world_state.agent_hydration <= 30;
+            if have_in_bag > 0 && urgent {
+                summary.push_str(&format!(
+                    "  → 或者：背包有{}×{}，可直接{}恢复（优先级更高）\n",
+                    priority.as_str(), have_in_bag,
+                    if priority == ResourceType::Food { "Eat" } else { "Drink" }
+                ));
             }
             summary.push_str("\n");
         } else {
@@ -529,15 +550,30 @@ impl PerceptionBuilder {
     /// 无生存压力时的探索路径
     fn build_exploration_path(summary: &mut String, world_state: &WorldState) {
         let current_has_resource = world_state.resources_at.get(&world_state.agent_position);
-        if current_has_resource.is_some() {
-            let (r, amount) = current_has_resource.unwrap();
-            summary.push_str("【推荐路径】\n");
-            summary.push_str(&format!(
-                "  当前位置有{:?}×{}，可直接Gather采集\n\n",
-                r, amount
-            ));
+        let effective_limit = get_config().max_stack_size;
+
+        if let Some((r, amount)) = current_has_resource {
+            let have_in_bag = world_state.agent_inventory.get(r).copied().unwrap_or(0);
+            if have_in_bag >= effective_limit {
+                summary.push_str("【推荐路径】\n");
+                summary.push_str(&format!(
+                    "  当前位置有{:?}×{}，但背包已满（{}/{}），建议移动到其他地方或 Eat/Drink 释放背包空间。\n",
+                    r, amount, have_in_bag, effective_limit
+                ));
+            } else {
+                summary.push_str("【推荐路径】\n");
+                summary.push_str(&format!(
+                    "  当前位置有{:?}×{}，可直接Gather采集\n\n",
+                    r, amount
+                ));
+            }
         } else {
             let nearest_any = world_state.resources_at.iter()
+                // 跳过背包已满的资源类型
+                .filter(|(_, (r, _))| {
+                    let have = world_state.agent_inventory.get(r).copied().unwrap_or(0);
+                    have < effective_limit
+                })
                 .min_by_key(|(pos, _)| pos.manhattan_distance(&world_state.agent_position));
 
             if let Some((pos, (r, amount))) = nearest_any {

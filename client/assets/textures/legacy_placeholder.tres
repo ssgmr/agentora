@@ -1,6 +1,0 @@
-[gd_resource type="Texture2D" load_steps=2 format=3 uid="uid://legacy_placeholder"]
-
-[ext_resource type="Texture2D" path="res://assets/textures/legacy_default.png" id="default"]
-
-[resource]
-default = ExtResource("default")

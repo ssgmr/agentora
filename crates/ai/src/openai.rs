@@ -31,6 +31,8 @@ impl OpenAiProvider {
 #[async_trait]
 impl LlmProvider for OpenAiProvider {
     async fn generate(&self, request: LlmRequest) -> Result<LlmResponse, LlmError> {
+        let generate_start = std::time::Instant::now();
+
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(self.timeout_seconds as u64))
             .build()
@@ -48,14 +50,16 @@ impl LlmProvider for OpenAiProvider {
         // 记录请求信息
         let prompt_chars = request.prompt.len();
         let prompt_estimated_tokens = estimate_tokens_approx(&request.prompt);
+        let build_elapsed = generate_start.elapsed();
         tracing::info!(
-            "[LLM Request] model={}, prompt={} chars (≈{} tokens), max_output_tokens={}, temperature={}",
-            self.model, prompt_chars, prompt_estimated_tokens, request.max_tokens, request.temperature
+            "[⏱️ OpenAI] 构建请求 {:.2}ms | model={}, prompt={} chars (≈{} tokens), max_output_tokens={}, temperature={}",
+            build_elapsed.as_millis(), self.model, prompt_chars, prompt_estimated_tokens, request.max_tokens, request.temperature
         );
 
         // 重试逻辑：最多重试 1 次（快速失败，走规则引擎兜底）
         let mut last_error = None;
         for attempt in 0..=1 {
+            let attempt_start = std::time::Instant::now();
             if attempt > 0 {
                 tracing::info!("OpenAI Provider 重试第 {} 次", attempt);
             }
@@ -67,7 +71,15 @@ impl LlmProvider for OpenAiProvider {
                 .json(&body)
                 .send()
                 .await
-                .map_err(|e| LlmError::NetworkError(e.to_string()))?;
+                .map_err(|e| {
+                    let attempt_elapsed = attempt_start.elapsed();
+                    let total_elapsed = generate_start.elapsed();
+                    tracing::warn!(
+                        "[⏱️ OpenAI] 网络请求失败 {:.2}ms (总耗时 {:.2}ms): {}",
+                        attempt_elapsed.as_millis(), total_elapsed.as_millis(), e
+                    );
+                    LlmError::NetworkError(e.to_string())
+                })?;
 
             if response.status() == 429 {
                 let retry_after = response.headers()
