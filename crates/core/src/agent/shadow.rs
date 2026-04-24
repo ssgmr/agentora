@@ -41,20 +41,27 @@ impl ShadowAgent {
     }
 
     /// 检查是否过期（超过指定 tick 数未收到更新）
+    ///
+    /// last_seen_tick 存储的是 wall-clock 秒数，timeout_ticks 是仿真 tick 数。
+    /// 假设每 tick 约 5 秒，将 timeout_ticks 转换为秒后比较。
     pub fn is_expired(&self, _current_tick: u64, timeout_ticks: u64) -> bool {
-        // 这里用 wall-clock 近似，实际应由 simulation 传入 last_seen_tick 对比
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        now.saturating_sub(self.last_seen_tick) > timeout_ticks * 5 // 每 tick ~5s
+        let timeout_secs = timeout_ticks.saturating_mul(5);
+        now.saturating_sub(self.last_seen_tick) > timeout_secs
     }
 
     /// 从 AgentStateChanged 创建新的 ShadowAgent
-    pub fn from_state(state: &AgentState, source_peer_id: &str, current_tick: u64) -> Self {
+    pub fn from_state(state: &AgentState, source_peer_id: &str, _current_tick: u64) -> Self {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
         ShadowAgent {
             state: state.clone(),
-            last_seen_tick: current_tick,
+            last_seen_tick: now,
             source_peer_id: source_peer_id.to_string(),
         }
     }

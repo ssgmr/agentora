@@ -173,7 +173,7 @@ impl DeltaEmitter {
         let change_hint = match &action.action_type {
             ActionType::MoveToward { .. } => ChangeHint::Moved,
             ActionType::Eat | ActionType::Drink => ChangeHint::ActionExecuted,
-            ActionType::Wait { .. } => ChangeHint::ActionExecuted,
+            ActionType::Wait => ChangeHint::ActionExecuted,
             _ => ChangeHint::ActionExecuted,
         };
 

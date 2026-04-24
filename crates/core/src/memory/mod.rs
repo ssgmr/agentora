@@ -30,11 +30,13 @@ pub struct MemorySystem {
 
 impl Clone for MemorySystem {
     fn clone(&self) -> Self {
-        // ChronicleDB 和 ChronicleStore 不能 Clone，重新初始化
+        // ChronicleDB 和 ChronicleStore 包含 SQLite 连接，不能 Clone。
+        // clone 时设为 None，避免打开新的数据库连接造成资源泄漏。
+        // 调用方应在 clone 前完成需要数据库的操作。
         Self {
             short_term: self.short_term.clone(),
-            chronicle_db: self.clone_chronicle_db(),
-            chronicle_store: self.clone_chronicle_store(),
+            chronicle_db: None,
+            chronicle_store: None,
             token_budget: TokenBudget::with_defaults(),
             agent_id: self.agent_id.clone(),
         }
@@ -216,18 +218,6 @@ impl MemorySystem {
         self.token_budget.get_usage()
     }
 
-    /// 辅助方法：克隆 ChronicleDB（用于 Clone）
-    fn clone_chronicle_db(&self) -> Option<ChronicleDB> {
-        let db_path = self.get_db_path();
-        ChronicleDB::new(&db_path).ok()
-    }
-
-    /// 辅助方法：克隆 ChronicleStore（用于 Clone）
-    fn clone_chronicle_store(&self) -> Option<ChronicleStore> {
-        let mut store = ChronicleStore::new(&self.agent_id);
-        store.load().ok()?;
-        Some(store)
-    }
 }
 
 impl Default for MemorySystem {

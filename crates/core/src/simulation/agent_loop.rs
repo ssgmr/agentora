@@ -79,12 +79,12 @@ pub async fn run_agent_loop(
         }
 
         // ===== 阶段 1: WorldState 构建 =====
-        let (agent_clone, world_state) = {
+        let (agent_clone, world_state, memory_summary_opt) = {
             let w = world.lock().await;
 
             // 检查 Agent 是否存活
             let agent = match w.agents.get(&agent_id) {
-                Some(a) if a.is_alive => a.clone(),
+                Some(a) if a.is_alive => a,
                 _ => {
                     tracing::warn!("[AgentLoop] Agent {:?} 已死亡或不存在，退出循环", agent_id);
                     return;
@@ -97,19 +97,18 @@ pub async fn run_agent_loop(
                 None => return, // Agent 已死亡或不存在
             };
 
+            // 在持有锁时读取记忆摘要（此时 MemorySystem 的 DB 连接可用）
+            let spark_type = infer_state_mode(&ws);
+            let summary = agent.memory.get_summary(spark_type);
+            let mem_summary = if summary.is_empty() { None } else { Some(summary) };
+
             tracing::debug!("[AgentLoop] Agent {:?} vision: {} terrain, {} resources, {} agents, {} structures, {} legacies",
                 agent_id, ws.terrain_at.len(), ws.resources_at.len(), ws.nearby_agents.len(), ws.nearby_structures.len(), ws.nearby_legacies.len());
 
-            (agent, ws)
+            (agent.clone(), ws, mem_summary)
         };
 
         // ===== 阶段 2: 感知摘要构建（锁外 I/O） =====
-        let memory_summary_opt = {
-            let spark_type = infer_state_mode(&world_state);
-            let summary = agent_clone.memory.get_summary(spark_type);
-            if summary.is_empty() { None } else { Some(summary) }
-        };
-
         let perception_summary = PerceptionBuilder::build_perception_summary(&world_state);
 
         // ===== 阶段 3: 决策阶段 =====
