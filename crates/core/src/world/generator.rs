@@ -17,12 +17,18 @@ impl World {
         let (width, height) = map.size();
         let total_cells = width * height;
 
-        // 使用时间戳作为噪声种子
-        let base_seed = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
-            .wrapping_add(seed.initial_agents as u64) as u32;
+        // 使用配置的随机种子（如果为0则使用时间戳）
+        let base_seed = if seed.random_seed != 0 {
+            seed.random_seed as u32
+        } else {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs()
+                .wrapping_add(seed.initial_agents as u64) as u32
+        };
+
+        tracing::info!("地形生成种子: {} (random_seed={})", base_seed, seed.random_seed);
 
         // 多个噪声层叠加，产生更丰富的地形
         let noise1 = OpenSimplex::new(base_seed);
@@ -139,19 +145,30 @@ impl World {
     /// 生成资源节点（根据地形匹配资源类型）
     pub fn generate_resources(map: &map::CellGrid, resources: &mut HashMap<Position, resource::ResourceNode>, seed: &WorldSeed) {
         use rand::Rng;
+        use rand::SeedableRng;
         use rand::seq::SliceRandom;
         use noise::{OpenSimplex, NoiseFn};
 
-        let mut rng = rand::thread_rng();
+        // 使用配置的随机种子（如果为0则使用随机种子）
+        let mut rng = if seed.random_seed != 0 {
+            rand::rngs::StdRng::seed_from_u64(seed.random_seed)
+        } else {
+            rand::rngs::StdRng::from_entropy()
+        };
+
         let (width, height) = map.size();
 
         // 资源密度噪声（用于聚类分布）
-        let resource_seed = rng.gen::<u32>();
+        let resource_seed = if seed.random_seed != 0 {
+            seed.random_seed.wrapping_add(5000) as u32
+        } else {
+            rand::thread_rng().gen::<u32>()
+        };
         let resource_noise = OpenSimplex::new(resource_seed);
         let resource_freq = 0.02; // 更高频，产生更多资源聚集点
 
         let target_count = ((width * height) as f32 * seed.resource_density) as usize;
-        tracing::info!("generate_resources: map={width}x{height}, density={}, target={}", seed.resource_density, target_count);
+        tracing::info!("generate_resources: map={width}x{height}, density={}, target={}, seed={}", seed.resource_density, target_count, seed.random_seed);
 
         // 先收集所有候选位置（噪声值高于阈值的位置）
         let mut candidates: Vec<(Position, TerrainType)> = Vec::new();
@@ -266,8 +283,15 @@ impl World {
     /// 生成初始 Agent
     pub fn generate_agents(world: &mut World, map_size: (u32, u32), seed: &WorldSeed) {
         use rand::Rng;
+        use rand::SeedableRng;
 
-        let mut rng = rand::thread_rng();
+        // 使用配置的随机种子（如果为0则使用随机种子）
+        let mut rng = if seed.random_seed != 0 {
+            rand::rngs::StdRng::seed_from_u64(seed.random_seed.wrapping_add(10000))
+        } else {
+            rand::rngs::StdRng::from_entropy()
+        };
+
         let (width, height) = map_size;
 
         for i in 0..seed.initial_agents {
@@ -285,7 +309,11 @@ impl World {
                 }
             }
 
-            let name = format!("Agent_{}", i + 1);
+            let name = if seed.agent_name_prefix.is_empty() {
+                format!("Agent_{}", i + 1)
+            } else {
+                format!("{}Agent_{}", seed.agent_name_prefix, i + 1)
+            };
 
             let mut agent = Agent::new(AgentId::new(uuid::Uuid::new_v4().to_string()), name, pos);
 

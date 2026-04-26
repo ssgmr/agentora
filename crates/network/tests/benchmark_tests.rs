@@ -23,7 +23,7 @@ async fn benchmark_transport_creation_latency() {
 
     for _ in 0..iterations {
         let start = Instant::now();
-        let _transport = Libp2pTransport::new().unwrap();
+        let _transport = Libp2pTransport::new(0).unwrap();
         let elapsed = start.elapsed();
         durations.push(elapsed);
     }
@@ -48,7 +48,7 @@ async fn benchmark_peerid_generation() {
     let start = Instant::now();
 
     for _ in 0..iterations {
-        let _transport = Libp2pTransport::new().unwrap();
+        let _transport = Libp2pTransport::new(0).unwrap();
     }
 
     let total = start.elapsed();
@@ -66,7 +66,7 @@ async fn benchmark_peerid_generation() {
 /// 消息发布延迟基准（命令通道发送）
 #[tokio::test]
 async fn benchmark_message_publish_latency() {
-    let transport = Libp2pTransport::new().unwrap();
+    let transport = Libp2pTransport::new(0).unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     let iterations = 1000;
@@ -139,7 +139,7 @@ async fn benchmark_message_serialization() {
 /// 连接类型查询延迟基准
 #[tokio::test]
 async fn benchmark_connection_type_lookup() {
-    let transport = Libp2pTransport::new().unwrap();
+    let transport = Libp2pTransport::new(0).unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let iterations = 1000;
@@ -162,7 +162,7 @@ async fn benchmark_connection_type_lookup() {
 /// NAT 状态查询延迟基准
 #[tokio::test]
 async fn benchmark_nat_status_lookup() {
-    let transport = Libp2pTransport::new().unwrap();
+    let transport = Libp2pTransport::new(0).unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let iterations = 1000;
@@ -233,7 +233,7 @@ async fn benchmark_degradation_threshold_logic() {
 /// 中继消息吞吐量基准（通过通道发送模拟）
 #[tokio::test]
 async fn benchmark_relay_message_throughput() {
-    let transport = Libp2pTransport::new().unwrap();
+    let transport = Libp2pTransport::new(0).unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     // 使用不同大小的消息测试
@@ -372,12 +372,12 @@ async fn benchmark_full_performance_report() {
     let start = Instant::now();
     let mut transports = Vec::new();
     for _ in 0..iterations {
-        transports.push(Libp2pTransport::new().unwrap());
+        transports.push(Libp2pTransport::new(0).unwrap());
     }
     let transport_create_avg = start.elapsed() / iterations as u32;
 
     // 2. 消息发布
-    let transport = Libp2pTransport::new().unwrap();
+    let transport = Libp2pTransport::new(0).unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
     let pub_iterations = 500;
     let start = Instant::now();

@@ -7,6 +7,7 @@ const AGENT_SIZE = 32
 const SELECTION_COLOR = Color.YELLOW
 const LABEL_FONT_SIZE = 11
 const GLOW_RADIUS = 20
+const REMOTE_AGENT_COLOR = Color(0.9, 0.5, 0.2)  # P2P 远程 Agent 颜色
 
 var _agent_idle_texture: Texture2D
 var _agent_selected_texture: Texture2D
@@ -60,7 +61,12 @@ func _update_glow_effects() -> void:
 		if glow:
 			# 脉动透明度
 			var alpha = 0.12 * pulse
-			glow.color = Color(0.2, 0.7, 1.0, alpha)
+			# 远程 Agent 橙色光环，本地 Agent 蓝色光环
+			var is_remote = agent_node.get_meta("is_remote", false)
+			if is_remote:
+				glow.color = Color(0.9, 0.5, 0.2, alpha)
+			else:
+				glow.color = Color(0.2, 0.7, 1.0, alpha)
 
 
 func _on_state_updated(snapshot: Dictionary) -> void:
@@ -127,17 +133,21 @@ func _update_agent_node(agent_id: String, data: Dictionary) -> void:
 	var pos = _parse_position(data)
 	agent_node.position = pos * 16  # 转换为像素坐标
 
-	# 不再根据健康值改变透明度（Agent 应始终可见）
-	# 闪烁期间除外
-	if not _flash_agents.has(agent_id):
-		var sprite: Sprite2D = agent_node.get_node_or_null("Sprite")
-		if sprite:
+	# 远程 Agent 视觉区分
+	var is_remote = not data.get("source_peer_id", "").is_empty()
+	agent_node.set_meta("is_remote", is_remote)
+	var sprite: Sprite2D = agent_node.get_node_or_null("Sprite")
+	if sprite:
+		if not _flash_agents.has(agent_id):
 			sprite.modulate.a = 1.0  # 始终完全可见
+		if is_remote:
+			sprite.modulate = REMOTE_AGENT_COLOR  # 远程 Agent 橙色
 
-	# 更新标签
+	# 更新标签（远程 Agent 添加 [P2P] 前缀）
 	var label: Label = agent_node.get_node_or_null("Label")
 	if label:
-		label.text = data.get("name", agent_id)
+		var base_name = data.get("name", agent_id)
+		label.text = base_name if not is_remote else ("[P2P] " + base_name)
 
 	# Agent 应始终可见（死亡 Agent 在 _on_agent_changed 中已被移除）
 	agent_node.visible = true
@@ -176,6 +186,14 @@ func _create_agent_node(agent_id: String, data: Dictionary) -> Node2D:
 	sprite.scale = Vector2(AGENT_SIZE / 32.0, AGENT_SIZE / 32.0)
 	container.add_child(sprite)
 
+	# 远程 Agent 视觉区分（创建时）
+	var is_remote = not data.get("source_peer_id", "").is_empty()
+	container.set_meta("is_remote", is_remote)
+	if is_remote:
+		if sprite:
+			sprite.modulate = REMOTE_AGENT_COLOR
+		glow.color = Color(0.9, 0.5, 0.2, 0.15)  # 橙色光环
+
 	# 创建标签（带阴影，放在 Agent 上方）
 	var label = Label.new()
 	label.name = "Label"
@@ -185,7 +203,8 @@ func _create_agent_node(agent_id: String, data: Dictionary) -> Node2D:
 	label.add_theme_color_override("font_shadow_color", Color.BLACK)
 	label.add_theme_constant_override("shadow_offset_x", 1)
 	label.add_theme_constant_override("shadow_offset_y", 1)
-	label.text = data.get("name", agent_id)
+	var base_name = data.get("name", agent_id)
+	label.text = base_name if not is_remote else ("[P2P] " + base_name)
 	container.add_child(label)
 
 	# 设置初始位置（兼容 Vector2 和 Dictionary{x,y} 格式）

@@ -54,7 +54,7 @@ pub mod p2p_handler;
 // 重导出核心类型
 pub use simulation::Simulation;
 pub use config::{SimConfig, SimMode};
-pub use delta::{Delta, DeltaEnvelope, ChangeHint, WorldEvent};
+pub use delta::{Delta, DeltaEnvelope, ChangeHint, WorldEvent, calculate_region_id};
 pub use crate::snapshot::NarrativeEvent;
 pub use state_builder::WorldStateBuilder;
 pub use delta_emitter::DeltaEmitter;

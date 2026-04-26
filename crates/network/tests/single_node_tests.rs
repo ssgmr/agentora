@@ -6,7 +6,7 @@ use std::time::Duration;
 #[tokio::test]
 async fn test_single_node_startup() {
     // 创建节点
-    let transport = Libp2pTransport::new().unwrap();
+    let transport = Libp2pTransport::new(0).unwrap();
 
     // 验证节点已启动
     let _ = transport.peer_id();
@@ -27,11 +27,11 @@ async fn test_single_node_with_key_file() {
     let temp_path = temp_file.path().to_str().unwrap();
 
     // 创建节点并保存密钥
-    let transport1 = Libp2pTransport::new().unwrap();
+    let transport1 = Libp2pTransport::new(0).unwrap();
     transport1.save_key(temp_path).unwrap();
 
     // 从密钥文件加载节点
-    let transport2 = Libp2pTransport::load_from_file(temp_path).unwrap();
+    let transport2 = Libp2pTransport::load_from_file(temp_path, 0).unwrap();
 
     // 验证 PeerId 相同
     assert_eq!(transport1.peer_id(), transport2.peer_id());
@@ -40,7 +40,7 @@ async fn test_single_node_with_key_file() {
 #[tokio::test]
 async fn test_listen_address() {
     // 这个测试验证节点能够绑定到本地端口
-    let transport = Libp2pTransport::new().unwrap();
+    let transport = Libp2pTransport::new(0).unwrap();
 
     // 等待 Swarm 启动和监听
     tokio::time::sleep(Duration::from_millis(200)).await;

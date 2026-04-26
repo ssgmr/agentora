@@ -68,7 +68,7 @@ impl Default for HybridStrategyConfig {
         Self {
             direct_timeout_secs: 5,
             dcutr_timeout_secs: 15,
-            degradation_threshold: 2,
+            degradation_threshold: 2, // 失败2次后降级
             dcutr: DcutrConfig::default(),
             autonat: AutonatConfig::default(),
             enable_dcutr: true,
@@ -78,7 +78,7 @@ impl Default for HybridStrategyConfig {
 }
 
 /// 中继 reservation 信息
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct RelayReservation {
     /// 中继节点 PeerId
     pub relay_peer_id: String,

@@ -72,4 +72,14 @@ impl CrdtOp {
             tag: (tag.peer_id.clone(), tag.counter),
         }
     }
+
+    /// 获取操作的 peer ID
+    pub fn peer_id(&self) -> &str {
+        match self {
+            CrdtOp::LwwSet { peer_id, .. } => peer_id,
+            CrdtOp::GCounterInc { peer_id, .. } => peer_id,
+            CrdtOp::OrSetAdd { tag, .. } => &tag.0,
+            CrdtOp::OrSetRemove { tag, .. } => &tag.0,
+        }
+    }
 }

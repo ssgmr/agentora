@@ -25,7 +25,7 @@ var _structures: Dictionary = {}  # (x,y) -> {type, owner_id}
 var _narrative_events: Array = []  # 叙事事件列表
 var _milestones: Array = []  # 里程碑列表
 var _current_tick: int = 0
-var _narrative_channel: String = "local"  # 当前叙事频道 (local/nearby/world)
+var _narrative_channel: String = "nearby"  # 当前叙事频道 (local/nearby/world)，默认 nearby 显示移动/采集事件
 var _narrative_agent_filter: String = ""  # 当前叙事 Agent 过滤（空=全部）
 
 # ===== 查询接口 =====
@@ -227,7 +227,8 @@ func _on_agent_delta(delta: Dictionary) -> void:
 				"action_result": delta.get("action_result", ""),
 				"reasoning": delta.get("reasoning", ""),
 				"inventory_summary": delta.get("inventory_summary", {}),
-				"change_hint": change_hint
+				"change_hint": change_hint,
+				"source_peer_id": delta.get("source_peer_id", "")
 			}
 			_agents[agent_id] = agent_data
 			agent_changed.emit(agent_id, agent_data)
@@ -272,7 +273,7 @@ func _on_agent_delta(delta: Dictionary) -> void:
 						"event_type": delta.get("narrative_event_type", ""),
 						"description": delta.get("narrative_description", ""),
 						"color_code": delta.get("narrative_color", "#FFFFFF"),
-							"channel": delta.get("narrative_channel", "local")
+						"channel": delta.get("narrative_channel", "local")
 					}
 					_narrative_events.append(event_data)
 					narrative_added.emit(event_data)

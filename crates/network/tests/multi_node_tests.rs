@@ -14,9 +14,9 @@ use std::time::Duration;
 #[tokio::test]
 async fn test_three_nodes_online() {
     // 创建三个节点
-    let node1 = Libp2pTransport::new().unwrap();
-    let node2 = Libp2pTransport::new().unwrap();
-    let node3 = Libp2pTransport::new().unwrap();
+    let node1 = Libp2pTransport::new(0).unwrap();
+    let node2 = Libp2pTransport::new(0).unwrap();
+    let node3 = Libp2pTransport::new(0).unwrap();
 
     // 等待 Swarm 启动
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -45,11 +45,11 @@ async fn test_three_nodes_online() {
 #[tokio::test]
 async fn test_five_nodes_online() {
     let nodes = vec![
-        Libp2pTransport::new().unwrap(),
-        Libp2pTransport::new().unwrap(),
-        Libp2pTransport::new().unwrap(),
-        Libp2pTransport::new().unwrap(),
-        Libp2pTransport::new().unwrap(),
+        Libp2pTransport::new(0).unwrap(),
+        Libp2pTransport::new(0).unwrap(),
+        Libp2pTransport::new(0).unwrap(),
+        Libp2pTransport::new(0).unwrap(),
+        Libp2pTransport::new(0).unwrap(),
     ];
 
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -76,9 +76,9 @@ async fn test_five_nodes_online() {
 /// 多节点地址互相注册测试
 #[tokio::test]
 async fn test_multi_node_address_registration() {
-    let node1 = Libp2pTransport::new().unwrap();
-    let node2 = Libp2pTransport::new().unwrap();
-    let node3 = Libp2pTransport::new().unwrap();
+    let node1 = Libp2pTransport::new(0).unwrap();
+    let node2 = Libp2pTransport::new(0).unwrap();
+    let node3 = Libp2pTransport::new(0).unwrap();
 
     tokio::time::sleep(Duration::from_millis(200)).await;
 
@@ -108,9 +108,9 @@ async fn test_multi_node_address_registration() {
 /// 三节点连接请求测试（验证 connect_to_peer API 调用链）
 #[tokio::test]
 async fn test_three_nodes_connect_api() {
-    let node1 = Libp2pTransport::new().unwrap();
-    let node2 = Libp2pTransport::new().unwrap();
-    let node3 = Libp2pTransport::new().unwrap();
+    let node1 = Libp2pTransport::new(0).unwrap();
+    let node2 = Libp2pTransport::new(0).unwrap();
+    let node3 = Libp2pTransport::new(0).unwrap();
 
     tokio::time::sleep(Duration::from_millis(200)).await;
 
@@ -139,9 +139,9 @@ async fn test_three_nodes_connect_api() {
 /// 验证所有节点在相同网络环境下 NAT 状态一致
 #[tokio::test]
 async fn test_cross_nat_status_consistency() {
-    let node1 = Libp2pTransport::new().unwrap();
-    let node2 = Libp2pTransport::new().unwrap();
-    let node3 = Libp2pTransport::new().unwrap();
+    let node1 = Libp2pTransport::new(0).unwrap();
+    let node2 = Libp2pTransport::new(0).unwrap();
+    let node3 = Libp2pTransport::new(0).unwrap();
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -161,7 +161,7 @@ async fn test_cross_nat_status_consistency() {
 /// 验证当 NAT 状态为 Private 时，系统正确选择中继策略
 #[tokio::test]
 async fn test_private_nat_strategy_selection() {
-    let node = Libp2pTransport::new().unwrap();
+    let node = Libp2pTransport::new(0).unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // 在本地环境中，初始状态是 Unknown
@@ -184,11 +184,11 @@ async fn test_private_nat_strategy_selection() {
 /// 验证连接优先级：直连 → DCUtR → Relay 的降级路径
 #[tokio::test]
 async fn test_connection_degradation_chain() {
-    let node = Libp2pTransport::new().unwrap();
+    let node = Libp2pTransport::new(0).unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     // 创建一个真实的有效 PeerId（从另一个 Transport 获取）
-    let target = Libp2pTransport::new().unwrap();
+    let target = Libp2pTransport::new(0).unwrap();
     let target_peer = target.peer_id().0.as_str().to_string();
 
     // 注册一个不可达地址
@@ -213,9 +213,9 @@ async fn test_connection_degradation_chain() {
 /// 验证消息可以发布到多个节点的 topic
 #[tokio::test]
 async fn test_multi_node_message_publishing() {
-    let node1 = Libp2pTransport::new().unwrap();
-    let node2 = Libp2pTransport::new().unwrap();
-    let node3 = Libp2pTransport::new().unwrap();
+    let node1 = Libp2pTransport::new(0).unwrap();
+    let node2 = Libp2pTransport::new(0).unwrap();
+    let node3 = Libp2pTransport::new(0).unwrap();
 
     tokio::time::sleep(Duration::from_millis(200)).await;
 
@@ -234,9 +234,9 @@ async fn test_multi_node_message_publishing() {
 /// 验证多节点 topic 订阅管理
 #[tokio::test]
 async fn test_multi_node_topic_management() {
-    let node1 = Libp2pTransport::new().unwrap();
-    let node2 = Libp2pTransport::new().unwrap();
-    let node3 = Libp2pTransport::new().unwrap();
+    let node1 = Libp2pTransport::new(0).unwrap();
+    let node2 = Libp2pTransport::new(0).unwrap();
+    let node3 = Libp2pTransport::new(0).unwrap();
 
     tokio::time::sleep(Duration::from_millis(200)).await;
 
@@ -333,7 +333,7 @@ async fn test_message_serialization_consistency() {
 /// 验证不同大小的消息都能正确处理
 #[tokio::test]
 async fn test_broadcast_message_sizes() {
-    let node = Libp2pTransport::new().unwrap();
+    let node = Libp2pTransport::new(0).unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     let sizes = vec![16, 64, 256, 1024, 4096];
@@ -358,12 +358,12 @@ async fn test_multi_node_key_persistence() {
     let temp_path = temp_file.path().to_str().unwrap();
 
     // 创建节点并保存密钥
-    let node1 = Libp2pTransport::new().unwrap();
+    let node1 = Libp2pTransport::new(0).unwrap();
     let original_peer_id = node1.peer_id().clone();
     node1.save_key(temp_path).unwrap();
 
     // 从密钥文件加载新节点
-    let node2 = Libp2pTransport::load_from_file(temp_path).unwrap();
+    let node2 = Libp2pTransport::load_from_file(temp_path, 0).unwrap();
     let loaded_peer_id = node2.peer_id().clone();
 
     // 验证 PeerId 相同
@@ -376,9 +376,9 @@ async fn test_multi_node_key_persistence() {
 /// 中继 reservation 初始状态测试
 #[tokio::test]
 async fn test_multi_node_relay_initial_state() {
-    let node1 = Libp2pTransport::new().unwrap();
-    let node2 = Libp2pTransport::new().unwrap();
-    let node3 = Libp2pTransport::new().unwrap();
+    let node1 = Libp2pTransport::new(0).unwrap();
+    let node2 = Libp2pTransport::new(0).unwrap();
+    let node3 = Libp2pTransport::new(0).unwrap();
 
     tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -399,7 +399,7 @@ async fn test_multi_node_concurrent_messaging() {
     let messages_per_node = 50;
 
     let nodes: Vec<std::sync::Arc<Libp2pTransport>> = (0..node_count)
-        .map(|_| std::sync::Arc::new(Libp2pTransport::new().unwrap()))
+        .map(|_| std::sync::Arc::new(Libp2pTransport::new(0).unwrap()))
         .collect();
 
     tokio::time::sleep(Duration::from_millis(300)).await;

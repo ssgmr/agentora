@@ -20,9 +20,10 @@ config/icon="res://icon.svg"
 
 
 
+
+
 BridgeAccessor="*res://scripts/bridge_accessor.gd"
 StateManager="*res://scripts/state_manager.gd"
-;AutoScreenshot="*res://scripts/auto_screenshot.gd"
 
 [display]
 

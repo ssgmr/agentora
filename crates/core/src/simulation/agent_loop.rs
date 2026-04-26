@@ -20,8 +20,34 @@ use std::collections::HashMap;
 use crate::{World, AgentId, Action, ActionType};
 use crate::decision::{DecisionPipeline, infer_state_mode, PerceptionBuilder};
 use crate::simulation::{WorldStateBuilder, Delta, DeltaEmitter, NarrativeEmitter, MemoryRecorder};
+use crate::simulation::delta::ChangeHint;
 use crate::snapshot::NarrativeEvent;
 use crate::strategy::StrategyHub;
+
+/// P2P Delta 广播通道：发送 (delta, tick, region_id)
+#[cfg(feature = "p2p")]
+pub type P2pDeltaTx = tokio::sync::mpsc::Sender<(Delta, u64, u32)>;
+
+/// P2P Narrative 广播通道：发送 (narrative_event, tick, channel)
+#[cfg(feature = "p2p")]
+pub type P2pNarrativeTx = tokio::sync::mpsc::Sender<(NarrativeEvent, u64, String)>;
+
+/// 构建用于 P2P 广播的 Delta
+#[cfg(feature = "p2p")]
+async fn build_p2p_delta(
+    world: &Arc<Mutex<World>>,
+    agent_id: &AgentId,
+    action: &Action,
+) -> Option<Delta> {
+    let w = world.lock().await;
+    let change_hint = match &action.action_type {
+        ActionType::MoveToward { .. } => ChangeHint::Moved,
+        _ => ChangeHint::ActionExecuted,
+    };
+    let reasoning = if action.reasoning.is_empty() { None } else { Some(action.reasoning.as_str()) };
+
+    DeltaEmitter::emit_agent_state_for_p2p(&w, agent_id, change_hint, reasoning)
+}
 
 impl Default for super::delta::DeltaEnvelope {
     fn default() -> Self {
@@ -47,6 +73,7 @@ impl Default for super::delta::DeltaEnvelope {
                     reasoning: None,
                 },
                 change_hint: ChangeHint::Spawned,
+                source_peer_id: None,
             },
             source_peer_id: None,
             tick: 0,
@@ -67,6 +94,8 @@ pub async fn run_agent_loop(
     vision_radius: u32,
     is_paused: Arc<AtomicBool>,
     strategy_hub: Option<StrategyHub>,
+    #[cfg(feature = "p2p")] p2p_delta_tx: Option<P2pDeltaTx>,
+    #[cfg(feature = "p2p")] p2p_narrative_tx: Option<P2pNarrativeTx>,
 ) {
     tracing::info!("[AgentLoop] Agent {:?} 启动 (is_npc={}, interval={}s, vision_radius={})", agent_id, is_npc, interval_secs, vision_radius);
 
@@ -150,18 +179,12 @@ pub async fn run_agent_loop(
             let result = pipeline.execute(&agent_clone.id, &world_state, &perception_summary, memory_summary_opt.as_deref(), action_feedback, strategy_hub.as_ref()).await;
             let elapsed = start.elapsed().as_secs_f32();
 
-            if result.error_info.is_some() {
-                let vf = result.validation_failure.clone();
-                if let Some(ref msg) = vf {
-                    tracing::warn!("[AgentLoop] Agent {:?} ({}) 决策被拒绝 (耗时 {:.1}s): {}",
-                        agent_id.as_str(), agent_clone.name, elapsed, msg);
-                    eprintln!("[决策被拒绝] {} (耗时 {:.1}s): {}", agent_clone.name, elapsed, msg);
-                }
-                (None, vf)
-            } else {
+            // 关键：即使有 error_info，如果 selected_action 有效（规则引擎降级），也要使用
+            if result.selected_action.is_some() {
                 let candidate = result.selected_action.expect("决策成功但 selected_action 为 None");
-                tracing::info!("[AgentLoop] Agent {:?} ({}) 决策完成 (耗时 {:.1}s): {:?}",
-                    agent_id.as_str(), agent_clone.name, elapsed, candidate.action_type);
+                tracing::info!("[AgentLoop] Agent {:?} ({}) 决策完成 (耗时 {:.1}s): {:?}{}",
+                    agent_id.as_str(), agent_clone.name, elapsed, candidate.action_type,
+                    if result.error_info.is_some() { " (规则引擎降级)" } else { "" });
                 eprintln!("[{}] {} (耗时 {:.1}s): {:?}", agent_clone.name, "决策完成", elapsed, candidate.action_type);
                 eprintln!("[{}] reasoning: {}", agent_clone.name, candidate.reasoning);
 
@@ -173,12 +196,25 @@ pub async fn run_agent_loop(
                     build_type: None,
                     direction: None,
                 }), None)
+            } else if result.error_info.is_some() {
+                // selected_action 为空且有错误，记录失败
+                let vf = result.validation_failure.clone();
+                if let Some(ref msg) = vf {
+                    tracing::warn!("[AgentLoop] Agent {:?} ({}) 决策失败 (耗时 {:.1}s): {}",
+                        agent_id.as_str(), agent_clone.name, elapsed, msg);
+                    eprintln!("[决策失败] {} (耗时 {:.1}s): {}", agent_clone.name, elapsed, msg);
+                }
+                (None, vf)
+            } else {
+                // 无 action 无错误，理论上不应该出现
+                tracing::warn!("[AgentLoop] Agent {:?} 决策结果异常：无 action 无错误", agent_id);
+                (None, None)
             }
         };
 
         // ===== 阶段 4-6: 应用动作 + 发送 Delta + 发送叙事 =====
         if let Some(action) = action {
-            let events = {
+            let (events, current_tick) = {
                 let mut w = world.lock().await;
 
                 // 阶段 4: 应用动作
@@ -194,8 +230,32 @@ pub async fn run_agent_loop(
                 // 阶段 6b: 发送 Delta（使用 DeltaEmitter）
                 DeltaEmitter::emit_all(&delta_tx, &w, &agent_id, &action, &events);
 
-                events
+                // 获取 tick（供 P2P 广播使用）
+                let tick = w.tick;
+
+                (events, tick)
             };
+
+            // ===== P2P Delta 广播 =====
+            #[cfg(feature = "p2p")]
+            if let Some(ref tx) = p2p_delta_tx {
+                // 构建 P2P delta
+                if let Some(delta) = build_p2p_delta(&world, &agent_id, &action).await {
+                    let region_id = 0u32;
+                    if let Err(e) = tx.send((delta, current_tick, region_id)).await {
+                        tracing::error!("[AgentLoop] P2P delta 发送失败: {:?}", e);
+                    }
+                }
+            }
+
+            // ===== P2P Narrative 广播 =====
+            #[cfg(feature = "p2p")]
+            if let Some(ref tx) = p2p_narrative_tx {
+                let events_clone: Vec<NarrativeEvent> = events.clone();
+                for ne in events_clone {
+                    let _ = tx.send((ne, current_tick, "nearby".to_string())).await;
+                }
+            }
 
             // 阶段 6c: 发送叙事事件（锁外）
             NarrativeEmitter::send_events(&narrative_tx, events);

@@ -37,6 +37,7 @@ impl AgentState {
             agent_id: self.id.clone(),
             state: self.clone(),
             change_hint,
+            source_peer_id: None,
         }
     }
 }

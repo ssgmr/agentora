@@ -19,6 +19,11 @@ initial_agents = 5
 # 生成位置策略: random/clustered/scattered
 spawn_strategy = "scattered"
 
+# 随机种子（用于确定性世界生成）
+# 设置为固定值确保多客户端世界一致
+# 设置为 0 则每次生成不同世界
+random_seed = 42
+
 # P2P种子节点地址（留空表示单机模式）
 seed_peers = []
 

@@ -17,6 +17,7 @@ godot.workspace = true
 
 agentora-core = { workspace = true, features = ["p2p"] }
 agentora-ai = { workspace = true }
+agentora-network = { workspace = true }
 
 toml = "0.8"
 time = { version = "0.3", features = ["macros", "local-offset"] }

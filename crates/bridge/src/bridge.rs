@@ -15,8 +15,16 @@ use crate::logging::init_logging;
 use crate::conversion::{delta_to_dict, snapshot_to_dict};
 use crate::simulation_runner::run_simulation_with_api;
 
-/// 模拟命令（控制模拟状态）
+/// P2P 事件（从 Simulation 线程发送到 Bridge 主线程）
 #[derive(Debug, Clone)]
+pub enum P2PEvent {
+    PeerConnected { peer_id: String },
+    PeerIdReady { peer_id: String },
+    StatusChanged { nat_status: String, peer_count: usize, error: String },
+}
+
+/// 模拟命令（控制模拟状态）
+#[derive(Debug)]
 pub enum SimCommand {
     Start,
     Pause,
@@ -26,6 +34,12 @@ pub enum SimCommand {
         key: String,
         boost: f32,
         duration_ticks: u32,
+    },
+    // P2P 命令
+    ConnectToSeed { addr: String },
+    QueryPeerInfo {
+        query_type: String, // "peers" | "nat_status" | "peer_id"
+        response_tx: tokio::sync::oneshot::Sender<String>,
     },
 }
 
@@ -38,6 +52,13 @@ pub struct SimulationBridge {
     snapshot_receiver: Option<Receiver<WorldSnapshot>>,
     delta_receiver: Option<Receiver<Delta>>,
     narrative_receiver: Option<Receiver<NarrativeEvent>>,
+    /// P2P 事件接收器（从 Simulation 线程发送）
+    p2p_event_receiver: Option<Receiver<P2PEvent>>,
+    /// 缓存 peer_id（P2P 模式下设置）
+    cached_peer_id: String,
+    /// 配置文件路径（默认 ../config/sim.toml）
+    #[var]
+    config_path: GString,
     current_tick: i64,
     #[var]
     is_paused: bool,
@@ -56,6 +77,9 @@ impl INode for SimulationBridge {
             snapshot_receiver: None,
             delta_receiver: None,
             narrative_receiver: None,
+            p2p_event_receiver: None,
+            cached_peer_id: String::new(),
+            config_path: GString::from("../config/sim.toml"),
             current_tick: 0,
             is_paused: false,
             is_running: false,
@@ -118,6 +142,32 @@ impl INode for SimulationBridge {
                 self.base_mut().emit_signal("world_updated", &[snapshot_dict.to_variant()]);
             }
         }
+
+        // 4. 处理 P2P 事件
+        if let Some(receiver) = &mut self.p2p_event_receiver {
+            let mut events = Vec::new();
+            while let Ok(event) = receiver.try_recv() {
+                events.push(event);
+                if events.len() >= 50 { break; }
+            }
+            for event in events {
+                match event {
+                    P2PEvent::PeerConnected { peer_id } => {
+                        self.base_mut().emit_signal("peer_connected", &[peer_id.to_variant()]);
+                    }
+                    P2PEvent::PeerIdReady { peer_id } => {
+                        self.cached_peer_id = peer_id;
+                    }
+                    P2PEvent::StatusChanged { nat_status, peer_count, error } => {
+                        let mut dict: Dictionary<Variant, Variant> = Dictionary::new();
+                        dict.set("nat_status", nat_status);
+                        dict.set("peer_count", &Variant::from(peer_count as i64));
+                        dict.set("error", error);
+                        self.base_mut().emit_signal("p2p_status_changed", &[dict.to_variant()]);
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -135,31 +185,45 @@ impl SimulationBridge {
     #[signal]
     fn narrative_event(event: Variant);
 
+    #[signal]
+    fn peer_connected(peer_id: GString);
+
+    #[signal]
+    fn p2p_status_changed(status: Variant);
+
     #[func]
     fn start_simulation(&mut self) {
         if self.is_running {
             godot::global::print(&[Variant::from("SimulationBridge: 模拟已在运行")]);
             return;
         }
-        godot::global::print(&[Variant::from("SimulationBridge: 启动模拟...")]);
+        godot::global::print(&[Variant::from(format!(
+            "SimulationBridge: 启动模拟 [config={}]", self.config_path
+        ))]);
 
         let (snapshot_tx, snapshot_rx) = mpsc::channel::<WorldSnapshot>();
         let (delta_tx, delta_rx) = mpsc::channel::<Delta>();
         let (narrative_tx, narrative_rx) = mpsc::channel::<NarrativeEvent>();
         let (cmd_tx, cmd_rx) = mpsc::channel::<SimCommand>();
+        let (p2p_event_tx, p2p_event_rx) = mpsc::channel::<P2PEvent>();
 
         self.snapshot_receiver = Some(snapshot_rx);
         self.delta_receiver = Some(delta_rx);
         self.narrative_receiver = Some(narrative_rx);
+        self.p2p_event_receiver = Some(p2p_event_rx);
         self.command_sender = Some(cmd_tx);
         self.is_running = true;
         self.is_paused = false;
 
         let (llm_provider, llm_config) = Self::create_llm_provider();
+        let config_path = self.config_path.to_string();
 
         // 使用 simulation_runner 模块运行模拟
         std::thread::spawn(move || {
-            run_simulation_with_api(snapshot_tx, delta_tx, narrative_tx, cmd_rx, llm_provider, llm_config);
+            run_simulation_with_api(
+                snapshot_tx, delta_tx, narrative_tx, cmd_rx, p2p_event_tx,
+                llm_provider, llm_config, config_path
+            );
         });
 
         godot::global::print(&[Variant::from("SimulationBridge: 模拟已启动（事件驱动模式）")]);
@@ -285,5 +349,68 @@ impl SimulationBridge {
     fn select_agent(&mut self, agent_id: GString) {
         self.selected_agent_id = agent_id.clone();
         self.base_mut().emit_signal("agent_selected", &[agent_id.to_variant()]);
+    }
+
+    // ===== P2P API =====
+
+    /// 连接到种子节点
+    #[func]
+    fn connect_to_seed(&self, addr: GString) -> bool {
+        if let Some(tx) = &self.command_sender {
+            let _ = tx.send(SimCommand::ConnectToSeed { addr: addr.to_string() });
+            true
+        } else {
+            false
+        }
+    }
+
+    /// 获取本地 peer_id（P2P 模式下返回缓存值，中心化模式返回空串）
+    #[func]
+    fn get_peer_id(&self) -> GString {
+        GString::from(&self.cached_peer_id)
+    }
+
+    /// 获取已连接 peers 列表
+    /// 返回值：JSON 字符串，格式 [{"peer_id": "...", "connection_type": "..."}]
+    #[func]
+    fn get_connected_peers(&self) -> GString {
+        // 同步查询：使用 oneshot 通道
+        let (response_tx, mut response_rx) = tokio::sync::oneshot::channel();
+        if let Some(tx) = &self.command_sender {
+            let _ = tx.send(SimCommand::QueryPeerInfo {
+                query_type: "peers".to_string(),
+                response_tx,
+            });
+            // 阻塞等待响应
+            if let Ok(json_str) = response_rx.try_recv() {
+                return GString::from(&json_str);
+            }
+        }
+        GString::from("[]")
+    }
+
+    /// 获取 NAT 状态
+    /// 返回值：JSON 字符串，格式 {"status": "...", "address": "..."}
+    #[func]
+    fn get_nat_status(&self) -> Dictionary<Variant, Variant> {
+        let mut dict: Dictionary<Variant, Variant> = Dictionary::new();
+        let (response_tx, mut response_rx) = tokio::sync::oneshot::channel();
+        if let Some(tx) = &self.command_sender {
+            let _ = tx.send(SimCommand::QueryPeerInfo {
+                query_type: "nat_status".to_string(),
+                response_tx,
+            });
+            if let Ok(json_str) = response_rx.try_recv() {
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                    if let Some(status) = val.get("status").and_then(|v| v.as_str()) {
+                        dict.set("status", status);
+                    }
+                    if let Some(addr) = val.get("address").and_then(|v| v.as_str()) {
+                        dict.set("address", addr);
+                    }
+                }
+            }
+        }
+        dict
     }
 }

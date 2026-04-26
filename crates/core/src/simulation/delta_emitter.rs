@@ -78,6 +78,56 @@ impl DeltaEmitter {
         sent_count
     }
 
+    /// 构建 AgentState delta 但不发送（用于 P2P 广播）
+    pub fn emit_agent_state_for_p2p(
+        world: &World,
+        agent_id: &AgentId,
+        change_hint: ChangeHint,
+        reasoning: Option<&str>,
+    ) -> Option<Delta> {
+        match world.agents.get(agent_id) {
+            Some(agent) if agent.is_alive => {
+                let state = AgentState {
+                    id: agent.id.as_str().to_string(),
+                    name: agent.name.clone(),
+                    position: (agent.position.x, agent.position.y),
+                    health: agent.health,
+                    max_health: agent.max_health,
+                    satiety: agent.satiety,
+                    hydration: agent.hydration,
+                    age: agent.age,
+                    level: agent.level,
+                    is_alive: true,
+                    inventory_summary: agent.inventory.clone(),
+                    current_action: agent.last_action_type.clone().unwrap_or_default(),
+                    action_result: agent.last_action_result.clone().unwrap_or_default(),
+                    reasoning: reasoning.map(|s| s.to_string()),
+                };
+                Some(state.to_delta(change_hint))
+            }
+            Some(agent) => {
+                let state = AgentState {
+                    id: agent.id.as_str().to_string(),
+                    name: agent.name.clone(),
+                    position: (agent.position.x, agent.position.y),
+                    health: 0,
+                    max_health: agent.max_health,
+                    satiety: 0,
+                    hydration: 0,
+                    age: agent.age,
+                    level: agent.level,
+                    is_alive: false,
+                    inventory_summary: std::collections::HashMap::new(),
+                    current_action: String::new(),
+                    action_result: String::new(),
+                    reasoning: None,
+                };
+                Some(state.to_delta(ChangeHint::Died))
+            }
+            None => None,
+        }
+    }
+
     /// 根据动作类型生成 WorldEvent delta
     pub fn emit_action_deltas(
         delta_tx: &Sender<Delta>,

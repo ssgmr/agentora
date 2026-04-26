@@ -8,6 +8,8 @@ var _map_bounds_set: bool = false  # 标记是否已设置地图边界
 @onready var tick_label: Label = $UI/TopBar/TickCounter
 @onready var agent_count_label: Label = $UI/TopBar/AgentCount
 @onready var speed_control: OptionButton = $UI/TopBar/SpeedControl
+@onready var p2p_toggle_btn: MenuButton = $UI/TopBar/P2PBtnWrapper/P2PToggleBtn
+@onready var p2p_popup: PanelContainer = $UI/P2PPopup
 
 
 func _ready() -> void:
@@ -34,6 +36,9 @@ func _ready() -> void:
 	# 初始化速度控制
 	_setup_speed_control()
 
+	# 初始化 P2P 面板
+	_setup_p2p()
+
 	print("[Main] 主场景就绪")
 
 
@@ -45,6 +50,42 @@ func _setup_speed_control() -> void:
 		speed_control.add_item("5x 快速", 2)
 		speed_control.add_item("暂停", 3)
 		speed_control.item_selected.connect(_on_speed_changed)
+
+
+func _setup_p2p() -> void:
+	if p2p_toggle_btn and p2p_popup:
+		p2p_toggle_btn.text = "P2P ▾"
+		var popup = p2p_toggle_btn.get_popup()
+		popup.add_item("打开 P2P 面板", 0)
+		popup.id_pressed.connect(_on_p2p_menu_pressed)
+
+		# 设置深色背景，和 SpeedControl OptionButton 风格统一
+		var style = StyleBoxFlat.new()
+		style.bg_color = Color(0.1, 0.12, 0.1, 1.0)
+		style.corner_radius_top_left = 4
+		style.corner_radius_top_right = 4
+		style.corner_radius_bottom_left = 4
+		style.corner_radius_bottom_right = 4
+		p2p_toggle_btn.add_theme_stylebox_override("button", style)
+		p2p_toggle_btn.add_theme_stylebox_override("hover", style)
+		p2p_toggle_btn.add_theme_stylebox_override("pressed", style)
+		p2p_toggle_btn.add_theme_stylebox_override("focus", style)
+		p2p_toggle_btn.add_theme_stylebox_override("disabled", style)
+		# 文字颜色
+		p2p_toggle_btn.add_theme_color_override("font_color", Color(0.9, 0.9, 0.9, 1.0))
+		p2p_toggle_btn.add_theme_color_override("font_hover_color", Color(1.0, 1.0, 1.0, 1.0))
+		p2p_toggle_btn.add_theme_color_override("font_pressed_color", Color(0.8, 0.8, 0.8, 1.0))
+		p2p_toggle_btn.add_theme_color_override("font_focus_color", Color(0.9, 0.9, 0.9, 1.0))
+		p2p_toggle_btn.add_theme_color_override("font_disabled_color", Color(0.9, 0.9, 0.9, 1.0))
+
+
+func _on_p2p_menu_pressed(id: int) -> void:
+	p2p_popup.visible = !p2p_popup.visible
+	p2p_toggle_btn.text = "P2P ▾" if not p2p_popup.visible else "P2P ▴"
+
+
+func _on_p2p_closed() -> void:
+	p2p_toggle_btn.text = "P2P ▾"
 
 
 func _on_speed_changed(index: int) -> void:

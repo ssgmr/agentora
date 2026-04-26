@@ -6,8 +6,8 @@ use std::time::Duration;
 #[tokio::test]
 async fn test_dcutr_connection_flow() {
     // 创建两个节点
-    let node1 = Libp2pTransport::new().unwrap();
-    let node2 = Libp2pTransport::new().unwrap();
+    let node1 = Libp2pTransport::new(0).unwrap();
+    let node2 = Libp2pTransport::new(0).unwrap();
 
     // 等待节点启动
     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -33,7 +33,7 @@ async fn test_dcutr_connection_flow() {
 #[tokio::test]
 async fn test_relay_reservation_flow() {
     // 创建节点
-    let node = Libp2pTransport::new().unwrap();
+    let node = Libp2pTransport::new(0).unwrap();
 
     // 等待节点启动
     tokio::time::sleep(Duration::from_millis(100)).await;

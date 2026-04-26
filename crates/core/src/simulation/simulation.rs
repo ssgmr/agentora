@@ -12,7 +12,7 @@ use tokio::task::JoinHandle;
 use crate::{World, WorldSeed, WorldSnapshot, AgentId, DecisionPipeline};
 use crate::agent::inventory::{InventoryConfig, init_inventory_config};
 use agentora_ai::{LlmProvider, LlmConfig};
-use crate::snapshot::NarrativeEvent;
+use crate::snapshot::{NarrativeEvent, AgentState};
 use crate::strategy::StrategyHub;
 
 use super::config::SimConfig;
@@ -58,16 +58,22 @@ pub struct Simulation {
     /// P2P 消息处理器（P2P 模式下启用）
     p2p_handler: Option<P2PMessageHandler>,
     /// 本地 peer ID（P2P 模式）
-    local_peer_id: Option<String>,
+    pub(crate) local_peer_id: Option<String>,
     /// libp2p 传输层（P2P 模式）
     #[cfg(feature = "p2p")]
-    transport: Option<Libp2pTransport>,
+    pub(crate) transport: Option<Libp2pTransport>,
     /// 区域 topic 管理器（P2P 模式）
     #[cfg(feature = "p2p")]
     region_topic_manager: Option<RegionTopicManager>,
     /// P2P 网络消息循环 handle（P2P 模式）
     #[cfg(feature = "p2p")]
     p2p_network_handle: Option<JoinHandle<()>>,
+    /// P2P Delta 广播通道（agent_loop 发送，spawn_p2p_dispatchers 消费）
+    #[cfg(feature = "p2p")]
+    p2p_delta_tx: Option<tokio::sync::mpsc::Sender<(Delta, u64, u32)>>,
+    /// P2P Narrative 广播通道（agent_loop 发送，spawn_p2p_dispatchers 消费）
+    #[cfg(feature = "p2p")]
+    p2p_narrative_tx: Option<tokio::sync::mpsc::Sender<(NarrativeEvent, u64, String)>>,
 }
 
 impl Simulation {
@@ -152,6 +158,10 @@ impl Simulation {
             region_topic_manager: None,
             #[cfg(feature = "p2p")]
             p2p_network_handle: None,
+            #[cfg(feature = "p2p")]
+            p2p_delta_tx: None,
+            #[cfg(feature = "p2p")]
+            p2p_narrative_tx: None,
         }
     }
 
@@ -170,6 +180,9 @@ impl Simulation {
         narrative_tx: Sender<NarrativeEvent>,
         local_peer_id: String,
     ) -> Self {
+        // 先提取端口配置（config 后面会被 move）
+        let listen_port = config.p2p_port;
+
         // 先 clone 通道，因为后面会 move
         let delta_tx_for_network = delta_tx.clone();
         let delta_tx_for_p2p = delta_tx.clone();
@@ -196,8 +209,16 @@ impl Simulation {
 
         #[cfg(feature = "p2p")]
         {
-            // 创建 libp2p 传输层
-            match Libp2pTransport::new() {
+            // 创建 P2P Delta 广播通道
+            let (p2p_delta_tx, p2p_delta_rx) = tokio::sync::mpsc::channel::<(Delta, u64, u32)>(100);
+            sim.p2p_delta_tx = Some(p2p_delta_tx);
+
+            // 创建 P2P Narrative 广播通道
+            let (p2p_narrative_tx, p2p_narrative_rx) = tokio::sync::mpsc::channel::<(NarrativeEvent, u64, String)>(100);
+            sim.p2p_narrative_tx = Some(p2p_narrative_tx);
+
+            // 创建 libp2p 传输层（使用配置中的端口）
+            match Libp2pTransport::new(listen_port) {
                 Ok(mut transport) => {
                     // 注册 region topic 消息处理器
                     let delta_tx_for_handler = delta_tx_for_network.clone();
@@ -224,6 +245,10 @@ impl Simulation {
                     sim.region_topic_manager = Some(topic_manager);
                     sim.p2p_network_handle = Some(network_handle);
 
+                    // Spawn P2P 消费 task（在 start() 中调用，因为需要 self 的引用）
+                    // 这里只存储接收器，在 start() 中 spawn
+                    sim.spawn_p2p_dispatchers(p2p_delta_rx, p2p_narrative_rx);
+
                     tracing::info!("[Simulation] libp2p 传输层已创建，等待连接...");
                 }
                 Err(e) => {
@@ -235,6 +260,79 @@ impl Simulation {
         tracing::info!("[Simulation] P2P 模式启用，local_peer_id={}", local_peer_id_for_log);
 
         sim
+    }
+
+    /// Spawn P2P Delta/Narrative 消费 task
+    #[cfg(feature = "p2p")]
+    fn spawn_p2p_dispatchers(
+        &self,
+        mut p2p_delta_rx: tokio::sync::mpsc::Receiver<(Delta, u64, u32)>,
+        mut p2p_narrative_rx: tokio::sync::mpsc::Receiver<(NarrativeEvent, u64, String)>,
+    ) {
+        // Clone transport and peer_id for dispatcher tasks
+        let transport_for_delta = self.transport.as_ref().map(|t| t.clone());
+        let transport_for_narrative = self.transport.as_ref().map(|t| t.clone());
+        let peer_id_for_delta = self.local_peer_id.clone();
+        let peer_id_for_narrative = self.local_peer_id.clone();
+
+        tracing::info!("[P2P-Dispatcher] dispatcher task 已启动");
+
+        // Delta 消费 task
+        tokio::spawn(async move {
+            while let Some((delta, tick, _region_id)) = p2p_delta_rx.recv().await {
+                if let Some(ref transport) = transport_for_delta {
+                    if let Some(ref peer_id) = peer_id_for_delta {
+                        let delta_msg = NetworkMessage::AgentDelta(AgentDeltaMessage {
+                            delta_json: delta.for_broadcast(),
+                            source_peer_id: peer_id.clone(),
+                            tick,
+                        });
+                        let topic = RegionTopicManager::topic_name(0);
+                        if let Err(e) = transport.publish(&topic, &delta_msg.to_bytes()).await {
+                            tracing::warn!("[P2P-Dispatcher] delta 发布失败 [topic={}]: {:?}", topic, e);
+                        } else {
+                            tracing::debug!("[P2P-Dispatcher] delta 已发布 [type={} tick={}]", delta.event_type(), tick);
+                        }
+                    }
+                }
+            }
+            tracing::info!("[P2P-Dispatcher] Delta 通道已关闭，退出");
+        });
+
+        // Narrative 消费 task
+        tokio::spawn(async move {
+            while let Some((event, tick, channel)) = p2p_narrative_rx.recv().await {
+                if let Some(ref transport) = transport_for_narrative {
+                    if let Some(ref peer_id) = peer_id_for_narrative {
+                        let narrative_dict = serde_json::json!({
+                            "tick": event.tick,
+                            "agent_id": event.agent_id,
+                            "agent_name": event.agent_name,
+                            "event_type": event.event_type,
+                            "description": event.description,
+                            "color_code": event.color_code,
+                        });
+                        let topic = match channel.as_str() {
+                            "world" => RegionTopicManager::world_topic_name().to_string(),
+                            "nearby" => RegionTopicManager::topic_name(0),
+                            _ => continue,
+                        };
+                        let narrative_msg = NetworkMessage::Narrative(NarrativeMessage {
+                            narrative_json: narrative_dict,
+                            source_peer_id: peer_id.clone(),
+                            tick,
+                            channel,
+                        });
+                        if let Err(e) = transport.publish(&topic, &narrative_msg.to_bytes()).await {
+                            tracing::warn!("[P2P-Dispatcher] narrative 发布失败 [topic={}]: {:?}", topic, e);
+                        } else {
+                            tracing::debug!("[P2P-Dispatcher] narrative 已发布 [tick={}]", tick);
+                        }
+                    }
+                }
+            }
+            tracing::info!("[P2P-Dispatcher] Narrative 通道已关闭，退出");
+        });
     }
 
     /// 启动模拟（异步版本，在 tokio runtime 内调用）
@@ -260,11 +358,19 @@ impl Simulation {
                     agent_ids = world.agents.keys().cloned().collect();
                 }
                 super::config::SimMode::P2P { local_agent_ids, .. } => {
-                    // P2P 模式：只运行指定的 Agent
-                    agent_ids = local_agent_ids.iter()
-                        .map(|id| AgentId::new(id.clone()))
-                        .filter(|id| world.agents.contains_key(id))
-                        .collect();
+                    // P2P 模式：运行指定的 Agent
+                    // 当 local_agent_ids 为空时，自动分配本地生成的所有 Agent
+                    if local_agent_ids.is_empty() {
+                        // 自动分配：使用本地生成的所有 Agent
+                        agent_ids = world.agents.keys().cloned().collect();
+                        tracing::info!("[Simulation] P2P 模式：自动分配 {} 个本地 Agent", agent_ids.len());
+                    } else {
+                        // 手动指定：只运行配置中的 Agent
+                        agent_ids = local_agent_ids.iter()
+                            .map(|id| AgentId::new(id.clone()))
+                            .filter(|id| world.agents.contains_key(id))
+                            .collect();
+                    }
                 }
             }
         }
@@ -405,6 +511,11 @@ impl Simulation {
         let vision_radius = self.config.vision_radius;
         let strategy_hub = self.strategy_hubs.get(&agent_id).cloned();
 
+        #[cfg(feature = "p2p")]
+        let p2p_delta_tx = self.p2p_delta_tx.clone();
+        #[cfg(feature = "p2p")]
+        let p2p_narrative_tx = self.p2p_narrative_tx.clone();
+
         tokio::spawn(async move {
             super::agent_loop::run_agent_loop(
                 world,
@@ -417,6 +528,10 @@ impl Simulation {
                 vision_radius,
                 is_paused,
                 strategy_hub,
+                #[cfg(feature = "p2p")]
+                p2p_delta_tx,
+                #[cfg(feature = "p2p")]
+                p2p_narrative_tx,
             ).await;
         })
     }
@@ -473,6 +588,23 @@ impl Simulation {
     /// 获取 P2P handler（供外部消费网络消息）
     pub fn p2p_handler(&self) -> Option<&P2PMessageHandler> {
         self.p2p_handler.as_ref()
+    }
+
+    /// 获取本地 peer_id（P2P 模式）
+    pub fn local_peer_id(&self) -> Option<&str> {
+        self.local_peer_id.as_deref()
+    }
+
+    /// 获取 P2P 传输层引用
+    #[cfg(feature = "p2p")]
+    pub fn transport_ref(&self) -> Option<&Libp2pTransport> {
+        self.transport.as_ref()
+    }
+
+    /// 获取 P2P 传输层可变引用
+    #[cfg(feature = "p2p")]
+    pub fn transport_mut(&mut self) -> Option<&mut Libp2pTransport> {
+        self.transport.as_mut()
     }
 
     // ===== P2P 网络集成 =====
@@ -572,8 +704,8 @@ impl Simulation {
                                 continue;
                             }
 
-                            // 解析 delta JSON 并构建 DeltaEnvelope
-                            if let Ok(delta) = serde_json::from_value::<Delta>(delta_msg.delta_json.clone()) {
+                            // 解析 flat JSON 格式的 delta（for_broadcast 格式）
+                            if let Some(delta) = Self::parse_flat_delta(&delta_msg.delta_json) {
                                 let envelope = DeltaEnvelope::from_remote(
                                     delta,
                                     delta_msg.source_peer_id.clone(),
@@ -610,6 +742,17 @@ impl Simulation {
                             } else {
                                 tracing::warn!("[P2P-Network] narrative JSON 解析失败: {:?}", narrative_msg.narrative_json);
                             }
+                        }
+                        NetworkMessage::CrdtOp(crdt_op) => {
+                            // 过滤本地回环
+                            if crdt_op.peer_id() == local_peer_id {
+                                tracing::trace!("[P2P-Network] 过滤本地回环 CrdtOp");
+                                continue;
+                            }
+
+                            // 记录日志（本次仅收发+日志，不直接修改 World）
+                            tracing::debug!("[P2P-Network] 收到远程 CrdtOp from peer={}: {:?}",
+                                crdt_op.peer_id(), crdt_op);
                         }
                         _ => {
                             // 其他消息类型暂不处理
@@ -691,6 +834,123 @@ impl Simulation {
             tracing::warn!("[P2P] narrative 发布失败 [topic={}]: {:?}", topic, e);
         } else {
             tracing::debug!("[P2P] narrative 已发布 [topic={} channel={}]", topic, channel);
+        }
+    }
+
+    /// 通过 P2P 发布 CRDT 操作
+    /// （本次仅定义接口，具体调用点留为后续）
+    #[cfg(feature = "p2p")]
+    pub async fn publish_crdt_op_p2p(&self, crdt_op: agentora_sync::CrdtOp) {
+        let transport = match self.transport.as_ref() {
+            Some(t) => t,
+            None => return,
+        };
+
+        let crdt_bytes = crdt_op.to_json().unwrap_or_default().into_bytes();
+        let topic = agentora_network::gossip::RegionTopicManager::world_topic_name();
+        if let Err(e) = transport.publish(&topic, &crdt_bytes).await {
+            tracing::warn!("[P2P] CrdtOp 发布失败 [topic={}]: {:?}", topic, e);
+        } else {
+            tracing::debug!("[P2P] CrdtOp 已发布 [topic={}]", topic);
+        }
+    }
+
+    /// 解析 for_broadcast() 产生的扁平 JSON
+    ///
+    /// for_broadcast() 将 Delta 展平为 {event_type, agent_id, state, change_hint, ...}，
+    /// 无法通过 serde_json::from_value::<Delta> 反序列化（缺少外部标签）。
+    /// 此函数手动从扁平 JSON 重建 Delta 枚举。
+    #[cfg(feature = "p2p")]
+    fn parse_flat_delta(value: &serde_json::Value) -> Option<Delta> {
+        use crate::simulation::delta::{ChangeHint, WorldEvent};
+
+        let event_type = value.get("event_type")?.as_str()?;
+
+        match event_type {
+            "agent_state_changed" => {
+                let agent_id = value.get("agent_id")?.as_str()?.to_string();
+                let state: AgentState = serde_json::from_value(value.get("state")?.clone()).ok()?;
+                let change_hint: ChangeHint = serde_json::from_value(value.get("change_hint")?.clone()).ok()?;
+                let source_peer_id = value.get("source_peer_id")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+                let mut delta = Delta::AgentStateChanged { agent_id, state, change_hint, source_peer_id: None };
+                // 如果 JSON 中包含 source_peer_id，覆盖
+                if let Some(ref peer_id) = source_peer_id {
+                    match &mut delta {
+                        Delta::AgentStateChanged { source_peer_id: sp, .. } => {
+                            *sp = Some(peer_id.clone());
+                        }
+                        _ => {}
+                    }
+                }
+                Some(delta)
+            }
+            // WorldEvent 子类型
+            "structure_created" => {
+                let pos: (u32, u32) = serde_json::from_value(value.get("pos")?.clone()).ok()?;
+                let structure_type = value.get("structure_type")?.as_str()?.to_string();
+                let owner_id = value.get("owner_id")?.as_str()?.to_string();
+                Some(Delta::WorldEvent(WorldEvent::StructureCreated { pos, structure_type, owner_id }))
+            }
+            "structure_destroyed" => {
+                let pos: (u32, u32) = serde_json::from_value(value.get("pos")?.clone()).ok()?;
+                let structure_type = value.get("structure_type")?.as_str()?.to_string();
+                Some(Delta::WorldEvent(WorldEvent::StructureDestroyed { pos, structure_type }))
+            }
+            "resource_changed" => {
+                let pos: (u32, u32) = serde_json::from_value(value.get("pos")?.clone()).ok()?;
+                let resource_type = value.get("resource_type")?.as_str()?.to_string();
+                let amount: u32 = serde_json::from_value(value.get("amount")?.clone()).ok()?;
+                Some(Delta::WorldEvent(WorldEvent::ResourceChanged { pos, resource_type, amount }))
+            }
+            "trade_completed" => {
+                let from_id = value.get("from_id")?.as_str()?.to_string();
+                let to_id = value.get("to_id")?.as_str()?.to_string();
+                let items = value.get("items")?.as_str()?.to_string();
+                Some(Delta::WorldEvent(WorldEvent::TradeCompleted { from_id, to_id, items }))
+            }
+            "alliance_formed" => {
+                let ids = value.get("ids")?.as_array()?;
+                let id1 = ids.first()?.as_str()?.to_string();
+                let id2 = ids.get(1)?.as_str()?.to_string();
+                Some(Delta::WorldEvent(WorldEvent::AllianceFormed { id1, id2 }))
+            }
+            "alliance_broken" => {
+                let ids = value.get("ids")?.as_array()?;
+                let id1 = ids.first()?.as_str()?.to_string();
+                let id2 = ids.get(1)?.as_str()?.to_string();
+                let reason = value.get("reason")?.as_str()?.to_string();
+                Some(Delta::WorldEvent(WorldEvent::AllianceBroken { id1, id2, reason }))
+            }
+            "milestone_reached" => {
+                let name = value.get("name")?.as_str()?.to_string();
+                let display_name = value.get("display_name")?.as_str()?.to_string();
+                let tick: u64 = serde_json::from_value(value.get("tick")?.clone()).ok()?;
+                Some(Delta::WorldEvent(WorldEvent::MilestoneReached { name, display_name, tick }))
+            }
+            "pressure_started" => {
+                let pressure_type = value.get("pressure_type")?.as_str()?.to_string();
+                let description = value.get("description")?.as_str()?.to_string();
+                let duration: u32 = serde_json::from_value(value.get("duration")?.clone()).ok()?;
+                Some(Delta::WorldEvent(WorldEvent::PressureStarted { pressure_type, description, duration }))
+            }
+            "pressure_ended" => {
+                let pressure_type = value.get("pressure_type")?.as_str()?.to_string();
+                let description = value.get("description")?.as_str()?.to_string();
+                Some(Delta::WorldEvent(WorldEvent::PressureEnded { pressure_type, description }))
+            }
+            "agent_narrative" => {
+                if let Ok(narrative) = serde_json::from_value::<NarrativeEvent>(value.get("narrative")?.clone()) {
+                    Some(Delta::WorldEvent(WorldEvent::AgentNarrative { narrative }))
+                } else {
+                    None
+                }
+            }
+            _ => {
+                tracing::warn!("[P2P-Network] 未知的 delta 事件类型: {}", event_type);
+                None
+            }
         }
     }
 }

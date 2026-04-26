@@ -176,6 +176,9 @@ pub enum Delta {
         agent_id: String,
         state: AgentState,
         change_hint: ChangeHint,
+        /// 来源 peer ID（P2P 远程 Agent，None = 本地）
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source_peer_id: Option<String>,
     },
     /// 世界级事件（非 Agent 状态变化）
     WorldEvent(WorldEvent),
@@ -204,10 +207,13 @@ impl Delta {
         obj.insert("event_type".to_string(), serde_json::json!(self.event_type()));
 
         match self {
-            Delta::AgentStateChanged { agent_id, state, change_hint } => {
+            Delta::AgentStateChanged { agent_id, state, change_hint, source_peer_id } => {
                 obj.insert("agent_id".to_string(), serde_json::json!(agent_id));
                 obj.insert("state".to_string(), serde_json::to_value(state).unwrap());
                 obj.insert("change_hint".to_string(), serde_json::json!(change_hint));
+                if let Some(ref peer_id) = source_peer_id {
+                    obj.insert("source_peer_id".to_string(), serde_json::json!(peer_id));
+                }
             }
             Delta::WorldEvent(e) => {
                 let event_obj = e.for_broadcast();
@@ -223,6 +229,26 @@ impl Delta {
 
         serde_json::Value::Object(obj)
     }
+}
+
+// ============================================================================
+// calculate_region_id - 区域 ID 计算
+// ============================================================================
+
+/// 根据 Agent 位置计算区域 ID
+///
+/// # 参数
+/// - `position`: Agent 的 (x, y) 坐标
+/// - `map_width`: 地图宽度
+/// - `region_size`: 每个区域的格子大小
+///
+/// # 返回
+/// 区域 ID（用于 P2P GossipSub topic 订阅）
+pub fn calculate_region_id(position: (u32, u32), map_width: u32, region_size: u32) -> u32 {
+    let region_x = position.0 / region_size;
+    let region_y = position.1 / region_size;
+    let regions_per_row = (map_width + region_size - 1) / region_size;
+    region_y * regions_per_row + region_x
 }
 
 // ============================================================================

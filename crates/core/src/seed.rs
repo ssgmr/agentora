@@ -28,12 +28,23 @@ pub struct WorldSeed {
     /// P2P种子节点地址
     pub seed_peers: Vec<String>,
 
+    /// 随机种子（用于确定性世界生成）
+    /// 如果设置为固定值，所有客户端生成相同世界
+    /// 设置为 0 或不设置则使用时间戳（每次生成不同世界）
+    #[serde(default)]
+    pub random_seed: u64,
+
     /// 压力池配置
     pub pressure_config: PressureConfig,
 
     /// Agent性格配置（任务 2.3）
     #[serde(default)]
     pub agent_personalities: AgentPersonalities,
+
+    /// Agent名字前缀（用于P2P模式下区分不同节点的Agent）
+    /// 例如："N4001_" 会让 Agent 名字变为 "N4001_Agent_1"
+    #[serde(default)]
+    pub agent_name_prefix: String,
 }
 
 impl Default for WorldSeed {
@@ -52,8 +63,10 @@ impl Default for WorldSeed {
             initial_agents: 5,
             spawn_strategy: "scattered".to_string(),
             seed_peers: vec![],
+            random_seed: 42, // 默认使用固定种子，确保 P2P 模式下世界一致
             pressure_config: PressureConfig::default(),
             agent_personalities: AgentPersonalities::default(),
+            agent_name_prefix: String::new(), // 默认无前缀
         }
     }
 }

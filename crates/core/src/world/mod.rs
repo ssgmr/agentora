@@ -381,7 +381,7 @@ impl World {
         }
 
         match &envelope.delta {
-            Delta::AgentStateChanged { agent_id, state, change_hint } => {
+            Delta::AgentStateChanged { agent_id, state, change_hint, .. } => {
                 let id = AgentId::new(agent_id.clone());
 
                 // 如果是本地 Agent，跳过（本地回环过滤）

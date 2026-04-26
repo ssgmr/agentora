@@ -6,11 +6,16 @@ pub mod transport;
 pub mod libp2p_transport;
 pub mod gossip;
 pub mod codec;
+pub mod behaviour;
+pub mod nat;
+pub mod config;
+pub mod swarm;
 
 pub use transport::Transport;
 pub use codec::{CrdtOp, NetworkMessage, AgentDeltaMessage, NarrativeMessage};
 pub use gossip::NullMessageHandler;
-pub use libp2p_transport::{
-    Libp2pTransport, NatStatus, ConnectionType,
-    DcutrConfig, AutonatConfig, HybridStrategyConfig,
-};
+pub use libp2p_transport::Libp2pTransport;
+pub use swarm::SwarmCommand;
+pub use behaviour::{AgentoraBehaviour, AgentoraBehaviourEvent};
+pub use nat::{NatStatus, ConnectionType};
+pub use config::{DcutrConfig, AutonatConfig, HybridStrategyConfig, RelayReservation};

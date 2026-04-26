@@ -10,8 +10,8 @@ var _local_btn: Button
 var _nearby_btn: Button
 var _world_btn: Button
 
-# 当前频道（默认本地，Centralized 模式兼容）
-var _current_channel: String = "local"
+# 当前频道（默认 nearby，显示移动/采集等事件）
+var _current_channel: String = "nearby"
 
 
 func _ready() -> void:

@@ -10,7 +10,7 @@ use agentora_core::snapshot::AgentState;
 pub fn delta_to_dict(delta: &Delta) -> Variant {
     let mut dict: Dictionary<GString, Variant> = Dictionary::new();
     match delta {
-        Delta::AgentStateChanged { agent_id, state, change_hint } => {
+        Delta::AgentStateChanged { agent_id, state, change_hint, source_peer_id } => {
             dict.set("type", &"agent_state_changed".to_variant());
             dict.set("agent_id", &agent_id.to_variant());
             dict.set("change_hint", &change_hint_to_str(change_hint).to_variant());
@@ -36,6 +36,11 @@ pub fn delta_to_dict(delta: &Delta) -> Variant {
                 inv_dict.set(k, &(Variant::from(*v as i64)));
             }
             dict.set("inventory_summary", &inv_dict.to_variant());
+
+            // 来源 peer ID（P2P 远程 Agent）
+            if let Some(ref peer_id) = source_peer_id {
+                dict.set("source_peer_id", &peer_id.to_variant());
+            }
         }
         Delta::WorldEvent(world_event) => {
             dict.set("type", &"world_event".to_variant());

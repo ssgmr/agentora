@@ -9,7 +9,7 @@ extends PanelContainer
 var _text_box: RichTextLabel
 var _scroll_container: ScrollContainer
 var _channel_buttons: HBoxContainer
-var _current_channel: String = "local"  # local/nearby/world
+var _current_channel: String = "nearby"  # local/nearby/world (默认 nearby 显示移动/采集等事件)
 
 # 事件缓存（用于过滤）
 var _cached_events: Array = []

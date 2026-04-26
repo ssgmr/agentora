@@ -22,7 +22,7 @@ impl ShadowAgent {
     /// 应用远程 Delta 更新影子状态
     pub fn apply_delta(&mut self, delta: &Delta) {
         match delta {
-            Delta::AgentStateChanged { agent_id, state, change_hint } => {
+            Delta::AgentStateChanged { agent_id, state, change_hint, .. } => {
                 if agent_id == &self.state.id {
                     self.state = state.clone();
                     self.last_seen_tick = std::time::SystemTime::now()

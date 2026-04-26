@@ -49,7 +49,7 @@ impl P2PMessageHandler {
         let source_peer_id = envelope.source_peer_id.clone().unwrap_or_default();
 
         match &envelope.delta {
-            Delta::AgentStateChanged { agent_id, state, change_hint } => {
+            Delta::AgentStateChanged { agent_id, state, change_hint, source_peer_id: _ } => {
                 let id = AgentId::new(agent_id.clone());
 
                 if let Some(shadow) = self.shadow_agents.get_mut(&id) {
@@ -70,8 +70,21 @@ impl P2PMessageHandler {
             }
         }
 
+        // 为 AgentStateChanged 设置 source_peer_id（如果未设置）
+        let delta = match &envelope.delta {
+            Delta::AgentStateChanged { agent_id, state, change_hint, .. } => {
+                Delta::AgentStateChanged {
+                    agent_id: agent_id.clone(),
+                    state: state.clone(),
+                    change_hint: *change_hint,
+                    source_peer_id: envelope.source_peer_id.clone(),
+                }
+            }
+            _ => envelope.delta.clone(),
+        };
+
         // 发送本地 mpsc 通知渲染
-        if let Err(e) = self.local_tx.send(envelope.delta.clone()) {
+        if let Err(e) = self.local_tx.send(delta) {
             tracing::error!("[P2PHandler] 本地 delta 发送失败: {:?}", e);
         }
     }

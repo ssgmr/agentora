@@ -1,4 +1,4 @@
-[gd_scene load_steps=11 format=3 uid="uid://main_scene"]
+[gd_scene load_steps=12 format=3 uid="uid://main_scene"]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="main_script"]
 [ext_resource type="Script" path="res://scripts/camera_controller.gd" id="camera_controller"]
@@ -9,6 +9,14 @@
 [ext_resource type="Script" path="res://scripts/agent_detail_panel.gd" id="agent_detail_panel"]
 [ext_resource type="Script" path="res://scripts/channel_selector.gd" id="channel_selector"]
 [ext_resource type="Script" path="res://scripts/agent_filter.gd" id="agent_filter"]
+[ext_resource type="PackedScene" path="res://scenes/p2p_panel.tscn" id="p2p_panel"]
+
+[sub_resource type="StyleBoxFlat" id="P2PBtnStyle"]
+bg_color = Color(0.1, 0.12, 0.1, 1.0)
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_left = 4
+corner_radius_bottom_right = 4
 
 [node name="Main" type="Node"]
 script = ExtResource("main_script")
@@ -45,6 +53,17 @@ text = "Agent: 5"
 
 [node name="SpeedControl" type="OptionButton" parent="UI/TopBar"]
 layout_mode = 2
+
+[node name="P2PBtnWrapper" type="PanelContainer" parent="UI/TopBar"]
+layout_mode = 2
+custom_minimum_size = Vector2(60, 24)
+
+[node name="P2PToggleBtn" type="MenuButton" parent="UI/TopBar/P2PBtnWrapper"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+flat = true
 
 [node name="RightPanel" type="VBoxContainer" parent="UI"]
 layout_mode = 2
@@ -118,3 +137,46 @@ fit_content = true
 scroll_active = false
 autowrap_mode = 2
 text = "[i]等待模拟开始...[/i]"
+
+[node name="P2PPopup" parent="UI" instance=ExtResource("p2p_panel")]
+layout_mode = 2
+
+[node name="VBox" parent="UI/P2PPopup"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="CloseBtn" parent="UI/P2PPopup/VBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="HSeparator" parent="UI/P2PPopup/VBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="SeedAddressInput" parent="UI/P2PPopup/VBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="ConnectButton" parent="UI/P2PPopup/VBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="PeerIdLabel" parent="UI/P2PPopup/VBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="NatStatusLabel" parent="UI/P2PPopup/VBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="HSeparator2" parent="UI/P2PPopup/VBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="PeersLabel" parent="UI/P2PPopup/VBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="PeersList" parent="UI/P2PPopup/VBox"]
+layout_mode = 2
+size_flags_horizontal = 3

@@ -37,6 +37,16 @@ impl CrdtOp {
     pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
         serde_json::from_str(json)
     }
+
+    /// 获取操作的 peer ID
+    pub fn peer_id(&self) -> &str {
+        match self {
+            CrdtOp::LwwSet { peer_id, .. } => peer_id,
+            CrdtOp::GCounterInc { peer_id, .. } => peer_id,
+            CrdtOp::OrSetAdd { tag, .. } => &tag.0,
+            CrdtOp::OrSetRemove { tag, .. } => &tag.0,
+        }
+    }
 }
 
 /// Agent Delta 广播消息（P2P 模式）

@@ -99,6 +99,7 @@ fn test_agent_delta_for_broadcast() {
         agent_id: "agent-001".to_string(),
         state,
         change_hint: ChangeHint::Moved,
+        source_peer_id: None,
     };
 
     let json = delta.for_broadcast();
@@ -142,6 +143,7 @@ fn test_delta_dispatcher_centralized() {
         agent_id: "agent-001".to_string(),
         state,
         change_hint: ChangeHint::ActionExecuted,
+        source_peer_id: None,
     };
 
     dispatcher.dispatch(delta);
@@ -216,6 +218,7 @@ fn test_delta_envelope() {
         agent_id: "agent-001".to_string(),
         state,
         change_hint: ChangeHint::Moved,
+        source_peer_id: None,
     };
 
     // 本地 Delta
@@ -286,6 +289,7 @@ fn test_shadow_agent() {
         agent_id: "agent-001".to_string(),
         state: death_state,
         change_hint: ChangeHint::Died,
+        source_peer_id: None,
     };
     shadow_mut.apply_delta(&death_delta);
     assert!(!shadow_mut.state.is_alive);

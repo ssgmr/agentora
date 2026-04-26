@@ -68,9 +68,10 @@ pub enum SwarmCommand {
 pub async fn run_swarm_event_loop(
     local_key: identity::Keypair,
     peer_id: PeerId,
+    listen_port: u16,
     mut command_rx: mpsc::Receiver<SwarmCommand>,
     message_tx: mpsc::Sender<NetworkMessage>,
-    _relay_reservations: std::sync::Arc<tokio::sync::RwLock<Vec<RelayReservation>>>,
+    relay_reservations: std::sync::Arc<tokio::sync::RwLock<Vec<RelayReservation>>>,
     nat_status: std::sync::Arc<tokio::sync::RwLock<NatStatus>>,
     direct_connections: std::sync::Arc<tokio::sync::RwLock<std::collections::HashSet<String>>>,
     topic_handlers: std::sync::Arc<tokio::sync::RwLock<std::collections::HashMap<String, Box<dyn crate::transport::MessageHandler>>>>,
@@ -151,8 +152,9 @@ pub async fn run_swarm_event_loop(
 
     tracing::info!("Swarm 已启动，PeerId: {}", peer_id.0);
 
-    // 监听所有接口 - 使用 TCP
-    let listen_addr: Multiaddr = "/ip4/0.0.0.0/tcp/0".parse().unwrap();
+    // 监听所有接口 - 使用配置的端口
+    let listen_addr: Multiaddr = format!("/ip4/0.0.0.0/tcp/{}", listen_port).parse()
+        .unwrap_or_else(|_| "/ip4/0.0.0.0/tcp/0".parse().unwrap());
     match swarm.listen_on(listen_addr.clone()) {
         Ok(_) => tracing::info!("正在监听：{}", listen_addr),
         Err(e) => tracing::error!("监听失败：{:?}", e),
@@ -170,7 +172,7 @@ pub async fn run_swarm_event_loop(
                 handle_swarm_command(&mut swarm, cmd);
             }
             event = swarm.select_next_some() => {
-                handle_swarm_event(event, message_tx.clone(), nat_status.clone(), direct_connections.clone(), topic_handlers.clone()).await;
+                handle_swarm_event(event, message_tx.clone(), nat_status.clone(), direct_connections.clone(), relay_reservations.clone(), topic_handlers.clone()).await;
             }
         }
     }
@@ -250,6 +252,7 @@ pub async fn handle_swarm_event(
     message_tx: mpsc::Sender<NetworkMessage>,
     nat_status: std::sync::Arc<tokio::sync::RwLock<NatStatus>>,
     direct_connections: std::sync::Arc<tokio::sync::RwLock<std::collections::HashSet<String>>>,
+    relay_reservations: std::sync::Arc<tokio::sync::RwLock<Vec<RelayReservation>>>,
     topic_handlers: std::sync::Arc<tokio::sync::RwLock<std::collections::HashMap<String, Box<dyn crate::transport::MessageHandler>>>>,
 ) {
     use gossipsub::Event as GossipsubEvent;
@@ -337,12 +340,40 @@ pub async fn handle_swarm_event(
                     match relay_event {
                         relay::client::Event::ReservationReqAccepted { relay_peer_id, renewal, limit } => {
                             tracing::info!("中继 reservation 请求已接受：{} (renewal={:?}, limit={:?})", relay_peer_id, renewal, limit);
+                            // Task 2.1: 写入 relay_reservations
+                            let relay_addr_str = relay_peer_id.to_string();
+                            let mut reservations = relay_reservations.write().await;
+                            // 检查是否已存在
+                            if let existing @ Some(_) = reservations.iter_mut().find(|r| r.relay_peer_id == relay_addr_str) {
+                                if let Some(r) = existing {
+                                    r.active = true;
+                                }
+                            } else {
+                                reservations.push(RelayReservation {
+                                    relay_peer_id: relay_addr_str,
+                                    relay_addr: relay_peer_id.to_string(),
+                                    listen_addr: String::new(),
+                                    active: true,
+                                });
+                            }
                         }
                         relay::client::Event::OutboundCircuitEstablished { relay_peer_id, limit } => {
                             tracing::info!("通过中继建立出站电路连接：{} (limit={:?})", relay_peer_id, limit);
+                            // Task 2.2: 更新 reservation 的 active 状态
+                            let relay_addr_str = relay_peer_id.to_string();
+                            let mut reservations = relay_reservations.write().await;
+                            if let Some(r) = reservations.iter_mut().find(|r| r.relay_peer_id == relay_addr_str) {
+                                r.active = true;
+                            }
                         }
                         relay::client::Event::InboundCircuitEstablished { src_peer_id, limit } => {
                             tracing::info!("通过中继建立入站电路连接：{} (limit={:?})", src_peer_id, limit);
+                            // Task 2.2: 更新 reservation 的 active 状态
+                            let src_addr_str = src_peer_id.to_string();
+                            let mut reservations = relay_reservations.write().await;
+                            if let Some(r) = reservations.iter_mut().find(|r| r.relay_peer_id == src_addr_str) {
+                                r.active = true;
+                            }
                         }
                     }
                 }
