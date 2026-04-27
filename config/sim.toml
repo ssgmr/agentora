@@ -31,3 +31,12 @@ max_slots = 20
 max_stack_size = 20
 # 仓库附近堆叠上限倍率
 warehouse_limit_multiplier = 2
+
+# P2P 配置（可选，启用后为分布式模式）
+# 默认为中心化模式（不添加 [p2p] 配置段即为中心化）
+# [p2p]
+# mode = "p2p"
+# local_agent_ids = []
+# region_size = 32
+# port = 4001
+# seed_peer = ""

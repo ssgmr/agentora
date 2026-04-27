@@ -115,9 +115,11 @@ impl World {
         // 生成资源节点
         Self::generate_resources(&mut world.map, &mut world.resources, seed);
 
-        // 生成初始 Agent
-        let map_size = world.map.size();
-        Self::generate_agents(&mut world, map_size, seed);
+        // 生成初始 Agent（P2P 模式下可能跳过）
+        if !seed.skip_initial_agents {
+            let map_size = world.map.size();
+            Self::generate_agents(&mut world, map_size, seed);
+        }
 
         world
     }
@@ -338,20 +340,17 @@ impl World {
 
     // ===== P2P 模式相关方法 =====
 
-    /// 设置运行模式（P2P 模式下需要指定 local_agent_ids）
+    /// 设置运行模式
     pub fn set_sim_mode(&mut self, mode: &SimMode) {
         match mode {
             SimMode::Centralized => {
                 // 集中式模式：所有 Agent 都是 local
                 self.local_agent_ids = None;
             }
-            SimMode::P2P { local_agent_ids, .. } => {
-                // P2P 模式：只管理指定的 Agent
-                self.local_agent_ids = Some(
-                    local_agent_ids.iter()
-                        .map(|id| AgentId::new(id.clone()))
-                        .collect()
-                );
+            SimMode::P2P { .. } => {
+                // P2P 模式：动态创建的 Agent 自动加入 local_agent_ids
+                // 初始化为空集合，generate_local_agent 会添加
+                self.local_agent_ids = Some(std::collections::HashSet::new());
             }
         }
     }

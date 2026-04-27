@@ -32,7 +32,7 @@ impl NatStatus {
 }
 
 /// 连接类型枚举
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ConnectionType {
     /// 直连
     Direct,

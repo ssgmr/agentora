@@ -3,8 +3,8 @@
 //! SwarmCommand 命令定义、run_swarm_event_loop、handle_swarm_event
 
 use crate::behaviour::{AgentoraBehaviour, AgentoraBehaviourEvent};
-use crate::nat::NatStatus;
-use crate::config::RelayReservation;
+use crate::nat::{NatStatus, ConnectionType};
+use crate::config::{RelayReservation, ConnectedPeer};
 use crate::codec::NetworkMessage;
 use agentora_sync::PeerId;
 use libp2p::{
@@ -24,6 +24,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use libp2p::futures::StreamExt;
 use libp2p::Transport as _;
+use chrono::Utc;
 
 /// Swarm 命令枚举
 #[derive(Debug)]
@@ -74,6 +75,10 @@ pub async fn run_swarm_event_loop(
     relay_reservations: std::sync::Arc<tokio::sync::RwLock<Vec<RelayReservation>>>,
     nat_status: std::sync::Arc<tokio::sync::RwLock<NatStatus>>,
     direct_connections: std::sync::Arc<tokio::sync::RwLock<std::collections::HashSet<String>>>,
+    // 已连接节点列表（新增）
+    connected_peers: std::sync::Arc<tokio::sync::RwLock<Vec<ConnectedPeer>>>,
+    // 订阅的 topic 列表（新增）
+    subscribed_topics: std::sync::Arc<tokio::sync::RwLock<Vec<String>>>,
     topic_handlers: std::sync::Arc<tokio::sync::RwLock<std::collections::HashMap<String, Box<dyn crate::transport::MessageHandler>>>>,
 ) {
     // 创建 GossipSub 配置
@@ -169,17 +174,31 @@ pub async fn run_swarm_event_loop(
                 let Some(cmd) = command else {
                     break;
                 };
-                handle_swarm_command(&mut swarm, cmd);
+                handle_swarm_command(&mut swarm, cmd, subscribed_topics.clone()).await;
             }
             event = swarm.select_next_some() => {
-                handle_swarm_event(event, message_tx.clone(), nat_status.clone(), direct_connections.clone(), relay_reservations.clone(), topic_handlers.clone()).await;
+                handle_swarm_event(
+                    event,
+                    message_tx.clone(),
+                    nat_status.clone(),
+                    direct_connections.clone(),
+                    relay_reservations.clone(),
+                    connected_peers.clone(),
+                    subscribed_topics.clone(),
+                    peer_id.clone(),
+                    topic_handlers.clone()
+                ).await;
             }
         }
     }
 }
 
 /// 处理 Swarm 命令
-fn handle_swarm_command(swarm: &mut Swarm<AgentoraBehaviour>, cmd: SwarmCommand) {
+async fn handle_swarm_command(
+    swarm: &mut Swarm<AgentoraBehaviour>,
+    cmd: SwarmCommand,
+    subscribed_topics: std::sync::Arc<tokio::sync::RwLock<Vec<String>>>,
+) {
     match cmd {
         SwarmCommand::Publish { topic, data } => {
             let topic = gossipsub::IdentTopic::new(&topic);
@@ -188,15 +207,28 @@ fn handle_swarm_command(swarm: &mut Swarm<AgentoraBehaviour>, cmd: SwarmCommand)
             }
         }
         SwarmCommand::Subscribe { topic } => {
-            let topic = gossipsub::IdentTopic::new(&topic);
-            if let Err(e) = swarm.behaviour_mut().gossipsub.subscribe(&topic) {
+            let gossip_topic = gossipsub::IdentTopic::new(&topic);
+            if let Err(e) = swarm.behaviour_mut().gossipsub.subscribe(&gossip_topic) {
                 tracing::error!("订阅失败：{:?}", e);
+            } else {
+                // 订阅成功，添加到列表
+                let topic_name = topic.clone();
+                let mut topics = subscribed_topics.write().await;
+                if !topics.contains(&topic_name) {
+                    topics.push(topic_name);
+                }
+                tracing::info!("订阅成功：{}", topic);
             }
         }
         SwarmCommand::Unsubscribe { topic } => {
-            let topic = gossipsub::IdentTopic::new(&topic);
-            if !swarm.behaviour_mut().gossipsub.unsubscribe(&topic) {
+            let gossip_topic = gossipsub::IdentTopic::new(&topic);
+            if !swarm.behaviour_mut().gossipsub.unsubscribe(&gossip_topic) {
                 tracing::error!("退订失败：topic={}", topic);
+            } else {
+                // 退订成功，从列表移除
+                let mut topics = subscribed_topics.write().await;
+                topics.retain(|t| t != &topic);
+                tracing::info!("退订成功：{}", topic);
             }
         }
         SwarmCommand::DialDirect { addr } => {
@@ -253,6 +285,12 @@ pub async fn handle_swarm_event(
     nat_status: std::sync::Arc<tokio::sync::RwLock<NatStatus>>,
     direct_connections: std::sync::Arc<tokio::sync::RwLock<std::collections::HashSet<String>>>,
     relay_reservations: std::sync::Arc<tokio::sync::RwLock<Vec<RelayReservation>>>,
+    // 已连接节点列表（新增）
+    connected_peers: std::sync::Arc<tokio::sync::RwLock<Vec<ConnectedPeer>>>,
+    // 订阅的 topic 列表（新增）
+    subscribed_topics: std::sync::Arc<tokio::sync::RwLock<Vec<String>>>,
+    // 本地 PeerId（用于过滤本地订阅事件）
+    local_peer_id: PeerId,
     topic_handlers: std::sync::Arc<tokio::sync::RwLock<std::collections::HashMap<String, Box<dyn crate::transport::MessageHandler>>>>,
 ) {
     use gossipsub::Event as GossipsubEvent;
@@ -264,9 +302,30 @@ pub async fn handle_swarm_event(
         }
         SwarmEvent::ConnectionEstablished { peer_id, endpoint, .. } => {
             tracing::info!("连接到 peer: {} ({:?})", peer_id, endpoint);
+
+            // 创建 ConnectedPeer 并添加到列表
+            let connected_peer = ConnectedPeer {
+                peer_id: peer_id.to_string(),
+                agent_version: String::new(), // 待 Identify 协议更新
+                connection_type: ConnectionType::Direct, // 默认直连，后续可能更新
+                connected_at: Utc::now().to_rfc3339(),
+                is_relay_server: false, // 待 Identify 更新
+                listen_addr: Some(endpoint.get_remote_address().to_string()),
+            };
+
+            // 写入共享状态
+            let mut peers = connected_peers.write().await;
+            // 检查是否已存在（避免重复添加）
+            if !peers.iter().any(|p| p.peer_id == peer_id.to_string()) {
+                peers.push(connected_peer);
+            }
         }
         SwarmEvent::ConnectionClosed { peer_id, cause, .. } => {
             tracing::info!("与 peer {} 连接关闭：{:?}", peer_id, cause);
+
+            // 从共享状态移除
+            let mut peers = connected_peers.write().await;
+            peers.retain(|p| p.peer_id != peer_id.to_string());
         }
         SwarmEvent::Behaviour(behaviour_event) => {
             match behaviour_event {
@@ -296,10 +355,14 @@ pub async fn handle_swarm_event(
                             }
                         }
                         GossipsubEvent::Subscribed { peer_id, topic } => {
+                            // 如果是本地订阅（peer_id == local_peer_id 的 libp2p PeerId）
+                            // 注意：这里的 peer_id 是 libp2p::PeerId，需要与 local_peer_id 比较
                             tracing::debug!("Peer {} 订阅 topic: {}", peer_id, topic);
+                            // 本地订阅已在 handle_swarm_command 中跟踪
                         }
                         GossipsubEvent::Unsubscribed { peer_id, topic } => {
                             tracing::debug!("Peer {} 退订 topic: {}", peer_id, topic);
+                            // 本地退订已在 handle_swarm_command 中跟踪
                         }
                         _ => {}
                     }
@@ -437,6 +500,15 @@ pub async fn handle_swarm_event(
                     match identify_event {
                         libp2p_identify::Event::Received { peer_id, info, .. } => {
                             tracing::info!("Identify 信息：from={}, agent={}", peer_id, info.agent_version);
+
+                            // 更新 connected_peers 中的 agent_version
+                            let mut peers = connected_peers.write().await;
+                            if let Some(peer) = peers.iter_mut().find(|p| p.peer_id == peer_id.to_string()) {
+                                peer.agent_version = info.agent_version.clone();
+                                // 判断是否为中继服务器
+                                peer.is_relay_server = info.agent_version.contains("relay")
+                                    || info.agent_version.contains("libp2p-relay");
+                            }
                         }
                         _ => {}
                     }

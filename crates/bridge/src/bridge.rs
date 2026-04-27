@@ -375,14 +375,14 @@ impl SimulationBridge {
     #[func]
     fn get_connected_peers(&self) -> GString {
         // 同步查询：使用 oneshot 通道
-        let (response_tx, mut response_rx) = tokio::sync::oneshot::channel();
+        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
         if let Some(tx) = &self.command_sender {
             let _ = tx.send(SimCommand::QueryPeerInfo {
                 query_type: "peers".to_string(),
                 response_tx,
             });
-            // 阻塞等待响应
-            if let Ok(json_str) = response_rx.try_recv() {
+            // 使用 blocking_recv 阻塞等待响应
+            if let Ok(json_str) = response_rx.blocking_recv() {
                 return GString::from(&json_str);
             }
         }
@@ -394,13 +394,14 @@ impl SimulationBridge {
     #[func]
     fn get_nat_status(&self) -> Dictionary<Variant, Variant> {
         let mut dict: Dictionary<Variant, Variant> = Dictionary::new();
-        let (response_tx, mut response_rx) = tokio::sync::oneshot::channel();
+        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
         if let Some(tx) = &self.command_sender {
             let _ = tx.send(SimCommand::QueryPeerInfo {
                 query_type: "nat_status".to_string(),
                 response_tx,
             });
-            if let Ok(json_str) = response_rx.try_recv() {
+            // 使用 blocking_recv 阻塞等待响应
+            if let Ok(json_str) = response_rx.blocking_recv() {
                 if let Ok(val) = serde_json::from_str::<serde_json::Value>(&json_str) {
                     if let Some(status) = val.get("status").and_then(|v| v.as_str()) {
                         dict.set("status", status);
@@ -412,5 +413,23 @@ impl SimulationBridge {
             }
         }
         dict
+    }
+
+    /// 获取订阅的 topic 列表（新增）
+    /// 返回值：JSON 字符串，格式 ["topic1", "topic2", ...]
+    #[func]
+    fn get_subscribed_topics(&self) -> GString {
+        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+        if let Some(tx) = &self.command_sender {
+            let _ = tx.send(SimCommand::QueryPeerInfo {
+                query_type: "topics".to_string(),
+                response_tx,
+            });
+            // 使用 blocking_recv 阻塞等待响应
+            if let Ok(json_str) = response_rx.blocking_recv() {
+                return GString::from(&json_str);
+            }
+        }
+        GString::from("[]")
     }
 }

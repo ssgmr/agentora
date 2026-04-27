@@ -10,10 +10,8 @@ use serde::Deserialize;
 pub enum SimMode {
     /// 集中式模式：所有 Agent 在本地运行
     Centralized,
-    /// P2P 模式：只运行本地 Agent，远程 Agent 通过影子状态同步
+    /// P2P 模式：每节点运行自己的 Agent，远程 Agent 通过影子状态同步
     P2P {
-        /// 本地负责的 Agent ID 列表
-        local_agent_ids: Vec<String>,
         /// P2P 区域大小（格子），用于区域订阅
         #[serde(default = "default_region_size")]
         region_size: u32,
@@ -58,7 +56,6 @@ struct InvSection {
 #[derive(Debug, Clone, Deserialize)]
 struct P2PSection {
     mode: Option<String>,
-    local_agent_ids: Option<Vec<String>>,
     region_size: Option<u32>,
     port: Option<u16>,
     seed_peer: Option<String>,
@@ -141,9 +138,8 @@ impl SimConfig {
                         if let Some(p2p) = file.p2p {
                             if let Some(mode_str) = p2p.mode {
                                 if mode_str == "p2p" {
-                                    let local_agent_ids = p2p.local_agent_ids.unwrap_or_default();
                                     let region_size = p2p.region_size.unwrap_or(32);
-                                    cfg.mode = SimMode::P2P { local_agent_ids, region_size };
+                                    cfg.mode = SimMode::P2P { region_size };
                                 }
                             }
                             if let Some(v) = p2p.port { cfg.p2p_port = v; }

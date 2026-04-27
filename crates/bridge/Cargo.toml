@@ -22,5 +22,8 @@ agentora-network = { workspace = true }
 toml = "0.8"
 time = { version = "0.3", features = ["macros", "local-offset"] }
 
+[features]
+p2p = ["agentora-core/p2p"]
+
 [lib]
 crate-type = ["cdylib"]  # GDExtension需要动态库

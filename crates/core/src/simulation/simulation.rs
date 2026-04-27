@@ -5,11 +5,11 @@
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
-use crate::{World, WorldSeed, WorldSnapshot, AgentId, DecisionPipeline};
+use crate::{World, WorldSeed, WorldSnapshot, AgentId, DecisionPipeline, Position};
 use crate::agent::inventory::{InventoryConfig, init_inventory_config};
 use agentora_ai::{LlmProvider, LlmConfig};
 use crate::snapshot::{NarrativeEvent, AgentState};
@@ -18,7 +18,7 @@ use crate::strategy::StrategyHub;
 use super::config::SimConfig;
 #[cfg(feature = "p2p")]
 use super::config::SimMode;
-use super::delta::Delta;
+use super::delta::{Delta, ChangeHint};
 use super::p2p_handler::P2PMessageHandler;
 
 #[cfg(feature = "p2p")]
@@ -39,6 +39,8 @@ pub struct Simulation {
     strategy_hubs: HashMap<AgentId, StrategyHub>,
     /// 模拟配置
     config: SimConfig,
+    /// 世界种子（用于动态创建 Agent）
+    seed: WorldSeed,
     /// 暂停状态
     is_paused: Arc<AtomicBool>,
     /// 运行状态
@@ -142,6 +144,7 @@ impl Simulation {
             pipeline: Arc::new(pipeline),
             strategy_hubs,
             config,
+            seed,
             is_paused: Arc::new(AtomicBool::new(false)),
             is_running: AtomicBool::new(false),
             snapshot_tx,
@@ -180,8 +183,9 @@ impl Simulation {
         narrative_tx: Sender<NarrativeEvent>,
         local_peer_id: String,
     ) -> Self {
-        // 先提取端口配置（config 后面会被 move）
+        // 先提取端口配置和种子（后面会被 move）
         let listen_port = config.p2p_port;
+        let seed_clone = seed.clone();
 
         // 先 clone 通道，因为后面会 move
         let delta_tx_for_network = delta_tx.clone();
@@ -338,7 +342,7 @@ impl Simulation {
     /// 启动模拟（异步版本，在 tokio runtime 内调用）
     ///
     /// 创建并 spawn 所有 Agent 决策循环、Tick 循环、Snapshot 循环
-    /// P2P 模式下只 spawn local_agent_ids 对应的 Agent
+    /// P2P 模式下动态创建本地 Agent
     pub async fn start(&mut self) {
         if self.is_running.load(Ordering::SeqCst) {
             tracing::warn!("[Simulation] 模拟已在运行");
@@ -350,27 +354,78 @@ impl Simulation {
 
         // 获取需要运行的 Agent ID（根据 SimMode）
         let agent_ids: Vec<AgentId>;
-        {
-            let world = self.world.lock().await;
-            match &self.config.mode {
-                super::config::SimMode::Centralized => {
-                    // 集中式模式：所有 Agent
-                    agent_ids = world.agents.keys().cloned().collect();
-                }
-                super::config::SimMode::P2P { local_agent_ids, .. } => {
-                    // P2P 模式：运行指定的 Agent
-                    // 当 local_agent_ids 为空时，自动分配本地生成的所有 Agent
-                    if local_agent_ids.is_empty() {
-                        // 自动分配：使用本地生成的所有 Agent
-                        agent_ids = world.agents.keys().cloned().collect();
-                        tracing::info!("[Simulation] P2P 模式：自动分配 {} 个本地 Agent", agent_ids.len());
-                    } else {
-                        // 手动指定：只运行配置中的 Agent
-                        agent_ids = local_agent_ids.iter()
-                            .map(|id| AgentId::new(id.clone()))
-                            .filter(|id| world.agents.contains_key(id))
+        match &self.config.mode {
+            super::config::SimMode::Centralized => {
+                // 集中式模式：使用世界生成器创建的所有 Agent
+                let world = self.world.lock().await;
+                agent_ids = world.agents.keys().cloned().collect();
+            }
+            super::config::SimMode::P2P { .. } => {
+                // P2P 模式：动态创建本地 Agent
+                let is_seed_node = self.config.seed_peer.is_none();
+
+                if is_seed_node {
+                    // 种子节点：立即创建本地 Agent
+                    let mut world = self.world.lock().await;
+                    let existing_positions: HashSet<Position> = HashSet::new();
+                    let agent_id = World::generate_local_agent(
+                        &mut world,
+                        &self.seed,
+                        &existing_positions,
+                        5, // 最小距离 5 格
+                    );
+                    tracing::info!("[Simulation] P2P 种子节点：创建本地 Agent {}", agent_id.as_str());
+                    agent_ids = vec![agent_id];
+                } else {
+                    // 连接节点：等待 5 秒收集已有 Agent 位置
+                    #[cfg(feature = "p2p")]
+                    {
+                        tracing::info!("[Simulation] P2P 连接节点：等待同步已有 Agent...");
+
+                        // 先启动 P2P 网络连接
+                        self.init_p2p_network().await;
+
+                        // 等待 5 秒接收远程 Agent 的 Spawned Delta
+                        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+
+                        // 收集已有 Agent 位置（从 remote_agents）
+                        let world = self.world.lock().await;
+                        let existing_positions: HashSet<Position> = world.remote_agents
+                            .iter()
+                            .map(|(_, shadow)| {
+                                let (x, y) = shadow.position();
+                                Position::new(x, y)
+                            })
                             .collect();
+                        tracing::info!("[Simulation] 已收集 {} 个远程 Agent 位置", existing_positions.len());
                     }
+
+                    #[cfg(not(feature = "p2p"))]
+                    {
+                        let existing_positions: HashSet<Position> = HashSet::new();
+                    }
+
+                    // 创建本地 Agent（避开已有位置）
+                    let mut world = self.world.lock().await;
+                    #[cfg(feature = "p2p")]
+                    let existing_positions: HashSet<Position> = world.remote_agents
+                        .iter()
+                        .map(|(_, shadow)| {
+                            let (x, y) = shadow.position();
+                            Position::new(x, y)
+                        })
+                        .collect();
+                    #[cfg(not(feature = "p2p"))]
+                    let existing_positions: HashSet<Position> = HashSet::new();
+
+                    let agent_id = World::generate_local_agent(
+                        &mut world,
+                        &self.seed,
+                        &existing_positions,
+                        5,
+                    );
+                    tracing::info!("[Simulation] P2P 连接节点：创建本地 Agent {}", agent_id.as_str());
+                    agent_ids = vec![agent_id];
                 }
             }
         }
@@ -417,11 +472,17 @@ impl Simulation {
         // Spawn Tick 循环（根据 SimMode 选择不同的 tick 方法）
         self.tick_handle = Some(self.spawn_tick_loop());
 
-        // P2P 模式：连接种子节点并订阅 topic
+        // P2P 模式：种子节点启动网络，连接节点已在上面启动
         #[cfg(feature = "p2p")]
         {
             if let SimMode::P2P { .. } = &self.config.mode {
-                self.init_p2p_network().await;
+                if self.config.seed_peer.is_none() {
+                    // 种子节点：启动网络（连接节点已在上面启动）
+                    self.init_p2p_network().await;
+                }
+
+                // 广播本地 Agent 的 Spawned Delta
+                self.broadcast_agent_spawned(&agent_ids).await;
             }
         }
 
@@ -431,6 +492,52 @@ impl Simulation {
             agent_ids.len(),
             npc_ids.len()
         );
+    }
+
+    /// P2P 模式：广播本地 Agent 创建事件
+    #[cfg(feature = "p2p")]
+    async fn broadcast_agent_spawned(&self, agent_ids: &[AgentId]) {
+        if let Some(ref p2p_delta_tx) = self.p2p_delta_tx {
+            let world = self.world.lock().await;
+            let tick = world.tick;
+
+            for agent_id in agent_ids {
+                if let Some(agent) = world.agents.get(agent_id) {
+                    let agent_id_str = agent.id.as_str().to_string();
+                    let state = AgentState {
+                        id: agent_id_str.clone(),
+                        name: agent.name.clone(),
+                        position: (agent.position.x, agent.position.y),
+                        health: agent.health,
+                        max_health: agent.max_health,
+                        satiety: agent.satiety,
+                        hydration: agent.hydration,
+                        age: agent.age,
+                        level: agent.level,
+                        is_alive: agent.is_alive,
+                        inventory_summary: agent.inventory.clone(),
+                        current_action: String::new(),
+                        action_result: String::new(),
+                        reasoning: None,
+                    };
+
+                    let delta = Delta::AgentStateChanged {
+                        agent_id: agent_id_str.clone(),
+                        state,
+                        change_hint: ChangeHint::Spawned,
+                        source_peer_id: self.local_peer_id.clone(),
+                    };
+
+                    let region_id = 0u32;
+
+                    if let Err(e) = p2p_delta_tx.send((delta.clone(), tick, region_id)).await {
+                        tracing::error!("[Simulation] Spawn delta broadcast failed: {:?}", e);
+                    } else {
+                        tracing::info!("[Simulation] Broadcasted Spawned delta for agent {}", agent_id_str);
+                    }
+                }
+            }
+        }
     }
 
     /// 获取 Snapshot sender（供外部 clone）

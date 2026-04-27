@@ -1,9 +1,10 @@
-# Node A 配置 - P2P 种子节点
-# 运行 1 个本地 Agent，端口 4001
+# Agentora P2P 节点 A 配置（种子节点）
+# 端口 4001，作为种子节点接受连接
 
 [simulation]
+# P2P 模式下此配置无效（每节点固定 1 Agent）
 initial_agent_count = 1
-npc_count = 0
+npc_count = 1
 tick_interval_secs = 5
 npc_decision_interval_secs = 3
 player_decision_interval_secs = 2
@@ -15,11 +16,10 @@ max_slots = 20
 max_stack_size = 20
 warehouse_limit_multiplier = 2
 
+# P2P 配置 - 启用分布式模式
 [p2p]
 mode = "p2p"
-# local_agent_ids 为空，自动分配本地生成的 Agent
-local_agent_ids = []
 region_size = 32
 port = 4001
-# 作为种子节点，不需要连接其他节点
+# 种子节点不需要连接其他节点
 seed_peer = ""

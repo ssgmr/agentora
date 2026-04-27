@@ -73,9 +73,12 @@ async fn run_simulation_async_with_api(
         tracing::info!("[Bridge] P2P 模式启动 [peer_id={}]", local_peer_id);
 
         // 设置 Agent 名字前缀，让不同节点的 Agent 名字不同
-        // 例如：端口4001的节点生成 "N4001_Agent_1"，端口4002生成 "N4002_Agent_1"
+        // 例如：端口4001的节点生成 "N4001_Agent"，端口4002生成 "N4002_Agent"
         seed.agent_name_prefix = format!("N{}_", sim_config.p2p_port);
         tracing::info!("[Bridge] Agent 名字前缀: {}", seed.agent_name_prefix);
+
+        // P2P 模式：跳过 World::new() 中的 Agent 生成，由 Simulation.start() 动态创建
+        seed.skip_initial_agents = true;
 
         let sim = Simulation::with_p2p(
             sim_config.clone(),
@@ -194,14 +197,16 @@ async fn run_simulation_async_with_api(
                         }
                         "peers" => {
                             if let Some(transport) = simulation.transport_ref() {
-                                let reservations = transport.get_relay_reservations().await;
-                                let peers: Vec<_> = reservations.iter().map(|r| {
-                                    serde_json::json!({
-                                        "peer_id": r.relay_peer_id,
-                                        "connection_type": if r.active { "relay" } else { "inactive" }
-                                    })
-                                }).collect();
-                                serde_json::to_string(&peers).unwrap_or_else(|_| "[]".to_string())
+                                let connected_peers = transport.get_connected_peers().await;
+                                serde_json::to_string(&connected_peers).unwrap_or_else(|_| "[]".to_string())
+                            } else {
+                                "[]".to_string()
+                            }
+                        }
+                        "topics" => {
+                            if let Some(transport) = simulation.transport_ref() {
+                                let topics = transport.get_subscribed_topics().await;
+                                serde_json::to_string(&topics).unwrap_or_else(|_| "[]".to_string())
                             } else {
                                 "[]".to_string()
                             }

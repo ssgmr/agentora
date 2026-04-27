@@ -42,9 +42,13 @@ pub struct WorldSeed {
     pub agent_personalities: AgentPersonalities,
 
     /// Agent名字前缀（用于P2P模式下区分不同节点的Agent）
-    /// 例如："N4001_" 会让 Agent 名字变为 "N4001_Agent_1"
+    /// 例如："N4001_" 会让 Agent 名字变为 "N4001_Agent"
     #[serde(default)]
     pub agent_name_prefix: String,
+
+    /// P2P 模式下跳过初始 Agent 生成（Agent 将在 Simulation.start() 中动态创建）
+    #[serde(default)]
+    pub skip_initial_agents: bool,
 }
 
 impl Default for WorldSeed {
@@ -67,6 +71,7 @@ impl Default for WorldSeed {
             pressure_config: PressureConfig::default(),
             agent_personalities: AgentPersonalities::default(),
             agent_name_prefix: String::new(), // 默认无前缀
+            skip_initial_agents: false, // 默认生成初始 Agent
         }
     }
 }

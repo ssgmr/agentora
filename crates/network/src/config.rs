@@ -2,6 +2,9 @@
 //!
 //! DCUtR、AutoNAT、混合穿透策略、中继 reservation 配置
 
+use serde::{Serialize, Deserialize};
+use crate::nat::ConnectionType;
+
 /// DCUtR 配置
 #[derive(Debug, Clone)]
 pub struct DcutrConfig {
@@ -88,4 +91,21 @@ pub struct RelayReservation {
     pub listen_addr: String,
     /// 是否激活
     pub active: bool,
+}
+
+/// 已连接节点信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectedPeer {
+    /// libp2p PeerId（完整46字符）
+    pub peer_id: String,
+    /// Identify 协议获取的 agent_version
+    pub agent_version: String,
+    /// 连接方式（Direct/Relay/Dcutr）
+    pub connection_type: ConnectionType,
+    /// 连接建立时间（ISO 8601 格式）
+    pub connected_at: String,
+    /// 是否为中继服务器
+    pub is_relay_server: bool,
+    /// 对方的监听地址（如果已知）
+    pub listen_addr: Option<String>,
 }

@@ -18,4 +18,4 @@ pub use libp2p_transport::Libp2pTransport;
 pub use swarm::SwarmCommand;
 pub use behaviour::{AgentoraBehaviour, AgentoraBehaviourEvent};
 pub use nat::{NatStatus, ConnectionType};
-pub use config::{DcutrConfig, AutonatConfig, HybridStrategyConfig, RelayReservation};
+pub use config::{DcutrConfig, AutonatConfig, HybridStrategyConfig, RelayReservation, ConnectedPeer};

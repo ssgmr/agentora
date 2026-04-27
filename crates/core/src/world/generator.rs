@@ -315,7 +315,10 @@ impl World {
                 format!("{}Agent_{}", seed.agent_name_prefix, i + 1)
             };
 
-            let mut agent = Agent::new(AgentId::new(uuid::Uuid::new_v4().to_string()), name, pos);
+            // 中心化模式：使用 UUID 作为 Agent ID
+            let agent_id = AgentId::new(uuid::Uuid::new_v4().to_string());
+
+            let mut agent = Agent::new(agent_id, name, pos);
 
             // 任务 2.4：根据性格配置设置 Agent 性格
             let template = seed.agent_personalities.select_template();
@@ -332,5 +335,140 @@ impl World {
 
             world.insert_agent_at(agent.id.clone(), agent);
         }
+    }
+
+    /// P2P 模式：生成单个本地 Agent（带位置避让）
+    ///
+    /// # Arguments
+    /// - `world`: World 引用（地形已生成）
+    /// - `seed`: WorldSeed 配置
+    /// - `existing_positions`: 已有 Agent 位置集合（需要避开）
+    /// - `min_distance`: 与已有 Agent 的最小距离（格数）
+    ///
+    /// # Returns
+    /// - 创建的 Agent ID
+    pub fn generate_local_agent(
+        world: &mut World,
+        seed: &WorldSeed,
+        existing_positions: &std::collections::HashSet<Position>,
+        min_distance: u32,
+    ) -> AgentId {
+        use rand::Rng;
+        use rand::SeedableRng;
+
+        let (width, height) = world.map.size();
+
+        // 使用 unique_seed：timestamp 确保不同节点位置不同
+        let unique_seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+            .wrapping_add(seed.agent_name_prefix.len() as u64);
+
+        let mut rng = rand::rngs::StdRng::seed_from_u64(unique_seed);
+
+        // 找位置：随机 + 避开现有 Agent
+        let pos = Self::find_spawn_position(
+            &world.map,
+            width, height,
+            existing_positions,
+            min_distance,
+            &mut rng,
+        );
+
+        // 创建 Agent（UUID ID，名字用 prefix）
+        let agent_id = AgentId::new(uuid::Uuid::new_v4().to_string());
+        let name = if seed.agent_name_prefix.is_empty() {
+            "Agent_1".to_string()
+        } else {
+            format!("{}Agent", seed.agent_name_prefix)
+        };
+
+        let mut agent = Agent::new(agent_id.clone(), name, pos);
+
+        // 根据性格配置设置 Agent 性格
+        let template = seed.agent_personalities.select_template();
+        agent.personality = PersonalitySeed::from_template(template);
+
+        tracing::info!(
+            "[Generator] P2P 本地 Agent 创建：id={}, name={}, pos=({},{}), 性格={}",
+            agent_id.as_str(),
+            agent.name,
+            pos.x, pos.y,
+            agent.personality.description
+        );
+
+        world.insert_agent_at(agent_id.clone(), agent);
+
+        // 将 Agent ID 加入 local_agent_ids 集合（P2P 模式）
+        if let Some(ref mut local_ids) = world.local_agent_ids {
+            local_ids.insert(agent_id.clone());
+        }
+
+        agent_id
+    }
+
+    /// 找一个有效的出生位置（避开已有 Agent）
+    fn find_spawn_position(
+        map: &map::CellGrid,
+        width: u32, height: u32,
+        existing_positions: &std::collections::HashSet<Position>,
+        min_distance: u32,
+        rng: &mut impl rand::Rng,
+    ) -> Position {
+        let max_attempts = 100;
+        let cx = width / 2;
+        let cy = height / 2;
+        let spawn_radius = 32u32; // 中心 64x64 区域内出生
+
+        for _ in 0..max_attempts {
+            let x = rng.gen_range(cx.saturating_sub(spawn_radius)..(cx + spawn_radius).min(width));
+            let y = rng.gen_range(cy.saturating_sub(spawn_radius)..(cy + spawn_radius).min(height));
+            let pos = Position::new(x, y);
+
+            // 检查地形可通行
+            if !map.get_terrain(pos).is_passable() {
+                continue;
+            }
+
+            // 检查与已有 Agent 的距离
+            let too_close = existing_positions.iter()
+                .any(|p| Self::manhattan_distance(&pos, p) < min_distance);
+
+            if !too_close {
+                return pos;
+            }
+        }
+
+        // Fallback：在整个地图找任意可通行位置
+        tracing::warn!("[Generator] 中心区域无合适位置，扩展搜索范围");
+        for _ in 0..100 {
+            let x = rng.gen_range(0..width);
+            let y = rng.gen_range(0..height);
+            let pos = Position::new(x, y);
+            if map.get_terrain(pos).is_passable() {
+                let too_close = existing_positions.iter()
+                    .any(|p| Self::manhattan_distance(&pos, p) < min_distance);
+                if !too_close {
+                    return pos;
+                }
+            }
+        }
+
+        // 最终 Fallback：返回任意可通行位置（应急情况）
+        loop {
+            let x = rng.gen_range(0..width);
+            let y = rng.gen_range(0..height);
+            let pos = Position::new(x, y);
+            if map.get_terrain(pos).is_passable() {
+                tracing::warn!("[Generator] 无法避开已有 Agent，返回任意位置 ({},{})", pos.x, pos.y);
+                return pos;
+            }
+        }
+    }
+
+    /// 曼哈顿距离
+    fn manhattan_distance(a: &Position, b: &Position) -> u32 {
+        (a.x.abs_diff(b.x)) + (a.y.abs_diff(b.y))
     }
 }

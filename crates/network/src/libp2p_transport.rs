@@ -8,7 +8,7 @@ use crate::transport::{Transport, MessageHandler, TransportError};
 use crate::codec::NetworkMessage;
 use crate::swarm::{run_swarm_event_loop, SwarmCommand};
 use crate::nat::{NatStatus, ConnectionType};
-use crate::config::{HybridStrategyConfig, RelayReservation};
+use crate::config::{HybridStrategyConfig, RelayReservation, ConnectedPeer};
 use agentora_sync::PeerId;
 use libp2p::{
     identity,
@@ -38,6 +38,10 @@ pub struct Libp2pTransport {
     peer_failures: Arc<tokio::sync::RwLock<std::collections::HashMap<String, u32>>>,
     /// 对等点地址缓存
     peer_addresses: Arc<tokio::sync::RwLock<std::collections::HashMap<String, Multiaddr>>>,
+    /// 已连接节点列表（新增）
+    connected_peers: Arc<tokio::sync::RwLock<Vec<ConnectedPeer>>>,
+    /// 订阅的 topic 列表（新增）
+    subscribed_topics: Arc<tokio::sync::RwLock<Vec<String>>>,
 }
 
 impl Clone for Libp2pTransport {
@@ -53,6 +57,8 @@ impl Clone for Libp2pTransport {
             config: self.config.clone(),
             peer_failures: self.peer_failures.clone(),
             peer_addresses: self.peer_addresses.clone(),
+            connected_peers: self.connected_peers.clone(),
+            subscribed_topics: self.subscribed_topics.clone(),
         }
     }
 }
@@ -92,12 +98,20 @@ impl Libp2pTransport {
         // 创建对等点地址缓存
         let peer_addresses = Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
 
+        // 创建已连接节点列表（新增）
+        let connected_peers = Arc::new(tokio::sync::RwLock::new(Vec::new()));
+
+        // 创建订阅的 topic 列表（新增）
+        let subscribed_topics = Arc::new(tokio::sync::RwLock::new(Vec::new()));
+
         // 启动 Swarm 事件循环（使用 swarm.rs 中的函数）
         let key_clone = local_key.clone();
         let peer_id_clone = peer_id.clone();
         let reservations_clone = relay_reservations.clone();
         let nat_status_clone = nat_status.clone();
         let direct_connections_clone = direct_connections.clone();
+        let connected_peers_clone = connected_peers.clone();
+        let subscribed_topics_clone = subscribed_topics.clone();
         tokio::spawn(async move {
             run_swarm_event_loop(
                 key_clone,
@@ -108,6 +122,8 @@ impl Libp2pTransport {
                 reservations_clone,
                 nat_status_clone,
                 direct_connections_clone,
+                connected_peers_clone,
+                subscribed_topics_clone,
                 Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())), // topic_handlers（暂不使用）
             ).await;
         });
@@ -123,6 +139,8 @@ impl Libp2pTransport {
             config: HybridStrategyConfig::default(),
             peer_failures,
             peer_addresses,
+            connected_peers,
+            subscribed_topics,
         })
     }
 
@@ -347,6 +365,16 @@ impl Libp2pTransport {
     /// 获取当前的中继 reservations 列表
     pub async fn get_relay_reservations(&self) -> Vec<RelayReservation> {
         self.relay_reservations.read().await.clone()
+    }
+
+    /// 获取已连接节点列表（新增）
+    pub async fn get_connected_peers(&self) -> Vec<ConnectedPeer> {
+        self.connected_peers.read().await.clone()
+    }
+
+    /// 获取订阅的 topic 列表（新增）
+    pub async fn get_subscribed_topics(&self) -> Vec<String> {
+        self.subscribed_topics.read().await.clone()
     }
 
     /// 查找可用的中继节点
