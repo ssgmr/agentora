@@ -1,0 +1,374 @@
+[gd_scene load_steps=2 format=3 uid="uid://settings_panel"]
+
+[ext_resource type="Script" path="res://scripts/settings_panel.gd" id="settings_script"]
+
+[node name="SettingsPanel" type="PanelContainer"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("settings_script")
+visible = false
+
+[node name="BgOverlay" type="ColorRect" parent="."]
+layout_mode = 2
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_right = 0.0
+offset_bottom = 0.0
+color = Color(0, 0, 0, 0.7)
+
+[node name="PanelContainer" type="PanelContainer" parent="."]
+layout_mode = 2
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -220.0
+offset_top = -380.0
+offset_right = 220.0
+offset_bottom = 380.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Bg" type="ColorRect" parent="PanelContainer"]
+layout_mode = 2
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+color = Color(0.12, 0.14, 0.16, 1)
+
+[node name="MarginContainer" type="MarginContainer" parent="PanelContainer"]
+layout_mode = 2
+anchor_right = 1.0
+anchor_bottom = 1.0
+theme_override_constants/margin_left = 16
+theme_override_constants/margin_top = 12
+theme_override_constants/margin_right = 16
+theme_override_constants/margin_bottom = 12
+
+[node name="ScrollContainer" type="ScrollContainer" parent="PanelContainer/MarginContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="VBox" type="VBoxContainer" parent="PanelContainer/MarginContainer/ScrollContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 12
+
+[node name="TitleLabel" type="Label" parent="PanelContainer/MarginContainer/ScrollContainer/VBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "设置"
+horizontal_alignment = 1
+autowrap_mode = 2
+
+[node name="LLMSection" type="Label" parent="PanelContainer/MarginContainer/ScrollContainer/VBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "【LLM 模式】"
+autowrap_mode = 2
+
+[node name="LLMHBox" type="HBoxContainer" parent="PanelContainer/MarginContainer/ScrollContainer/VBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 8
+
+[node name="LocalBtn" type="Button" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/LLMHBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "本地模型"
+toggle_mode = true
+
+[node name="RemoteBtn" type="Button" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/LLMHBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "远程API"
+toggle_mode = true
+
+[node name="RuleBtn" type="Button" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/LLMHBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "规则引擎"
+toggle_mode = true
+button_pressed = true
+
+[node name="RemoteConfigContainer" type="VBoxContainer" parent="PanelContainer/MarginContainer/ScrollContainer/VBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+visible = false
+theme_override_constants/separation = 6
+
+[node name="EndpointLabel" type="Label" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/RemoteConfigContainer"]
+layout_mode = 2
+text = "API Endpoint："
+autowrap_mode = 2
+
+[node name="EndpointInput" type="LineEdit" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/RemoteConfigContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "http://localhost:1234/v1"
+
+[node name="TokenLabel" type="Label" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/RemoteConfigContainer"]
+layout_mode = 2
+text = "API Token（可选）："
+autowrap_mode = 2
+
+[node name="TokenInput" type="LineEdit" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/RemoteConfigContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "sk-xxx"
+
+[node name="ModelLabel" type="Label" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/RemoteConfigContainer"]
+layout_mode = 2
+text = "模型名称："
+autowrap_mode = 2
+
+[node name="ModelInput" type="LineEdit" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/RemoteConfigContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "qwen3.5-4b"
+
+[node name="LocalModelContainer" type="VBoxContainer" parent="PanelContainer/MarginContainer/ScrollContainer/VBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+visible = false
+theme_override_constants/separation = 6
+
+[node name="ModelLabel" type="Label" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/LocalModelContainer"]
+layout_mode = 2
+text = "预置模型（点击下载）："
+autowrap_mode = 2
+
+[node name="ModelsGrid" type="GridContainer" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/LocalModelContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+columns = 2
+theme_override_constants/h_separation = 8
+theme_override_constants/v_separation = 8
+
+[node name="Qwen2BBtn" type="Button" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/LocalModelContainer/ModelsGrid"]
+layout_mode = 2
+text = "Qwen3.5-2B (Q4) (~1.5GB)"
+
+[node name="Qwen4BBtn" type="Button" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/LocalModelContainer/ModelsGrid"]
+layout_mode = 2
+text = "Qwen3.5-4B (Q4) (~2.5GB)"
+
+[node name="Gemma2BBtn" type="Button" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/LocalModelContainer/ModelsGrid"]
+layout_mode = 2
+text = "Gemma-2-2B (Q4) (~1.4GB)"
+
+[node name="LocalFileBtn" type="Button" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/LocalModelContainer/ModelsGrid"]
+layout_mode = 2
+text = "使用已下载模型"
+
+[node name="DownloadProgressContainer" type="VBoxContainer" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/LocalModelContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+visible = false
+theme_override_constants/separation = 4
+
+[node name="DownloadStatusLabel" type="Label" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/LocalModelContainer/DownloadProgressContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "下载中..."
+autowrap_mode = 2
+
+[node name="DownloadProgressBar" type="ProgressBar" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/LocalModelContainer/DownloadProgressContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+custom_minimum_size = Vector2(0, 20)
+value = 0.0
+show_percentage = false
+
+[node name="CancelDownloadBtn" type="Button" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/LocalModelContainer/DownloadProgressContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "取消下载"
+custom_minimum_size = Vector2(0, 28)
+
+[node name="LoadStatusContainer" type="VBoxContainer" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/LocalModelContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+visible = false
+theme_override_constants/separation = 4
+
+[node name="LoadStatusLabel" type="Label" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/LocalModelContainer/LoadStatusContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "模型加载中..."
+autowrap_mode = 2
+
+[node name="LoadProgressBar" type="ProgressBar" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/LocalModelContainer/LoadStatusContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+custom_minimum_size = Vector2(0, 20)
+value = 0.0
+show_percentage = false
+
+[node name="BackendInfoLabel" type="Label" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/LocalModelContainer/LoadStatusContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = ""
+autowrap_mode = 2
+
+[node name="Spacer1" type="Control" parent="PanelContainer/MarginContainer/ScrollContainer/VBox"]
+layout_mode = 2
+custom_minimum_size = Vector2(0, 10)
+
+[node name="AgentSection" type="Label" parent="PanelContainer/MarginContainer/ScrollContainer/VBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "【Agent 名字】"
+autowrap_mode = 2
+
+[node name="AgentNameInput" type="LineEdit" parent="PanelContainer/MarginContainer/ScrollContainer/VBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "智行者"
+
+[node name="Spacer2" type="Control" parent="PanelContainer/MarginContainer/ScrollContainer/VBox"]
+layout_mode = 2
+custom_minimum_size = Vector2(0, 10)
+
+[node name="PromptSection" type="Label" parent="PanelContainer/MarginContainer/ScrollContainer/VBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "【系统提示词】"
+autowrap_mode = 2
+
+[node name="PromptInput" type="TextEdit" parent="PanelContainer/MarginContainer/ScrollContainer/VBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+custom_minimum_size = Vector2(0, 80)
+placeholder_text = "描述智能体性格，如：谨慎的探索者..."
+wrap_mode = 2
+
+[node name="Spacer3" type="Control" parent="PanelContainer/MarginContainer/ScrollContainer/VBox"]
+layout_mode = 2
+custom_minimum_size = Vector2(0, 10)
+
+[node name="IconSection" type="Label" parent="PanelContainer/MarginContainer/ScrollContainer/VBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "【头像】"
+autowrap_mode = 2
+
+[node name="IconGrid" type="GridContainer" parent="PanelContainer/MarginContainer/ScrollContainer/VBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+columns = 6
+theme_override_constants/h_separation = 8
+theme_override_constants/v_separation = 8
+
+[node name="IconDefault" type="TextureButton" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/IconGrid"]
+layout_mode = 2
+texture_normal = null
+custom_minimum_size = Vector2(48, 48)
+stretch_mode = 5
+
+[node name="IconWizard" type="TextureButton" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/IconGrid"]
+layout_mode = 2
+texture_normal = null
+custom_minimum_size = Vector2(48, 48)
+stretch_mode = 5
+
+[node name="IconFox" type="TextureButton" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/IconGrid"]
+layout_mode = 2
+texture_normal = null
+custom_minimum_size = Vector2(48, 48)
+stretch_mode = 5
+
+[node name="IconDragon" type="TextureButton" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/IconGrid"]
+layout_mode = 2
+texture_normal = null
+custom_minimum_size = Vector2(48, 48)
+stretch_mode = 5
+
+[node name="IconLion" type="TextureButton" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/IconGrid"]
+layout_mode = 2
+texture_normal = null
+custom_minimum_size = Vector2(48, 48)
+stretch_mode = 5
+
+[node name="IconRobot" type="TextureButton" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/IconGrid"]
+layout_mode = 2
+texture_normal = null
+custom_minimum_size = Vector2(48, 48)
+stretch_mode = 5
+
+[node name="Spacer4" type="Control" parent="PanelContainer/MarginContainer/ScrollContainer/VBox"]
+layout_mode = 2
+custom_minimum_size = Vector2(0, 10)
+
+[node name="P2PSection" type="Label" parent="PanelContainer/MarginContainer/ScrollContainer/VBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "【P2P 模式】"
+autowrap_mode = 2
+
+[node name="P2PHBox" type="HBoxContainer" parent="PanelContainer/MarginContainer/ScrollContainer/VBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 8
+
+[node name="SingleBtn" type="Button" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/P2PHBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "单机"
+toggle_mode = true
+button_pressed = true
+
+[node name="CreateBtn" type="Button" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/P2PHBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "创建"
+toggle_mode = true
+
+[node name="JoinBtn" type="Button" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/P2PHBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "加入"
+toggle_mode = true
+
+[node name="SeedAddressInput" type="LineEdit" parent="PanelContainer/MarginContainer/ScrollContainer/VBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "/ip4/192.168.1.100/tcp/7000/p2p/12D3Koo..."
+visible = false
+
+[node name="Spacer5" type="Control" parent="PanelContainer/MarginContainer/ScrollContainer/VBox"]
+layout_mode = 2
+custom_minimum_size = Vector2(0, 10)
+
+[node name="RestartLabel" type="Label" parent="PanelContainer/MarginContainer/ScrollContainer/VBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = ""
+horizontal_alignment = 1
+autowrap_mode = 2
+
+[node name="BtnHBox" type="HBoxContainer" parent="PanelContainer/MarginContainer/ScrollContainer/VBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 16
+
+[node name="SaveBtn" type="Button" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/BtnHBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "保存"
+custom_minimum_size = Vector2(0, 40)
+
+[node name="CloseBtn" type="Button" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/BtnHBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "关闭"
+custom_minimum_size = Vector2(0, 40)

@@ -1,0 +1,16 @@
+[llm]
+mode = "rule_only"
+api_endpoint = ""
+api_token = ""
+model_name = ""
+local_model_path = ""
+
+[agent]
+name = "测试Agent"
+custom_prompt = "谨慎的生存者"
+icon_id = "fox"
+custom_icon_path = ""
+
+[p2p]
+mode = "single"
+seed_address = ""

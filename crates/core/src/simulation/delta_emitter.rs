@@ -41,6 +41,8 @@ impl DeltaEmitter {
                     current_action: agent.last_action_type.clone().unwrap_or_default(),
                     action_result: agent.last_action_result.clone().unwrap_or_default(),
                     reasoning: reasoning.map(|s| s.to_string()),
+                    icon_id: agent.personality.icon_id.clone(),
+                    custom_icon_path: agent.personality.custom_icon_path.clone(),
                 };
                 Some(state.to_delta(change_hint))
             }
@@ -61,6 +63,8 @@ impl DeltaEmitter {
                     current_action: String::new(),
                     action_result: String::new(),
                     reasoning: None,
+                    icon_id: agent.personality.icon_id.clone(),
+                    custom_icon_path: agent.personality.custom_icon_path.clone(),
                 };
                 Some(state.to_delta(ChangeHint::Died))
             }
@@ -102,6 +106,8 @@ impl DeltaEmitter {
                     current_action: agent.last_action_type.clone().unwrap_or_default(),
                     action_result: agent.last_action_result.clone().unwrap_or_default(),
                     reasoning: reasoning.map(|s| s.to_string()),
+                    icon_id: agent.personality.icon_id.clone(),
+                    custom_icon_path: agent.personality.custom_icon_path.clone(),
                 };
                 Some(state.to_delta(change_hint))
             }
@@ -121,6 +127,8 @@ impl DeltaEmitter {
                     current_action: String::new(),
                     action_result: String::new(),
                     reasoning: None,
+                    icon_id: agent.personality.icon_id.clone(),
+                    custom_icon_path: agent.personality.custom_icon_path.clone(),
                 };
                 Some(state.to_delta(ChangeHint::Died))
             }

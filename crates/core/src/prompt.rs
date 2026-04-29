@@ -305,12 +305,27 @@ impl PromptBuilder {
     }
 
     /// 构建性格描述段落（任务 2.5）
+    ///
+    /// 用户自定义提示词优先，然后是默认性格描述
     pub fn build_personality_section(&self, agent_name: &str, personality: &PersonalitySeed) -> String {
-        if personality.description.is_empty() {
-            format!("你是 {}，一个自主决策的 AI Agent。\n", agent_name)
-        } else {
-            format!("你是 {}，{}。\n", agent_name, personality.description)
+        let mut section = String::new();
+
+        // 用户自定义提示词（优先）
+        if let Some(custom) = &personality.custom_prompt {
+            if !custom.is_empty() {
+                section.push_str(custom);
+                section.push_str("\n\n");
+            }
         }
+
+        // 默认性格描述
+        if !personality.description.is_empty() {
+            section.push_str(&format!("你是 {}，{}。\n", agent_name, personality.description));
+        } else {
+            section.push_str(&format!("你是 {}，一个自主决策的 AI Agent。\n", agent_name));
+        }
+
+        section
     }
 
     /// 估算字符串的 token 数（公共方法，供测试使用）

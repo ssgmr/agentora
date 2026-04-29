@@ -71,6 +71,8 @@ impl Default for super::delta::DeltaEnvelope {
                     current_action: String::new(),
                     action_result: String::new(),
                     reasoning: None,
+                    icon_id: None,
+                    custom_icon_path: None,
                 },
                 change_hint: ChangeHint::Spawned,
                 source_peer_id: None,

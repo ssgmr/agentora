@@ -16,13 +16,33 @@ reqwest.workspace = true
 toml = "0.8"
 chrono = "0.4"
 
-# 本地 GGUF 推理（可选 feature）
-# mistralrs = { version = "0.1", optional = true }  # 版本不匹配，暂时禁用
-# sysinfo = { version = "0.30", optional = true }
+# 本地 GGUF 推理（可选 feature，直接依赖）
+# llama-cpp-2 features: cuda, vulkan, metal (Metal 仅 macOS)
+llama-cpp-2 = { version = "0.1.11", optional = true }
+
+futures-util = "0.3"  # 用于流式下载
 
 [features]
 default = []
-# local-infer = ["mistralrs", "sysinfo"]  # 暂时禁用
+
+# 本地推理总开关（启用 llama-cpp-2）
+local-inference = ["llama-cpp-2"]
+
+# GPU 后端 features（需要 llama-cpp-2 编译支持）
+# CUDA: Windows/Linux NVIDIA GPU
+cuda = ["local-inference", "llama-cpp-2?/cuda"]
+
+# Vulkan: Windows/Linux/Android 跨平台 GPU
+vulkan = ["local-inference", "llama-cpp-2?/vulkan"]
+
+# Metal: macOS/iOS Apple Silicon (仅 macOS 可用)
+metal = ["local-inference", "llama-cpp-2?/metal"]
+
+# 全 GPU 后端（用于预编译打包）
+all-gpu = ["cuda", "vulkan", "metal"]
+
+[lib]
+crate-type = ["rlib"]  # 普通库，支持测试
 
 [dev-dependencies]
 tokio-test = "0.4"

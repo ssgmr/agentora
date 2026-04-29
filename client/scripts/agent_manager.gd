@@ -9,6 +9,8 @@ const LABEL_FONT_SIZE = 11
 const GLOW_RADIUS = 20
 const REMOTE_AGENT_COLOR = Color(0.9, 0.5, 0.2)  # P2P 远程 Agent 颜色
 
+# 图标纹理缓存
+var _icon_textures: Dictionary = {}
 var _agent_idle_texture: Texture2D
 var _agent_selected_texture: Texture2D
 var _agent_nodes: Dictionary = {}
@@ -22,13 +24,15 @@ var _effect_time: float = 0.0
 func _ready() -> void:
 	print("[AgentManager] Agent 管理器初始化（StateManager 模式）")
 
-	# 加载 Agent 纹理（可选）
-	_agent_idle_texture = load("res://assets/sprites/agent_idle.png")
+	# 预加载所有图标纹理
+	_load_icon_textures()
+
+	# 加载选中状态纹理（仍保留用于选中高亮）
 	_agent_selected_texture = load("res://assets/sprites/agent_selected.png")
-	if _agent_idle_texture:
-		print("[AgentManager] Agent 纹理加载成功")
+	if _agent_selected_texture:
+		print("[AgentManager] Agent 选中纹理加载成功")
 	else:
-		print("[AgentManager] Agent 纹理加载失败，使用颜色回退")
+		print("[AgentManager] Agent 选中纹理加载失败")
 
 	# 订阅 StateManager 信号（统一状态分发）
 	StateManager.state_updated.connect(_on_state_updated)
@@ -39,6 +43,36 @@ func _ready() -> void:
 	var bridge = BridgeAccessor.get_bridge()
 	if bridge:
 		bridge.agent_selected.connect(_on_agent_selected)
+
+
+func _load_icon_textures() -> void:
+	"""预加载所有 Agent 图标纹理"""
+	var icon_ids = ["default", "wizard", "fox", "dragon", "lion", "robot"]
+	for icon_id in icon_ids:
+		var path = "res://assets/textures/agents/" + icon_id + ".png"
+		print("[AgentManager] 尝试加载: %s (exists=%s)" % [path, ResourceLoader.exists(path)])
+		if ResourceLoader.exists(path):
+			var tex = load(path)
+			if tex:
+				_icon_textures[icon_id] = tex
+				print("[AgentManager] 图标纹理加载成功: %s" % icon_id)
+			else:
+				print("[AgentManager] 图标纹理加载失败: %s" % icon_id)
+		else:
+			print("[AgentManager] 图标纹理不存在: %s" % path)
+
+	# 默认回退纹理
+	if _icon_textures.has("default"):
+		_agent_idle_texture = _icon_textures["default"]
+		print("[AgentManager] 使用 default 纹理作为默认")
+	else:
+		# 使用 fallback 纹理
+		var fallback_path = "res://assets/sprites/agent_idle.png"
+		if ResourceLoader.exists(fallback_path):
+			_agent_idle_texture = load(fallback_path)
+			print("[AgentManager] 使用 fallback 默认纹理")
+		else:
+			print("[AgentManager] fallback 纹理也不存在！")
 
 
 func _physics_process(delta: float) -> void:
@@ -133,11 +167,24 @@ func _update_agent_node(agent_id: String, data: Dictionary) -> void:
 	var pos = _parse_position(data)
 	agent_node.position = pos * 16  # 转换为像素坐标
 
-	# 远程 Agent 视觉区分
+	# 更新图标纹理
+	var sprite: Sprite2D = agent_node.get_node_or_null("Sprite")
 	var is_remote = not data.get("source_peer_id", "").is_empty()
 	agent_node.set_meta("is_remote", is_remote)
-	var sprite: Sprite2D = agent_node.get_node_or_null("Sprite")
+
 	if sprite:
+		var icon_id = data.get("icon_id", "default")
+		var custom_icon_path = data.get("custom_icon_path", "")
+
+		# 优先使用自定义图标
+		if not custom_icon_path.is_empty() and ResourceLoader.exists(custom_icon_path):
+			sprite.texture = load(custom_icon_path)
+		elif _icon_textures.has(icon_id):
+			sprite.texture = _icon_textures[icon_id]
+		else:
+			sprite.texture = _agent_idle_texture
+
+		# 远程 Agent 视觉区分
 		if not _flash_agents.has(agent_id):
 			sprite.modulate.a = 1.0  # 始终完全可见
 		if is_remote:
@@ -178,10 +225,22 @@ func _create_agent_node(agent_id: String, data: Dictionary) -> Node2D:
 	glow.color = Color(0.2, 0.7, 1.0, 0.15)
 	container.add_child(glow)
 
-	# Agent 主体 - 使用 PNG 纹理
+	# Agent 主体 - 根据 icon_id 加载纹理
 	var sprite = Sprite2D.new()
 	sprite.name = "Sprite"
-	sprite.texture = _agent_idle_texture
+
+	# 根据 icon_id 选择纹理
+	var icon_id = data.get("icon_id", "default")
+	var custom_icon_path = data.get("custom_icon_path", "")
+
+	# 优先使用自定义图标
+	if not custom_icon_path.is_empty() and ResourceLoader.exists(custom_icon_path):
+		sprite.texture = load(custom_icon_path)
+	elif _icon_textures.has(icon_id):
+		sprite.texture = _icon_textures[icon_id]
+	else:
+		sprite.texture = _agent_idle_texture  # 回退
+
 	sprite.centered = true
 	sprite.scale = Vector2(AGENT_SIZE / 32.0, AGENT_SIZE / 32.0)
 	container.add_child(sprite)

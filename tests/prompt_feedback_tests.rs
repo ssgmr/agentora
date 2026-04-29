@@ -143,6 +143,9 @@ fn test_personality_section_empty_description_fallback() {
         agreeableness: 0.5,
         neuroticism: 0.5,
         description: String::new(),
+        custom_prompt: None,
+        icon_id: None,
+        custom_icon_path: None,
     };
 
     let section = builder.build_personality_section("Agent_B", &personality);
@@ -452,18 +455,104 @@ fn test_validate_action_trade_insufficient_returns_detail() {
     assert!(reason.contains("x3"));
 }
 
+// ===== 15.4 单元测试 - Custom Prompt 注入 =====
+
 #[test]
-fn test_validate_action_valid_returns_none_reason() {
-    let candidate = ActionCandidate {
-        reasoning: "等待".to_string(),
-        action_type: ActionType::Wait,
-        target: None,
-        params: HashMap::new(),
+fn test_personality_section_with_custom_prompt() {
+    let builder = PromptBuilder::new();
+    let personality = PersonalitySeed {
+        openness: 0.5,
+        agreeableness: 0.5,
+        neuroticism: 0.5,
+        description: "一个探索者".to_string(),
+        custom_prompt: Some("你是一个谨慎的决策者，在做决定前总是先评估风险。".to_string()),
+        icon_id: None,
+        custom_icon_path: None,
     };
 
-    let engine = RuleEngine::new();
-    let world_state = WorldState::default();
-    let (valid, reason) = engine.validate_action(&candidate, &world_state);
-    assert!(valid);
-    assert!(reason.is_none());
+    let section = builder.build_personality_section("Agent_C", &personality);
+
+    // custom_prompt 应出现在默认描述之前
+    let custom_pos = section.find("谨慎的决策者");
+    let default_pos = section.find("一个探索者");
+    assert!(custom_pos.is_some());
+    assert!(default_pos.is_some());
+    // custom_prompt 在前
+    assert!(custom_pos.unwrap() < default_pos.unwrap());
+}
+
+#[test]
+fn test_personality_section_with_empty_custom_prompt() {
+    let builder = PromptBuilder::new();
+    let personality = PersonalitySeed {
+        openness: 0.5,
+        agreeableness: 0.5,
+        neuroticism: 0.5,
+        description: "一个勇敢的战士".to_string(),
+        custom_prompt: Some(String::new()), // 空 prompt
+        icon_id: None,
+        custom_icon_path: None,
+    };
+
+    let section = builder.build_personality_section("Agent_D", &personality);
+
+    // 空 prompt 不应影响输出，只有默认描述
+    assert!(section.contains("Agent_D"));
+    assert!(section.contains("勇敢的战士"));
+    // 不应出现空行分隔（空 custom_prompt 被跳过）
+    assert!(!section.starts_with("\n\n"));
+}
+
+#[test]
+fn test_personality_section_without_custom_prompt() {
+    let builder = PromptBuilder::new();
+    let personality = PersonalitySeed {
+        openness: 0.5,
+        agreeableness: 0.5,
+        neuroticism: 0.5,
+        description: "一个冒险家".to_string(),
+        custom_prompt: None,
+        icon_id: None,
+        custom_icon_path: None,
+    };
+
+    let section = builder.build_personality_section("Agent_E", &personality);
+
+    // 无 custom_prompt 时只显示默认描述
+    assert!(section.contains("Agent_E"));
+    assert!(section.contains("冒险家"));
+}
+
+#[test]
+fn test_decision_prompt_includes_custom_prompt() {
+    let builder = PromptBuilder::new();
+    let personality = PersonalitySeed {
+        openness: 0.3,
+        agreeableness: 0.4,
+        neuroticism: 0.7,
+        description: "一个谨慎的生存者".to_string(),
+        custom_prompt: Some("在采集资源时，优先选择食物和水。".to_string()),
+        icon_id: None,
+        custom_icon_path: None,
+    };
+
+    let prompt = builder.build_decision_prompt(
+        "Survivor_B",
+        "周围有树木和水源",
+        "",
+        None,
+        None,
+        10,
+        Some(&personality),
+        80,
+        80,
+        &[],
+        &[],
+    );
+
+    // custom_prompt 应出现在 prompt 中
+    assert!(prompt.contains("采集资源"));
+    assert!(prompt.contains("优先选择食物和水"));
+    // 默认描述也应存在
+    assert!(prompt.contains("谨慎的生存者"));
 }

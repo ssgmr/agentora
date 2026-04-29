@@ -44,6 +44,8 @@ impl World {
                     current_action,
                     action_result,
                     reasoning: Some(reasoning),
+                    icon_id: agent.personality.icon_id.clone(),
+                    custom_icon_path: agent.personality.custom_icon_path.clone(),
                 }
             })
             .collect();

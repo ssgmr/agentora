@@ -21,9 +21,13 @@ agentora-network = { workspace = true }
 
 toml = "0.8"
 time = { version = "0.3", features = ["macros", "local-offset"] }
+image = "0.25"  # 图标缩放处理
 
 [features]
 p2p = ["agentora-core/p2p"]
 
+[dev-dependencies]
+tempfile = "3.10"
+
 [lib]
-crate-type = ["cdylib"]  # GDExtension需要动态库
+crate-type = ["cdylib", "rlib"]  # cdylib 用于 GDExtension, rlib 用于测试

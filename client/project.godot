@@ -23,6 +23,7 @@ config/icon="res://icon.svg"
 
 
 
+SharedUIScripts="*res://scripts/shared_ui_styles.gd"
 BridgeAccessor="*res://scripts/bridge_accessor.gd"
 StateManager="*res://scripts/state_manager.gd"
 

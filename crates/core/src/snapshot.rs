@@ -28,6 +28,12 @@ pub struct AgentState {
     /// Agent 的完整思考内容（本地有，远程为 None）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<String>,
+    /// Agent 图标 ID（如 "default", "fox", "wizard" 等）
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub icon_id: Option<String>,
+    /// 自定义图标路径（用户上传的本地文件）
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub custom_icon_path: Option<String>,
 }
 
 impl AgentState {

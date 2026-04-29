@@ -324,13 +324,20 @@ impl World {
             let template = seed.agent_personalities.select_template();
             agent.personality = PersonalitySeed::from_template(template);
 
+            // 应用玩家配置：仅对第一个 Agent（玩家 Agent）应用
+            // NPC Agent 使用默认模板生成的性格
+            if i == 0 {
+                seed.apply_player_config(&mut agent.personality, &mut agent.name);
+            }
+
             tracing::debug!(
-                "Agent {} 创建：性格 {} (open={}, agree={}, neuro={})",
+                "Agent {} 创建：性格 {} (open={}, agree={}, neuro={}) icon_id={:?}",
                 agent.name,
                 agent.personality.description,
                 agent.personality.openness,
                 agent.personality.agreeableness,
-                agent.personality.neuroticism
+                agent.personality.neuroticism,
+                agent.personality.icon_id
             );
 
             world.insert_agent_at(agent.id.clone(), agent);
@@ -389,6 +396,9 @@ impl World {
         // 根据性格配置设置 Agent 性格
         let template = seed.agent_personalities.select_template();
         agent.personality = PersonalitySeed::from_template(template);
+
+        // 应用玩家配置（icon_id, custom_prompt, name）
+        seed.apply_player_config(&mut agent.personality, &mut agent.name);
 
         tracing::info!(
             "[Generator] P2P 本地 Agent 创建：id={}, name={}, pos=({},{}), 性格={}",

@@ -37,6 +37,15 @@ pub fn delta_to_dict(delta: &Delta) -> Variant {
             }
             dict.set("inventory_summary", &inv_dict.to_variant());
 
+            // 图标 ID 和自定义图标路径
+            if let Some(ref icon_id) = state.icon_id {
+                tracing::debug!("[conversion] icon_id={:?} in delta", icon_id);
+                dict.set("icon_id", &icon_id.to_variant());
+            }
+            if let Some(ref custom_icon_path) = state.custom_icon_path {
+                dict.set("custom_icon_path", &custom_icon_path.to_variant());
+            }
+
             // 来源 peer ID（P2P 远程 Agent）
             if let Some(ref peer_id) = source_peer_id {
                 dict.set("source_peer_id", &peer_id.to_variant());
@@ -146,6 +155,15 @@ pub fn agent_to_dict(agent: &AgentState) -> Variant {
         inv_dict.set(k, &(Variant::from(*v as i64)));
     }
     dict.set("inventory_summary", &inv_dict.to_variant());
+
+    // 图标 ID 和自定义图标路径
+    if let Some(ref icon_id) = agent.icon_id {
+        dict.set("icon_id", &icon_id.to_variant());
+    }
+    if let Some(ref custom_icon_path) = agent.custom_icon_path {
+        dict.set("custom_icon_path", &custom_icon_path.to_variant());
+    }
+
     dict.to_variant()
 }
 

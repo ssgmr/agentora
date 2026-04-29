@@ -238,6 +238,17 @@ pub struct PersonalitySeed {
     pub neuroticism: f32,    // 神经质 [0.0, 1.0]
     /// 性格描述文本，注入Prompt影响决策倾向（任务 2.1）
     pub description: String,
+
+    // === 用户自定义配置（引导页面） ===
+    /// 用户自定义系统提示词（优先于 description）
+    #[serde(default)]
+    pub custom_prompt: Option<String>,
+    /// 预设图标 ID（fox, wizard, dragon, lion, robot, default）
+    #[serde(default)]
+    pub icon_id: Option<String>,
+    /// 自定义图标文件路径（用户上传）
+    #[serde(default)]
+    pub custom_icon_path: Option<String>,
 }
 
 impl Default for PersonalitySeed {
@@ -247,6 +258,9 @@ impl Default for PersonalitySeed {
             agreeableness: 0.5,
             neuroticism: 0.5,
             description: String::new(),
+            custom_prompt: None,
+            icon_id: None,
+            custom_icon_path: None,
         }
     }
 }
@@ -259,6 +273,9 @@ impl PersonalitySeed {
             agreeableness: template.agreeableness,
             neuroticism: template.neuroticism,
             description: template.description.clone(),
+            custom_prompt: None,
+            icon_id: None,
+            custom_icon_path: None,
         }
     }
 }

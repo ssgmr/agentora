@@ -519,6 +519,8 @@ impl Simulation {
                         current_action: String::new(),
                         action_result: String::new(),
                         reasoning: None,
+                        icon_id: agent.personality.icon_id.clone(),
+                        custom_icon_path: agent.personality.custom_icon_path.clone(),
                     };
 
                     let delta = Delta::AgentStateChanged {

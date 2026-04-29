@@ -4,16 +4,27 @@ extends Node
 
 var selected_agent_id: String = ""
 var _map_bounds_set: bool = false  # 标记是否已设置地图边界
+var _config_checked: bool = false  # 标记是否已检测配置
+
+# Settings panel 引用
+var settings_panel: Control
 
 @onready var tick_label: Label = $UI/TopBar/TickCounter
 @onready var agent_count_label: Label = $UI/TopBar/AgentCount
 @onready var speed_control: OptionButton = $UI/TopBar/SpeedControl
 @onready var p2p_toggle_btn: MenuButton = $UI/TopBar/P2PBtnWrapper/P2PToggleBtn
 @onready var p2p_popup: PanelContainer = $UI/P2PPopup
+@onready var settings_btn: Button = $UI/TopBar/SettingsBtn
 
 
 func _ready() -> void:
 	print("[Main] 主场景初始化")
+
+	# ===== 首先检测用户配置 =====
+	_check_user_config()
+
+	# 获取 settings_panel 引用
+	settings_panel = $UI/SettingsPanel
 
 	# 连接 SimulationBridge 信号到 StateManager（统一状态分发）
 	var bridge = BridgeAccessor.get_bridge()
@@ -39,7 +50,47 @@ func _ready() -> void:
 	# 初始化 P2P 面板
 	_setup_p2p()
 
+	# 初始化设置面板
+	_setup_settings()
+
 	print("[Main] 主场景就绪")
+
+
+func _check_user_config() -> void:
+	# 检测用户配置文件是否存在
+	var bridge = BridgeAccessor.get_bridge()
+	if not bridge:
+		printerr("[Main] 无法检测配置：Bridge 未就绪")
+		return
+
+	# 检测是否有用户配置
+	if bridge.has_method("has_user_config"):
+		var has_config = bridge.has_user_config()
+		print("[Main] 用户配置检测结果: %s" % has_config)
+
+		if not has_config:
+			# 无配置，切换到引导页面（使用延迟调用避免节点忙）
+			print("[Main] 未找到用户配置，切换到引导页面")
+			get_tree().change_scene_to_file.call_deferred("res://scenes/setup_wizard.tscn")
+			return
+	else:
+		print("[Main] Bridge 没有 has_user_config 方法，跳过检测")
+
+	# 有配置，加载配置（配置已自动应用到 Simulation）
+	_load_user_config()
+
+
+func _load_user_config() -> void:
+	# 加载并显示用户配置信息
+	var bridge = BridgeAccessor.get_bridge()
+	if not bridge or not bridge.has_method("get_user_config"):
+		return
+
+	var config = bridge.get_user_config()
+	print("[Main] 用户配置已加载: agent_name=%s, p2p_mode=%s" % [
+		config.get("agent_name", "未知"),
+		config.get("p2p_mode", "single")
+	])
 
 
 func _setup_speed_control() -> void:
@@ -79,6 +130,16 @@ func _setup_p2p() -> void:
 		p2p_toggle_btn.add_theme_color_override("font_disabled_color", Color(0.9, 0.9, 0.9, 1.0))
 
 
+func _setup_settings() -> void:
+	if settings_btn:
+		# 应用共享样式
+		SharedUIScripts.apply_button_style(settings_btn)
+		settings_btn.pressed.connect(_on_settings_pressed)
+
+	if settings_panel:
+		settings_panel.hide()
+
+
 func _on_p2p_menu_pressed(id: int) -> void:
 	p2p_popup.visible = !p2p_popup.visible
 	p2p_toggle_btn.text = "P2P ▾" if not p2p_popup.visible else "P2P ▴"
@@ -86,6 +147,28 @@ func _on_p2p_menu_pressed(id: int) -> void:
 
 func _on_p2p_closed() -> void:
 	p2p_toggle_btn.text = "P2P ▾"
+
+
+func _on_settings_pressed() -> void:
+	_toggle_settings_panel()
+
+
+func _toggle_settings_panel() -> void:
+	if settings_panel:
+		if settings_panel.visible:
+			settings_panel.hide()
+		else:
+			settings_panel.show()
+			# 触发配置加载
+			if settings_panel.has_method("load_config"):
+				settings_panel.load_config()
+
+
+func _input(event: InputEvent) -> void:
+	if event is InputEventKey:
+		if event.keycode == KEY_ESCAPE and event.pressed:
+			_toggle_settings_panel()
+			get_viewport().set_input_as_handled()
 
 
 func _on_speed_changed(index: int) -> void:

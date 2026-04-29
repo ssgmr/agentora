@@ -228,7 +228,9 @@ func _on_agent_delta(delta: Dictionary) -> void:
 				"reasoning": delta.get("reasoning", ""),
 				"inventory_summary": delta.get("inventory_summary", {}),
 				"change_hint": change_hint,
-				"source_peer_id": delta.get("source_peer_id", "")
+				"source_peer_id": delta.get("source_peer_id", ""),
+					"icon_id": delta.get("icon_id", "default"),
+					"custom_icon_path": delta.get("custom_icon_path", "")
 			}
 			_agents[agent_id] = agent_data
 			agent_changed.emit(agent_id, agent_data)

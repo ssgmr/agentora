@@ -10,6 +10,7 @@
 [ext_resource type="Script" path="res://scripts/channel_selector.gd" id="channel_selector"]
 [ext_resource type="Script" path="res://scripts/agent_filter.gd" id="agent_filter"]
 [ext_resource type="PackedScene" path="res://scenes/p2p_panel.tscn" id="p2p_panel"]
+[ext_resource type="PackedScene" path="res://scenes/settings_panel.tscn" id="settings_panel"]
 
 [sub_resource type="StyleBoxFlat" id="P2PBtnStyle"]
 bg_color = Color(0.1, 0.12, 0.1, 1.0)
@@ -64,6 +65,11 @@ anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 flat = true
+
+[node name="SettingsBtn" type="Button" parent="UI/TopBar"]
+layout_mode = 2
+text = "⚙"
+custom_minimum_size = Vector2(50, 36)
 
 [node name="RightPanel" type="VBoxContainer" parent="UI"]
 layout_mode = 2
@@ -180,3 +186,7 @@ size_flags_horizontal = 3
 [node name="PeersList" parent="UI/P2PPopup/VBox"]
 layout_mode = 2
 size_flags_horizontal = 3
+
+[node name="SettingsPanel" parent="UI" instance=ExtResource("settings_panel")]
+layout_mode = 2
+visible = false

@@ -93,6 +93,8 @@ fn test_agent_delta_for_broadcast() {
         current_action: "gathering".to_string(),
         action_result: "success".to_string(),
         reasoning: Some("需要食物".to_string()),
+        icon_id: None,
+        custom_icon_path: None,
     };
 
     let delta = Delta::AgentStateChanged {
@@ -137,6 +139,8 @@ fn test_delta_dispatcher_centralized() {
         current_action: "waiting".to_string(),
         action_result: "".to_string(),
         reasoning: None,
+        icon_id: None,
+        custom_icon_path: None,
     };
 
     let delta = Delta::AgentStateChanged {
@@ -162,7 +166,6 @@ fn test_sim_mode() {
 
     // 验证 P2P 模式
     let p2p = SimMode::P2P {
-        local_agent_ids: vec!["agent-001".to_string()],
         region_size: 32,
     };
     assert!(matches!(p2p, SimMode::P2P { .. }));
@@ -212,6 +215,8 @@ fn test_delta_envelope() {
         current_action: "waiting".to_string(),
         action_result: "".to_string(),
         reasoning: None,
+        icon_id: None,
+        custom_icon_path: None,
     };
 
     let delta = Delta::AgentStateChanged {
@@ -258,6 +263,8 @@ fn test_shadow_agent() {
         current_action: "moving".to_string(),
         action_result: "".to_string(),
         reasoning: None,
+        icon_id: None,
+        custom_icon_path: None,
     };
 
     // 从 AgentState 创建影子
@@ -284,6 +291,8 @@ fn test_shadow_agent() {
         current_action: "".to_string(),
         action_result: "".to_string(),
         reasoning: None,
+        icon_id: None,
+        custom_icon_path: None,
     };
     let death_delta = Delta::AgentStateChanged {
         agent_id: "agent-001".to_string(),

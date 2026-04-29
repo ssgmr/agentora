@@ -2,7 +2,51 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use crate::types::PersonalityTemplate;
+use crate::types::{PersonalityTemplate, PersonalitySeed};
+
+/// 玩家 Agent 配置（引导页面注入）
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PlayerAgentConfig {
+    /// Agent 名字
+    pub name: String,
+
+    /// 自定义系统提示词
+    #[serde(default)]
+    pub custom_prompt: String,
+
+    /// 预设图标 ID
+    #[serde(default)]
+    pub icon_id: String,
+
+    /// 自定义图标文件路径
+    #[serde(default)]
+    pub custom_icon_path: String,
+}
+
+impl PlayerAgentConfig {
+    /// 转换为 PersonalitySeed 扩展字段
+    pub fn to_personality_extensions(&self) -> (Option<String>, Option<String>, Option<String>) {
+        let custom_prompt = if self.custom_prompt.is_empty() {
+            None
+        } else {
+            Some(self.custom_prompt.clone())
+        };
+
+        let icon_id = if self.icon_id.is_empty() || self.icon_id == "default" {
+            None
+        } else {
+            Some(self.icon_id.clone())
+        };
+
+        let custom_icon_path = if self.custom_icon_path.is_empty() {
+            None
+        } else {
+            Some(self.custom_icon_path.clone())
+        };
+
+        (custom_prompt, icon_id, custom_icon_path)
+    }
+}
 
 /// WorldSeed.toml配置结构
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,6 +93,10 @@ pub struct WorldSeed {
     /// P2P 模式下跳过初始 Agent 生成（Agent 将在 Simulation.start() 中动态创建）
     #[serde(default)]
     pub skip_initial_agents: bool,
+
+    /// 玩家 Agent 配置（引导页面注入）
+    #[serde(default)]
+    pub player_agent_config: Option<PlayerAgentConfig>,
 }
 
 impl Default for WorldSeed {
@@ -72,6 +120,7 @@ impl Default for WorldSeed {
             agent_personalities: AgentPersonalities::default(),
             agent_name_prefix: String::new(), // 默认无前缀
             skip_initial_agents: false, // 默认生成初始 Agent
+            player_agent_config: None, // 默认无玩家配置
         }
     }
 }
@@ -89,6 +138,59 @@ impl WorldSeed {
         let content = toml::to_string_pretty(self)?;
         std::fs::write(path, content)?;
         Ok(())
+    }
+
+    /// 合并用户配置（引导页面注入）
+    ///
+    /// 将 UserConfig 的 agent 和 p2p 配置合并到 WorldSeed
+    pub fn merge_user_config(
+        &mut self,
+        agent_name: String,
+        custom_prompt: String,
+        icon_id: String,
+        custom_icon_path: String,
+        p2p_mode: String,
+        seed_address: String,
+    ) {
+        // 合并 Agent 配置
+        self.player_agent_config = Some(PlayerAgentConfig {
+            name: agent_name,
+            custom_prompt,
+            icon_id,
+            custom_icon_path,
+        });
+
+        // 合并 P2P 配置
+        if p2p_mode == "join" && !seed_address.is_empty() {
+            // 加入模式：添加种子节点地址
+            if !self.seed_peers.contains(&seed_address) {
+                self.seed_peers.push(seed_address);
+            }
+        }
+    }
+
+    /// 应用玩家配置到 PersonalitySeed
+    pub fn apply_player_config(&self, personality: &mut PersonalitySeed, agent_name: &mut String) {
+        if let Some(config) = &self.player_agent_config {
+            // 应用自定义提示词
+            if !config.custom_prompt.is_empty() {
+                personality.custom_prompt = Some(config.custom_prompt.clone());
+            }
+
+            // 应用图标
+            if !config.icon_id.is_empty() && config.icon_id != "default" {
+                personality.icon_id = Some(config.icon_id.clone());
+            }
+
+            if !config.custom_icon_path.is_empty() {
+                personality.custom_icon_path = Some(config.custom_icon_path.clone());
+            }
+
+            // 应用名字
+            if !config.name.is_empty() {
+                *agent_name = config.name.clone();
+            }
+        }
     }
 }
 
