@@ -62,26 +62,18 @@ pub fn get_available_models() -> Vec<ModelEntry> {
             name: "Qwen3.5-2B-Q4_K_M".to_string(),
             filename: "Qwen3.5-2B-Q4_K_M.gguf".to_string(),
             size_mb: 1500,
-            description: "首token <100ms，推荐移动端".to_string(),
+            description: "Qwen3.5 2B Q4量化".to_string(),
             primary_url: "https://modelscope.cn/models/unsloth/Qwen3.5-2B-GGUF/resolve/master/Qwen3.5-2B-Q4_K_M.gguf".to_string(),
             fallback_url: "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/main/Qwen3.5-2B-Q4_K_M.gguf".to_string(),
         },
         ModelEntry {
-            name: "Gemma-4-2B-Q4_K_M".to_string(),
-            filename: "gemma-4-2b-it-Q4_K_M.gguf".to_string(),
+            name: "gemma-4-E2B-it-Q4".to_string(),
+            filename: "gemma-4-E2B-it-Q4_K_M.gguf".to_string(),
             size_mb: 1400,
-            description: "Google Gemma 4 2B，轻量级".to_string(),
-            primary_url: "https://modelscope.cn/models/AI-ModelScope/gemma-4-2b-it-GGUF/resolve/master/gemma-4-2b-it-Q4_K_M.gguf".to_string(),
-            fallback_url: "https://huggingface.co/AI-ModelScope/gemma-4-2b-it-GGUF/resolve/main/gemma-4-2b-it-Q4_K_M.gguf".to_string(),
-        },
-        ModelEntry {
-            name: "Qwen3.5-4B-Q4_K_M".to_string(),
-            filename: "Qwen3.5-4B-Q4_K_M.gguf".to_string(),
-            size_mb: 2400,
-            description: "更大容量，复杂决策更好".to_string(),
-            primary_url: "https://modelscope.cn/models/unsloth/Qwen3.5-4B-GGUF/resolve/master/Qwen3.5-4B-Q4_K_M.gguf".to_string(),
-            fallback_url: "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf".to_string(),
-        },
+            description: "Google Gemma 4 2B Q4量化".to_string(),
+            primary_url: "https://modelscope.cn/models/lmstudio-community/gemma-4-E2B-it-GGUF/resolve/master/gemma-4-E2B-it-Q4_K_M.gguf".to_string(),
+            fallback_url: "https://huggingface.co/lmstudio-community/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it-Q4_K_M.gguf".to_string(),
+        }
     ]
 }
 
