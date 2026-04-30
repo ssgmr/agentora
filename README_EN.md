@@ -33,7 +33,7 @@ agentora/
 │   ├── sync/      # CRDT sync: LWW, G-Counter, OR-Set, signatures, Merkle
 │   └── bridge/    # Godot GDExtension: SimulationBridge, WorldSnapshot serialization
 ├── client/        # Godot 4 client: TileMap rendering, Agent sprites, narrative feed
-├── config/        # Config files: llm.toml, sim.toml, log.toml
+├── config/        # Config files: user_config.toml (user config), sim.toml, log.toml
 ├── worldseeds/    # World seed configurations
 └── tests/         # Unit tests + integration tests
 ```
@@ -71,29 +71,32 @@ godot --path client
 
 ## 🤖 LLM Configuration
 
-Edit `config/llm.toml`:
+On first launch, the setup panel guides configuration and generates `config/user_config.toml`:
 
 ```toml
-[primary]
-provider = "openai"
-api_base = "http://localhost:1234"
-model = "qwen3.5-4b@q4_k_m"
+[llm]
+mode = "local"           # local / remote / rule_only
+provider_type = "openai" # openai / anthropic (remote mode)
+api_endpoint = ""        # Remote API address (remote mode)
+api_token = ""           # API Token (remote mode)
+model_name = ""          # Model name (remote mode)
+local_model_path = ""    # Local model path (local mode)
 
-[anthropic_compat]
-provider = "anthropic"
-api_base = "http://localhost:1234"
-model = "gemma-4-e2b-it"
+[agent]
+name = "Wanderer"        # Agent name
+custom_prompt = ""       # Custom system prompt
+icon_id = "default"      # Preset icon ID
+custom_icon_path = ""    # Custom icon path
 
-[decision]
-max_tokens = 1024
-temperature = 0.7
-prompt_max_tokens = 6000
+[p2p]
+mode = "single"          # single / create / join
+seed_address = ""        # Seed node address (join mode)
 ```
 
-Supported providers:
-- **OpenAI Compatible** — LM Studio, local OpenAI-compatible API services
-- **Anthropic Compatible** — Anthropic-compatible endpoint (fallback)
-- **Local Inference** — llama-cpp-2 (requires `local-inference` feature)
+Three LLM modes supported:
+- **local** — Local model inference (download GGUF models to `client/models/`)
+- **remote** — OpenAI/Anthropic compatible API (LM Studio, llama.cpp, etc.)
+- **rule_only** — Pure rule engine decisions (no LLM, for testing)
 
 ---
 

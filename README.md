@@ -33,7 +33,7 @@ agentora/
 │   ├── sync/      # CRDT同步：LWW、G-Counter、OR-Set、签名、Merkle
 │   └── bridge/    # Godot GDExtension：SimulationBridge、WorldSnapshot序列化
 ├── client/        # Godot 4客户端：TileMap渲染、Agent Sprite、叙事流面板
-├── config/        # 配置文件：llm.toml, sim.toml, log.toml
+├── config/        # 配置文件：user_config.toml（用户配置）、sim.toml、log.toml
 ├── worldseeds/    # 世界种子配置
 └── tests/         # 单元测试 + 集成测试
 ```
@@ -71,29 +71,32 @@ godot --path client
 
 ## 🤖 LLM 配置
 
-编辑 `config/llm.toml`：
+首次启动时，引导页面会引导配置，生成 `config/user_config.toml`：
 
 ```toml
-[primary]
-provider = "openai"
-api_base = "http://localhost:1234"
-model = "qwen3.5-4b@q4_k_m"
+[llm]
+mode = "local"           # local / remote / rule_only
+provider_type = "openai" # openai / anthropic（remote 模式）
+api_endpoint = ""        # 远程 API 地址（remote 模式）
+api_token = ""           # API Token（remote 模式）
+model_name = ""          # 模型名称（remote 模式）
+local_model_path = ""    # 本地模型路径（local 模式）
 
-[anthropic_compat]
-provider = "anthropic"
-api_base = "http://localhost:1234"
-model = "gemma-4-e2b-it"
+[agent]
+name = "智行者"           # Agent 名字
+custom_prompt = ""       # 自定义系统提示词
+icon_id = "default"      # 预设图标 ID
+custom_icon_path = ""    # 自定义图标路径
 
-[decision]
-max_tokens = 1024
-temperature = 0.7
-prompt_max_tokens = 6000
+[p2p]
+mode = "single"          # single / create / join
+seed_address = ""        # 种子节点地址（join 模式）
 ```
 
-支持两种接入方式：
-- **OpenAI Compatible** — LM Studio、本地OpenAI兼容API服务
-- **Anthropic Compatible** — Anthropic兼容端点（备用）
-- **本地推理** — llama-cpp-2（需启用 `local-inference` feature）
+支持三种 LLM 模式：
+- **local** — 本地模型推理（需下载 GGUF 模型到 `client/models/`）
+- **remote** — OpenAI/Anthropic 兼容 API 服务（LM Studio、llama.cpp 等）
+- **rule_only** — 纯规则引擎决策（无 LLM，用于测试）
 
 ---
 
