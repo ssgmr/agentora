@@ -218,3 +218,12 @@ __marimo__/
 /client/models/
 /client/bin/ggml-*.dll
 /client/bin/*.dll
+
+# 临时文件
+/.nodes/
+/client/logs/
+/client/bin/llama-cli.exe
+/client/bin/*.dylib
+创建
+复制配置
+*.log.*
