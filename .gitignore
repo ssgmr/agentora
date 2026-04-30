@@ -216,3 +216,5 @@ __marimo__/
 /logs/
 屏幕截图 2026-04-23 185505.png
 /client/models/
+/client/bin/ggml-*.dll
+/client/bin/*.dll
