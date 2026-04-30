@@ -6,14 +6,16 @@ use crate::types::{LlmRequest, LlmResponse, LlmError};
 
 /// Anthropic Claude API Provider
 pub struct AnthropicProvider {
+    api_base: String,
     api_key: String,
     model: String,
     timeout_seconds: u32,
 }
 
 impl AnthropicProvider {
-    pub fn new(api_key: String, model: String) -> Self {
+    pub fn new(api_base: String, api_key: String, model: String) -> Self {
         Self {
+            api_base,
             api_key,
             model,
             timeout_seconds: 10,
@@ -52,7 +54,7 @@ impl LlmProvider for AnthropicProvider {
             }
 
             let response = client
-                .post("https://api.anthropic.com/v1/messages")
+                .post(format!("{}/v1/messages", self.api_base))
                 .header("x-api-key", &self.api_key)
                 .header("anthropic-version", "2023-06-01")
                 .header("Content-Type", "application/json")
@@ -104,6 +106,6 @@ impl LlmProvider for AnthropicProvider {
     }
 
     fn is_available(&self) -> bool {
-        !self.api_key.is_empty()
+        !self.api_base.is_empty() && !self.api_key.is_empty()
     }
 }

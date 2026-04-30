@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use agentora_core::simulation::Delta;
 use agentora_core::snapshot::NarrativeEvent;
 use agentora_core::WorldSnapshot;
-use agentora_ai::{load_llm_config, OpenAiProvider, FallbackChain, LlmProvider, get_available_models};
+use agentora_ai::{load_llm_config, get_available_models, LlmConfig};
 
 // 本地推理 GPU 后端（feature 门控）
 #[cfg(feature = "local-inference")]
@@ -18,8 +18,42 @@ use agentora_ai::{detect_best_backend, GpuBackend};
 
 use crate::logging::init_logging;
 use crate::conversion::{delta_to_dict, snapshot_to_dict};
+
+/// 解析配置文件路径：优先当前工作目录相对路径，再 fallback 到 exe 所在目录
+fn resolve_config_path(relative_path: &str) -> String {
+    let cwd_path = std::path::Path::new(relative_path);
+    if cwd_path.exists() {
+        return relative_path.to_string();
+    }
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let exe_relative = exe_dir.join(relative_path);
+            if exe_relative.exists() {
+                return exe_relative.to_string_lossy().to_string();
+            }
+        }
+    }
+    relative_path.to_string()
+}
 use crate::simulation_runner::{run_simulation_with_api_and_user_config};
 use crate::user_config::UserConfig;
+
+/// 加载 llm.toml 配置供 simulation_runner 使用
+fn load_llm_config_for_simulation() -> LlmConfig {
+    const FALLBACK_LLM_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/llm.toml");
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let runtime_path = exe_dir.join("config/llm.toml");
+            if runtime_path.exists() {
+                return load_llm_config(&runtime_path)
+                    .ok()
+                    .or_else(|| load_llm_config(FALLBACK_LLM_PATH).ok())
+                    .unwrap_or_default();
+            }
+        }
+    }
+    load_llm_config(FALLBACK_LLM_PATH).unwrap_or_default()
+}
 
 /// P2P 事件（从 Simulation 线程发送到 Bridge 主线程）
 #[derive(Debug, Clone)]
@@ -110,7 +144,7 @@ pub struct SimulationBridge {
     load_event_sender: Option<Sender<LoadEvent>>,
     /// 缓存 peer_id（P2P 模式下设置）
     cached_peer_id: String,
-    /// 配置文件路径（默认 ../config/sim.toml）
+    /// 配置文件路径（默认 config/sim.toml）
     #[var]
     config_path: GString,
     current_tick: i64,
@@ -146,13 +180,13 @@ impl INode for SimulationBridge {
             load_event_receiver: Some(load_rx),
             load_event_sender: Some(load_tx),
             cached_peer_id: String::new(),
-            config_path: GString::from("../config/sim.toml"),
+            config_path: GString::from("config/sim.toml"),
             current_tick: 0,
             is_paused: false,
             is_running: false,
             last_snapshot: None,
             selected_agent_id: GString::new(),
-            user_config_dir: PathBuf::from("../config"),
+            user_config_dir: PathBuf::from(resolve_config_path("config")),
             current_user_config: None,
         }
     }
@@ -160,8 +194,22 @@ impl INode for SimulationBridge {
     fn ready(&mut self) {
         init_logging();
         tracing::info!("SimulationBridge: 初始化完成");
-        godot::global::print(&[Variant::from("SimulationBridge: 初始化完成")]);
-        self.start_simulation();
+
+        // 检查是否已有用户配置，有则自动启动模拟
+        let exists = UserConfig::exists(&self.user_config_dir);
+
+        if exists {
+            tracing::info!("SimulationBridge: 检测到已有配置，自动启动模拟");
+            let config_path = UserConfig::get_config_path(&self.user_config_dir);
+            if let Ok(config) = UserConfig::load(&config_path) {
+                self.current_user_config = Some(config.clone());
+                self.start_simulation_with_config(config);
+            } else {
+                tracing::warn!("SimulationBridge: 配置加载失败，等待用户重新配置");
+            }
+        } else {
+            tracing::info!("SimulationBridge: 等待用户配置...");
+        }
     }
 
     fn physics_process(&mut self, _delta: f64) {
@@ -375,7 +423,7 @@ impl SimulationBridge {
 
     /// 获取用户配置
     #[func]
-    fn get_user_config(&mut self) -> Dictionary<GString, Variant> {
+    fn get_user_config(&mut self) -> Dictionary<Variant, Variant> {
         let config_path = UserConfig::get_config_path(&self.user_config_dir);
 
         // 如果已有缓存，直接返回
@@ -397,7 +445,7 @@ impl SimulationBridge {
 
     /// 设置用户配置
     #[func]
-    fn set_user_config(&mut self, config_dict: Dictionary<GString, Variant>) -> bool {
+    fn set_user_config(&mut self, config_dict: Dictionary<Variant, Variant>) -> bool {
         let config = self.dict_to_user_config(&config_dict);
 
         // 验证配置
@@ -413,8 +461,11 @@ impl SimulationBridge {
             return false;
         }
 
-        self.current_user_config = Some(config);
+        self.current_user_config = Some(config.clone());
         godot::global::print(&[Variant::from("用户配置已保存")]);
+
+        // 保存后启动模拟
+        self.start_simulation_with_config(config);
         true
     }
 
@@ -433,6 +484,45 @@ impl SimulationBridge {
             dict.set("primary_url", &model.primary_url.to_variant());
             dict.set("fallback_url", &model.fallback_url.to_variant());
             arr.push(&dict.to_variant());
+        }
+
+        arr
+    }
+
+    /// 获取已下载的模型列表
+    /// 返回值：Array<Dictionary>，每个字典含 name, path, size_mb
+    #[func]
+    fn get_downloaded_models(&self) -> Array<Variant> {
+        let models_dir = PathBuf::from("models");
+        let mut arr: Array<Variant> = Array::new();
+
+        if !models_dir.exists() {
+            return arr;
+        }
+
+        // 扫描所有 .gguf 文件
+        if let Ok(entries) = std::fs::read_dir(&models_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) == Some("gguf") {
+                    let file_name = path.file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("unknown")
+                        .to_string();
+
+                    let size_mb = if let Ok(metadata) = path.metadata() {
+                        metadata.len() as f64 / 1_048_576.0
+                    } else {
+                        0.0
+                    };
+
+                    let mut dict: Dictionary<GString, Variant> = Dictionary::new();
+                    dict.set("name", &file_name.to_variant());
+                    dict.set("path", &path.to_string_lossy().to_string().to_variant());
+                    dict.set("size_mb", &Variant::from(size_mb));
+                    arr.push(&dict.to_variant());
+                }
+            }
         }
 
         arr
@@ -562,11 +652,12 @@ impl SimulationBridge {
     // ===== 辅助方法 =====
 
     /// UserConfig 转换为 Godot Dictionary（扁平结构，与 dict_to_user_config 对应）
-    fn user_config_to_dict(&self, config: &UserConfig) -> Dictionary<GString, Variant> {
-        let mut dict: Dictionary<GString, Variant> = Dictionary::new();
+    fn user_config_to_dict(&self, config: &UserConfig) -> Dictionary<Variant, Variant> {
+        let mut dict: Dictionary<Variant, Variant> = Dictionary::new();
 
         // LLM 配置（扁平结构）
         dict.set("llm_mode", &config.llm.mode.to_variant());
+        dict.set("llm_provider_type", &config.llm.provider_type.to_variant());
         dict.set("llm_api_endpoint", &config.llm.api_endpoint.to_variant());
         dict.set("llm_api_token", &config.llm.api_token.to_variant());
         dict.set("llm_model_name", &config.llm.model_name.to_variant());
@@ -586,12 +677,13 @@ impl SimulationBridge {
     }
 
     /// Godot Dictionary 转换为 UserConfig
-    fn dict_to_user_config(&self, dict: &Dictionary<GString, Variant>) -> UserConfig {
+    fn dict_to_user_config(&self, dict: &Dictionary<Variant, Variant>) -> UserConfig {
         use crate::user_config::{LlmUserConfig, AgentUserConfig, P2PUserConfig};
 
         // 默认值
         let mut llm = LlmUserConfig {
             mode: "rule_only".to_string(),
+            provider_type: "openai".to_string(),
             api_endpoint: String::new(),
             api_token: String::new(),
             model_name: String::new(),
@@ -612,6 +704,7 @@ impl SimulationBridge {
 
         // 解析 LLM 配置（扁平结构）
         if let Some(v) = dict.get("llm_mode") { llm.mode = v.to_string(); }
+        if let Some(v) = dict.get("llm_provider_type") { llm.provider_type = v.to_string(); }
         if let Some(v) = dict.get("llm_api_endpoint") { llm.api_endpoint = v.to_string(); }
         if let Some(v) = dict.get("llm_api_token") { llm.api_token = v.to_string(); }
         if let Some(v) = dict.get("llm_model_name") { llm.model_name = v.to_string(); }
@@ -655,24 +748,64 @@ impl SimulationBridge {
         self.is_paused = false;
 
         // 加载 UserConfig（如果存在）
-        let user_config_path = UserConfig::get_config_path(PathBuf::from("../config").as_path());
-        let loaded_config = UserConfig::load(&user_config_path).ok();
-        if loaded_config.is_some() {
+        let user_config_path = UserConfig::get_config_path(&PathBuf::from(resolve_config_path("config")));
+        let user_config = UserConfig::load(&user_config_path).ok();
+        if user_config.is_some() {
             tracing::info!("[Bridge] UserConfig 加载成功: {}", user_config_path.display());
         } else {
             tracing::info!("[Bridge] 无 UserConfig，使用默认配置");
         }
 
-        // 根据 UserConfig 创建 LLM Provider（传递 load_event_sender）
-        let load_sender = self.load_event_sender.clone();
-        let (llm_provider, llm_config) = Self::create_llm_provider(loaded_config.clone(), load_sender);
+        // 加载 llm.toml 配置（decision/memory 参数 + Provider 默认值）
+        let llm_config = load_llm_config_for_simulation();
+
         let config_path = self.config_path.to_string();
 
-        // 使用 simulation_runner 模块运行模拟
+        // 使用 simulation_runner 模块运行模拟（Provider 创建在其中统一处理）
         std::thread::spawn(move || {
             run_simulation_with_api_and_user_config(
                 snapshot_tx, delta_tx, narrative_tx, cmd_rx, p2p_event_tx,
-                llm_provider, llm_config, config_path, loaded_config
+                None, llm_config, config_path, user_config
+            );
+        });
+
+        godot::global::print(&[Variant::from("SimulationBridge: 模拟已启动（事件驱动模式）")]);
+    }
+
+    /// 使用已保存的配置启动模拟（内部方法，供 set_user_config 调用）
+    fn start_simulation_with_config(&mut self, config: UserConfig) {
+        if self.is_running {
+            godot::global::print(&[Variant::from("SimulationBridge: 模拟已在运行")]);
+            return;
+        }
+        godot::global::print(&[Variant::from(format!(
+            "SimulationBridge: 启动模拟 [config={}]", self.config_path
+        ))]);
+
+        let (snapshot_tx, snapshot_rx) = mpsc::channel::<WorldSnapshot>();
+        let (delta_tx, delta_rx) = mpsc::channel::<Delta>();
+        let (narrative_tx, narrative_rx) = mpsc::channel::<NarrativeEvent>();
+        let (cmd_tx, cmd_rx) = mpsc::channel::<SimCommand>();
+        let (p2p_event_tx, p2p_event_rx) = mpsc::channel::<P2PEvent>();
+
+        self.snapshot_receiver = Some(snapshot_rx);
+        self.delta_receiver = Some(delta_rx);
+        self.narrative_receiver = Some(narrative_rx);
+        self.p2p_event_receiver = Some(p2p_event_rx);
+        self.command_sender = Some(cmd_tx);
+        self.is_running = true;
+        self.is_paused = false;
+
+        // 加载 llm.toml 配置（decision/memory 参数 + Provider 默认值）
+        let llm_config = load_llm_config_for_simulation();
+
+        let config_path = self.config_path.to_string();
+
+        // 使用 simulation_runner 模块运行模拟（Provider 创建在其中统一处理）
+        std::thread::spawn(move || {
+            run_simulation_with_api_and_user_config(
+                snapshot_tx, delta_tx, narrative_tx, cmd_rx, p2p_event_tx,
+                None, llm_config, config_path, Some(config)
             );
         });
 
@@ -687,194 +820,6 @@ impl SimulationBridge {
     #[func]
     fn pause(&mut self) {
         self.toggle_pause();
-    }
-
-    fn create_llm_provider(
-        user_config: Option<UserConfig>,
-        load_event_sender: Option<Sender<LoadEvent>>,
-    ) -> (Option<Box<dyn LlmProvider>>, agentora_ai::config::LlmConfig) {
-        // 加载默认 LLM 配置
-        let config_path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/llm.toml");
-        let llm_config = load_llm_config(config_path)
-            .unwrap_or_else(|_| agentora_ai::config::LlmConfig::default());
-
-        // 根据 UserConfig 决定 Provider 创建逻辑
-        match &user_config {
-            Some(config) => {
-                match config.llm.mode.as_str() {
-                    // 本地推理模式
-                    "local" => {
-                        #[cfg(feature = "local-inference")]
-                        {
-                            use agentora_ai::{LlamaProvider, GpuBackend, estimate_load_time_ms, LoadPhase};
-                            let model_path = config.llm.local_model_path.clone();
-
-                            // 提取模型名称
-                            let model_name = PathBuf::from(&model_path)
-                                .file_name()
-                                .and_then(|n| n.to_str())
-                                .unwrap_or("unknown")
-                                .to_string();
-
-                            godot::global::print(&[Variant::from(format!(
-                                "SimulationBridge: 本地推理模式，模型路径: {}",
-                                model_path
-                            ))]);
-
-                            // 获取模型文件大小
-                            let model_size_mb = std::fs::metadata(&model_path)
-                                .map(|m| (m.len() / 1_048_576) as u32)
-                                .unwrap_or(1500);
-
-                            // 检测 GPU 后端
-                            let backend = agentora_ai::detect_best_backend();
-
-                            // 发射加载开始事件
-                            if let Some(sender) = &load_event_sender {
-                                let estimated_time = estimate_load_time_ms(model_size_mb, backend);
-                                let _ = sender.send(LoadEvent::Start {
-                                    model_name: model_name.clone(),
-                                    estimated_time_ms,
-                                });
-                            }
-
-                            // 发射进度估算事件（由于同步加载无法获取真实进度）
-                            if let Some(sender) = &load_event_sender {
-                                // 读取阶段 0-30%
-                                let _ = sender.send(LoadEvent::Progress {
-                                    model_name: model_name.clone(),
-                                    phase: LoadPhase::Reading.name().to_string(),
-                                    progress: 15.0,
-                                });
-
-                                // 解析阶段 30-70%
-                                let _ = sender.send(LoadEvent::Progress {
-                                    model_name: model_name.clone(),
-                                    phase: LoadPhase::Parsing.name().to_string(),
-                                    progress: 50.0,
-                                });
-
-                                // GPU 上传阶段 70-100%（仅 GPU 后端）
-                                if backend != GpuBackend::Cpu {
-                                    let _ = sender.send(LoadEvent::Progress {
-                                        model_name: model_name.clone(),
-                                        phase: LoadPhase::GpuUpload.name().to_string(),
-                                        progress: 85.0,
-                                    });
-                                }
-                            }
-
-                            match LlamaProvider::new(model_path) {
-                                Ok(provider) => {
-                                    let backend_name = provider.get_backend().name();
-
-                                    // 发射加载完成事件
-                                    if let Some(sender) = &load_event_sender {
-                                        let memory_mb = model_size_mb + 200; // 估算内存
-                                        let _ = sender.send(LoadEvent::Complete {
-                                            model_name,
-                                            backend: backend_name.to_string(),
-                                            memory_mb,
-                                        });
-                                    }
-
-                                    godot::global::print(&[Variant::from(format!(
-                                        "SimulationBridge: LlamaProvider 创建成功，后端: {}",
-                                        backend_name
-                                    ))]);
-                                    (Some(Box::new(provider)), llm_config)
-                                }
-                                Err(e) => {
-                                    // 发射加载失败事件
-                                    if let Some(sender) = &load_event_sender {
-                                        let _ = sender.send(LoadEvent::Failed {
-                                            model_name,
-                                            error: e.to_string(),
-                                        });
-                                    }
-
-                                    godot::global::print(&[Variant::from(format!(
-                                        "SimulationBridge: LlamaProvider 创建失败: {}，降级到规则引擎",
-                                        e
-                                    ))]);
-                                    (None, llm_config)
-                                }
-                            }
-                        }
-
-                        #[cfg(not(feature = "local-inference"))]
-                        {
-                            godot::global::print(&[Variant::from(
-                                "SimulationBridge: local-inference feature 未启用，降级到规则引擎"
-                            )]);
-                            (None, llm_config)
-                        }
-                    }
-
-                    // 远程 API 模式
-                    "remote" => {
-                        let endpoint = config.llm.api_endpoint.clone();
-                        let token = config.llm.api_token.clone();
-                        let model = config.llm.model_name.clone();
-
-                        godot::global::print(&[Variant::from(format!(
-                            "SimulationBridge: 远程 API 模式，endpoint: {}, model: {}",
-                            endpoint, model
-                        ))]);
-
-                        let openai = OpenAiProvider::new(
-                            endpoint,
-                            token,
-                            model,
-                        ).with_timeout(llm_config.primary.timeout_seconds);
-
-                        let fallback = FallbackChain::new(vec![Box::new(openai)]);
-                        godot::global::print(&[Variant::from("SimulationBridge: 远程 Provider 链已创建")]);
-                        (Some(Box::new(fallback)), llm_config)
-                    }
-
-                    // 规则引擎模式（无 LLM）
-                    "rule_only" => {
-                        godot::global::print(&[Variant::from(
-                            "SimulationBridge: 规则引擎模式，不创建 LLM Provider"
-                        )]);
-                        (None, llm_config)
-                    }
-
-                    // 未知模式，降级到规则引擎
-                    _ => {
-                        godot::global::print(&[Variant::from(format!(
-                            "SimulationBridge: 未知 LLM 模式 '{}'，降级到规则引擎",
-                            config.llm.mode
-                        ))]);
-                        (None, llm_config)
-                    }
-                }
-            }
-
-            // 无 UserConfig，使用默认配置（创建远程 Provider 作为兜底）
-            None => {
-                godot::global::print(&[Variant::from(
-                    "SimulationBridge: 无 UserConfig，使用默认 LLM 配置"
-                )]);
-
-                if !llm_config.primary.api_base.is_empty() {
-                    let openai = OpenAiProvider::new(
-                        llm_config.primary.api_base.clone(),
-                        llm_config.primary.api_key.clone(),
-                        llm_config.primary.model.clone(),
-                    ).with_timeout(llm_config.primary.timeout_seconds);
-
-                    let fallback = FallbackChain::new(vec![Box::new(openai)]);
-                    (Some(Box::new(fallback)), llm_config)
-                } else {
-                    godot::global::print(&[Variant::from(
-                        "SimulationBridge: LLM 配置为空，使用规则引擎兜底"
-                    )]);
-                    (None, llm_config)
-                }
-            }
-        }
     }
 
     #[func]

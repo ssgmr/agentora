@@ -87,6 +87,13 @@ pub enum NetworkMessage {
     AgentDelta(AgentDeltaMessage),
     /// 叙事事件广播（P2P 模式）
     Narrative(NarrativeMessage),
+    /// WorldSeed 同步（种子节点 -> 加入节点）
+    WorldSeedSync {
+        /// WorldSeed 序列化后的 JSON 字符串
+        world_seed_json: String,
+        /// 来源 peer ID
+        source_peer_id: String,
+    },
 }
 
 /// 遗产广播消息

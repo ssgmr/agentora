@@ -1,0 +1,17 @@
+[llm]
+mode = "local"
+provider_type = "openai"
+api_endpoint = ""
+api_token = ""
+model_name = ""
+local_model_path = 'models\Qwen3.5-2B-Q4_K_M.gguf'
+
+[agent]
+name = "智行者"
+custom_prompt = ""
+icon_id = "default"
+custom_icon_path = ""
+
+[p2p]
+mode = "single"
+seed_address = ""

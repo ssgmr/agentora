@@ -106,6 +106,16 @@ size_flags_horizontal = 3
 visible = false
 theme_override_constants/separation = 6
 
+[node name="ProviderTypeLabel" type="Label" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/RemoteConfigContainer"]
+layout_mode = 2
+text = "API 接口类型："
+autowrap_mode = 2
+
+[node name="ProviderTypeSelector" type="OptionButton" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/RemoteConfigContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+item_count = 2
+
 [node name="EndpointLabel" type="Label" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/RemoteConfigContainer"]
 layout_mode = 2
 text = "API Endpoint："
@@ -154,21 +164,14 @@ columns = 2
 theme_override_constants/h_separation = 8
 theme_override_constants/v_separation = 8
 
-[node name="Qwen2BBtn" type="Button" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/LocalModelContainer/ModelsGrid"]
-layout_mode = 2
-text = "Qwen3.5-2B (Q4) (~1.5GB)"
-
-[node name="Qwen4BBtn" type="Button" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/LocalModelContainer/ModelsGrid"]
-layout_mode = 2
-text = "Qwen3.5-4B (Q4) (~2.5GB)"
-
-[node name="Gemma2BBtn" type="Button" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/LocalModelContainer/ModelsGrid"]
-layout_mode = 2
-text = "Gemma-2-2B (Q4) (~1.4GB)"
-
 [node name="LocalFileBtn" type="Button" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/LocalModelContainer/ModelsGrid"]
 layout_mode = 2
 text = "使用已下载模型"
+
+[node name="DownloadedModelSelector" type="OptionButton" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/LocalModelContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+item_count = 1
 
 [node name="DownloadProgressContainer" type="VBoxContainer" parent="PanelContainer/MarginContainer/ScrollContainer/VBox/LocalModelContainer"]
 layout_mode = 2
@@ -342,8 +345,15 @@ toggle_mode = true
 [node name="SeedAddressInput" type="LineEdit" parent="PanelContainer/MarginContainer/ScrollContainer/VBox"]
 layout_mode = 2
 size_flags_horizontal = 3
-placeholder_text = "/ip4/192.168.1.100/tcp/7000/p2p/12D3Koo..."
+placeholder_text = "IPv4: /ip4/192.168.1.100/tcp/7000/p2p/12D3Koo...  或  IPv6: /ip6/2001:db8::1/tcp/7000/p2p/..."
 visible = false
+
+[node name="P2PDescriptionLabel" type="Label" parent="PanelContainer/MarginContainer/ScrollContainer/VBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = ""
+autowrap_mode = 2
+modulate = Color(0.7, 0.7, 0.7, 1)
 
 [node name="Spacer5" type="Control" parent="PanelContainer/MarginContainer/ScrollContainer/VBox"]
 layout_mode = 2

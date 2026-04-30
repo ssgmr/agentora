@@ -9,11 +9,30 @@
 //! - Vulkan: Windows/Linux/Android (跨平台)
 //! - CUDA: Windows/Linux (NVIDIA GPU)
 //! - CPU: 所有平台 (兜底)
+//!
+//! ## 并发安全
+//!
+//! llama-cpp-2 不支持同一个模型的并发推理，因此使用 Mutex 保护。
 
 use crate::provider::LlmProvider;
 use crate::types::{LlmRequest, LlmResponse, LlmError, TokenUsage};
 use async_trait::async_trait;
 use std::path::Path;
+use std::num::NonZeroU32;
+use std::sync::Mutex;
+
+#[cfg(feature = "local-inference")]
+use llama_cpp_2::llama_backend::LlamaBackend;
+#[cfg(feature = "local-inference")]
+use llama_cpp_2::model::{LlamaModel, AddBos};
+#[cfg(feature = "local-inference")]
+use llama_cpp_2::model::params::LlamaModelParams;
+#[cfg(feature = "local-inference")]
+use llama_cpp_2::context::params::LlamaContextParams;
+#[cfg(feature = "local-inference")]
+use llama_cpp_2::llama_batch::LlamaBatch;
+#[cfg(feature = "local-inference")]
+use llama_cpp_2::sampling::LlamaSampler;
 
 /// GPU 后端类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -147,34 +166,46 @@ pub fn detect_best_backend() -> GpuBackend {
     }
 }
 
+/// 检测 DLL 是否存在于指定路径列表
+#[cfg(target_os = "windows")]
+fn find_dll(dll_names: &[&str], search_paths: &[&str]) -> bool {
+    for name in dll_names {
+        for base in search_paths {
+            let path = if base.is_empty() {
+                name.to_string()
+            } else {
+                format!("{}/{}", base, name)
+            };
+            if Path::new(&path).exists() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// 检测 CUDA DLL 是否存在
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 fn cuda_dll_exists() -> bool {
     #[cfg(target_os = "windows")]
     {
-        // Windows: 检测 ggml-cuda.dll
-        // CUDA Runtime (cudart64_*.dll) 由用户自行安装
-        let dll_names = ["ggml-cuda.dll", "llama.dll"];
-        for name in dll_names {
-            // 尝试在当前目录和 bin 目录查找
-            let paths = [
-                name,
-                format!("bin/{}", name),
-                format!("../bin/{}", name),
-            ];
-            for path in &paths {
-                if Path::new(path).exists() {
-                    return true;
-                }
-            }
-        }
-        false
+        // Windows: 只检测 ggml-cuda.dll（CUDA 后端专属）
+        // 不检测 llama.dll，因为它是核心库，不代表任何 GPU 后端
+        let dll_names = ["ggml-cuda.dll"];
+        let search_paths = [
+            "",            // 当前目录
+            "bin",         // bin/
+            "../bin",      // 上级 bin/
+            "../../client/bin", // 项目根 client/bin/（cargo test 场景）
+            "client/bin",  // 从项目根运行
+        ];
+        return find_dll(&dll_names, &search_paths);
     }
 
     #[cfg(target_os = "linux")]
     {
         // Linux: 检测 libggml-cuda.so
-        let dll_names = ["libggml-cuda.so", "libllama.so"];
+        let dll_names = ["libggml-cuda.so"];
         for name in dll_names {
             if Path::new(name).exists() {
                 return true;
@@ -194,28 +225,23 @@ fn cuda_dll_exists() -> bool {
 fn vulkan_dll_exists() -> bool {
     #[cfg(target_os = "windows")]
     {
-        // Windows: 检测 ggml-vulkan.dll
-        // Vulkan-1.dll 由系统提供
-        let dll_names = ["ggml-vulkan.dll", "llama.dll"];
-        for name in dll_names {
-            let paths = [
-                name,
-                format!("bin/{}", name),
-                format!("../bin/{}", name),
-            ];
-            for path in &paths {
-                if Path::new(path).exists() {
-                    return true;
-                }
-            }
-        }
-        false
+        // Windows: 只检测 ggml-vulkan.dll（Vulkan 后端专属）
+        // 不检测 llama.dll，因为它是核心库，不代表任何 GPU 后端
+        let dll_names = ["ggml-vulkan.dll"];
+        let search_paths = [
+            "",            // 当前目录
+            "bin",         // bin/
+            "../bin",      // 上级 bin/
+            "../../client/bin", // 项目根 client/bin/（cargo test 场景）
+            "client/bin",  // 从项目根运行
+        ];
+        return find_dll(&dll_names, &search_paths);
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        // Linux/Android: 检测 libggml-vulkan.so 或 libllama.so
-        let dll_names = ["libggml-vulkan.so", "libllama.so"];
+        // Linux/Android: 只检测 libggml-vulkan.so
+        let dll_names = ["libggml-vulkan.so"];
         for name in dll_names {
             if Path::new(name).exists() {
                 return true;
@@ -235,14 +261,26 @@ fn vulkan_dll_exists() -> bool {
 /// 本地 Llama Provider
 ///
 /// 通过 llama-cpp-2 加载 GGUF 模型进行本地推理。
+/// 使用 Mutex 保护并发推理（llama-cpp-2 不支持同一个模型的并发调用）。
+#[cfg(feature = "local-inference")]
 pub struct LlamaProvider {
     /// 模型文件路径
     model_path: String,
     /// 使用的 GPU 后端
     backend: GpuBackend,
-    /// 是否已加载
-    is_loaded: bool,
+    /// llama.cpp 后端（Mutex 保护）
+    llama_backend: Mutex<Option<LlamaBackend>>,
+    /// 加载的模型（Mutex 保护）
+    model: Mutex<Option<LlamaModel>>,
     /// 加载失败原因
+    load_error: Option<String>,
+}
+
+/// 骨架 Llama Provider（feature 未启用时）
+#[cfg(not(feature = "local-inference"))]
+pub struct LlamaProvider {
+    model_path: String,
+    backend: GpuBackend,
     load_error: Option<String>,
 }
 
@@ -260,7 +298,7 @@ impl LlamaProvider {
         // 当 feature 未启用时，返回错误提示
         #[cfg(not(feature = "local-inference"))]
         {
-            Err(LlmError::ConfigError(
+            Err(LlmError::ProviderUnavailable(
                 "local-inference feature 未启用。请使用 cargo build --features local-inference 编译。".to_string()
             ))
         }
@@ -279,41 +317,59 @@ impl LlamaProvider {
 
         // 1. 检查模型文件是否存在
         if !Path::new(&model_path).exists() {
-            return Err(LlmError::ConfigError(
+            return Err(LlmError::ProviderUnavailable(
                 format!("模型文件不存在: {}", model_path)
             ));
         }
 
-        // 2. 检测 GPU 后端
-        let backend = detect_best_backend();
-        tracing::info!("检测到 GPU 后端: {} (n_gpu_layers={})", backend.name(), backend.n_gpu_layers());
+        // 2. 检测最优 GPU 后端
+        // 注意：需要在编译时启用 cuda/vulkan feature 才能真正使用 GPU
+        // 当前仅用 local-inference feature 时，即使检测到 CUDA DLL，
+        // llama.cpp 库本身不支持 GPU offload，会回退到 CPU
+        let backend = if cfg!(feature = "cuda") || cfg!(feature = "vulkan") {
+            detect_best_backend()
+        } else {
+            GpuBackend::Cpu
+        };
+        let n_gpu_layers = backend.n_gpu_layers();
+        tracing::info!("检测到 GPU 后端: {} (n_gpu_layers={})", backend.name(), n_gpu_layers);
 
-        // 3. TODO: 实现 llama-cpp-2 初始化
-        // 需要:
-        // - 初始化 LlamaBackend
-        // - 配置模型参数（GPU 加速）
-        // - 加载 GGUF 模型
-        //
-        // 当前仅返回骨架结构，实际实现需要编译环境和 libclang
+        // 3. 初始化 llama.cpp 后端
+        let llama_backend = LlamaBackend::init().map_err(|e| {
+            LlmError::ProviderUnavailable(format!("llama.cpp 后端初始化失败: {}", e))
+        })?;
 
-        // 检查内存是否足够（简单估算）
+        // 4. 配置模型参数（GPU 加速）
+        let model_params = LlamaModelParams::default()
+            .with_n_gpu_layers(n_gpu_layers as u32);
+
+        // 5. 加载 GGUF 模型
+        let model = LlamaModel::load_from_file(
+            &llama_backend,
+            Path::new(&model_path),
+            &model_params
+        ).map_err(|e| {
+            LlmError::ProviderUnavailable(format!("模型加载失败: {}", e))
+        })?;
+
         let model_size = std::fs::metadata(&model_path)
             .map(|m| m.len())
             .unwrap_or(0);
-        let estimated_memory = model_size as f64 * 1.2; // 估算内存占用约为文件大小 * 1.2
 
         tracing::info!(
-            "模型文件大小: {:.1} MB, 估算内存占用: {:.1} MB",
-            model_size as f64 / 1_048_576.0,
-            estimated_memory / 1_048_576.0
+            "模型加载成功: {} 参数, {} 层, 词表大小 {}, 文件大小: {:.1} MB",
+            model.n_params(),
+            model.n_layer(),
+            model.n_vocab(),
+            model_size as f64 / 1_048_576.0
         );
 
-        // 当前返回骨架结构，实际初始化需要 llama-cpp-2 编译环境
         Ok(Self {
             model_path,
             backend,
-            is_loaded: false, // 实际加载需要 llama-cpp-2 编译
-            load_error: Some("llama-cpp-2 需要编译环境，当前为骨架实现".to_string()),
+            llama_backend: Mutex::new(Some(llama_backend)),
+            model: Mutex::new(Some(model)),
+            load_error: None,
         })
     }
 
@@ -333,8 +389,9 @@ impl LlamaProvider {
     }
 
     /// 检查是否实际可用（已加载且无错误）
+    #[cfg(feature = "local-inference")]
     pub fn is_really_available(&self) -> bool {
-        self.is_loaded && self.load_error.is_none()
+        self.model.lock().map(|g| g.is_some()).unwrap_or(false) && self.load_error.is_none()
     }
 
     /// 获取加载错误（如果有）
@@ -380,33 +437,129 @@ impl LlmProvider for LlamaProvider {
 #[cfg(feature = "local-inference")]
 impl LlamaProvider {
     /// 内部推理实现（feature 启用时）
+    /// 使用 Mutex 保护并发推理
     fn generate_internal(&self, request: LlmRequest) -> Result<LlmResponse, LlmError> {
-        // TODO: 实现实际的 llama.cpp 推理
-        // 需要:
-        // 1. 创建推理上下文 (LlamaContext)
-        // 2. Tokenize prompt
-        // 3. 创建采样链 (Sampler chain)
-        // 4. 推理生成 tokens
-        // 5. Detokenize 输出
+        // 获取 Mutex 锁，防止并发推理
+        let mut model_guard = self.model.lock()
+            .map_err(|_| LlmError::ProviderUnavailable("无法获取模型锁".to_string()))?;
 
-        tracing::warn!(
-            "LlamaProvider.generate 骨架调用，模型: {}, 后端: {}",
+        let model = model_guard.as_ref()
+            .ok_or_else(|| LlmError::ProviderUnavailable("模型未加载".to_string()))?;
+
+        tracing::info!(
+            "LlamaProvider.generate 开始推理, 模型: {}, 后端: {}, prompt长度: {} chars",
             self.model_path,
-            self.backend.name()
+            self.backend.name(),
+            request.prompt.len()
         );
 
-        // 当前返回占位响应
+        // 获取 backend 锁
+        let backend_guard = self.llama_backend.lock()
+            .map_err(|_| LlmError::ProviderUnavailable("无法获取后端锁".to_string()))?;
+        let llama_backend = backend_guard.as_ref()
+            .ok_or_else(|| LlmError::ProviderUnavailable("后端未初始化".to_string()))?;
+
+        // 1. 创建推理上下文
+        let ctx_params = LlamaContextParams::default()
+            .with_n_ctx(NonZeroU32::new(2048));
+        let mut ctx = model.new_context(
+            llama_backend,
+            ctx_params
+        ).map_err(|e| LlmError::ProviderUnavailable(format!("创建推理上下文失败: {}", e)))?;
+
+        // 2. Tokenize prompt
+        let tokens = model.str_to_token(&request.prompt, AddBos::Always)
+            .map_err(|e| LlmError::ProviderUnavailable(format!("Tokenize失败: {}", e)))?;
+
+        let prompt_token_count = tokens.len();
+        tracing::debug!("Prompt tokenize: {} tokens", prompt_token_count);
+
+        // 3. 创建 batch
+        let max_tokens = request.max_tokens.max(1) as i32;
+        let batch_capacity = (prompt_token_count as i32 + max_tokens) as usize;
+        let mut batch = LlamaBatch::new(batch_capacity, 1);
+
+        // 4. 添加 prompt tokens 到 batch
+        let last_prompt_idx = (prompt_token_count - 1) as i32;
+        for (i, token) in tokens.iter().enumerate() {
+            let is_last = i as i32 == last_prompt_idx;
+            batch.add(*token, i as i32, &[0], is_last)
+                .map_err(|e| LlmError::ProviderUnavailable(format!("添加token到batch失败: {}", e)))?;
+        }
+
+        // 5. 解码 prompt
+        tracing::debug!("开始解码 prompt ({} tokens)...", prompt_token_count);
+        ctx.decode(&mut batch)
+            .map_err(|e| LlmError::ProviderUnavailable(format!("解码prompt失败: {}", e)))?;
+        tracing::debug!("Prompt 解码完成");
+
+        // 6. 创建采样链
+        let temperature = request.temperature;
+        let mut sampler = if temperature > 0.0 {
+            LlamaSampler::chain_simple([
+                LlamaSampler::temp(temperature),
+                LlamaSampler::top_k(40),
+                LlamaSampler::top_p(0.95, 1),
+                LlamaSampler::dist(42),
+            ])
+        } else {
+            LlamaSampler::greedy()
+        };
+
+        // 7. 自回归生成
+        let mut output_tokens = Vec::new();
+        let mut n_cur = batch.n_tokens();
+        let max_gen_tokens = request.max_tokens.max(1) as usize;
+        tracing::debug!("开始自回归生成 (max_tokens={})...", max_gen_tokens);
+
+        for gen_idx in 0..max_gen_tokens {
+            // 采样下一个 token
+            tracing::trace!("采样 token #{}...", gen_idx);
+            let token = sampler.sample(&ctx, batch.n_tokens() - 1);
+
+            // 检查是否为结束 token
+            if model.is_eog_token(token) {
+                break;
+            }
+
+            sampler.accept(token);
+            output_tokens.push(token);
+
+            // 将新 token 添加到 batch
+            batch.clear();
+            batch.add(token, n_cur, &[0], true)
+                .map_err(|e| LlmError::ProviderUnavailable(format!("添加生成token到batch失败: {}", e)))?;
+            n_cur += 1;
+
+            // 解码
+            ctx.decode(&mut batch)
+                .map_err(|e| LlmError::ProviderUnavailable(format!("解码失败: {}", e)))?;
+        }
+
+        // 8. Detokenize 输出
+        let mut decoder = encoding_rs::UTF_8.new_decoder();
+        let mut raw_text = String::new();
+        for token in &output_tokens {
+            let piece = model.token_to_piece(*token, &mut decoder, true, None)
+                .unwrap_or_else(|_| "[?]".to_string());
+            raw_text.push_str(&piece);
+        }
+
+        let completion_token_count = output_tokens.len();
+        tracing::info!(
+            "推理完成: prompt_tokens={}, completion_tokens={}, total_tokens={}",
+            prompt_token_count,
+            completion_token_count,
+            prompt_token_count + completion_token_count
+        );
+
         Ok(LlmResponse {
-            raw_text: format!(
-                "[本地推理骨架 - 模型: {}, 后端: {} - 请安装 libclang 并重新编译以启用实际推理]",
-                self.model_path,
-                self.backend.name()
-            ),
+            raw_text,
             parsed_action: None,
             usage: TokenUsage {
-                prompt_tokens: 0,
-                completion_tokens: 0,
-                total_tokens: 0,
+                prompt_tokens: prompt_token_count as u32,
+                completion_tokens: completion_token_count as u32,
+                total_tokens: (prompt_token_count + completion_token_count) as u32,
             },
             provider_name: "llama_local".to_string(),
         })

@@ -1,8 +1,9 @@
 [llm]
-mode = "rule_only"
-api_endpoint = ""
-api_token = ""
-model_name = ""
+mode = "remote"
+provider_type = "openai"
+api_endpoint = "http://localhost:1234/v1"
+api_token = "dummy"
+model_name = "qwen3.5-4b@q4_k_m"
 local_model_path = ""
 
 [agent]

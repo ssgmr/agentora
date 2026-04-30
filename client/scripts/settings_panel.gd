@@ -13,16 +13,18 @@ var bridge: Node
 
 # 远程配置区
 @onready var remote_config_container: VBoxContainer = $PanelContainer/MarginContainer/ScrollContainer/VBox/RemoteConfigContainer
+@onready var provider_type_selector: OptionButton = $PanelContainer/MarginContainer/ScrollContainer/VBox/RemoteConfigContainer/ProviderTypeSelector
 @onready var endpoint_input: LineEdit = $PanelContainer/MarginContainer/ScrollContainer/VBox/RemoteConfigContainer/EndpointInput
 @onready var token_input: LineEdit = $PanelContainer/MarginContainer/ScrollContainer/VBox/RemoteConfigContainer/TokenInput
 @onready var model_input: LineEdit = $PanelContainer/MarginContainer/ScrollContainer/VBox/RemoteConfigContainer/ModelInput
 
 # 本地模型配置区
 @onready var local_model_container: VBoxContainer = $PanelContainer/MarginContainer/ScrollContainer/VBox/LocalModelContainer
-@onready var qwen2b_btn: Button = $PanelContainer/MarginContainer/ScrollContainer/VBox/LocalModelContainer/ModelsGrid/Qwen2BBtn
-@onready var qwen4b_btn: Button = $PanelContainer/MarginContainer/ScrollContainer/VBox/LocalModelContainer/ModelsGrid/Qwen4BBtn
-@onready var gemma2b_btn: Button = $PanelContainer/MarginContainer/ScrollContainer/VBox/LocalModelContainer/ModelsGrid/Gemma2BBtn
+@onready var models_grid: GridContainer = $PanelContainer/MarginContainer/ScrollContainer/VBox/LocalModelContainer/ModelsGrid
 @onready var local_file_btn: Button = $PanelContainer/MarginContainer/ScrollContainer/VBox/LocalModelContainer/ModelsGrid/LocalFileBtn
+
+# 已下载模型选择器
+@onready var downloaded_model_selector: OptionButton = $PanelContainer/MarginContainer/ScrollContainer/VBox/LocalModelContainer/DownloadedModelSelector
 
 # 下载进度 UI
 @onready var download_progress_container: VBoxContainer = $PanelContainer/MarginContainer/ScrollContainer/VBox/LocalModelContainer/DownloadProgressContainer
@@ -50,6 +52,7 @@ var bridge: Node
 @onready var create_btn: Button = $PanelContainer/MarginContainer/ScrollContainer/VBox/P2PHBox/CreateBtn
 @onready var join_btn: Button = $PanelContainer/MarginContainer/ScrollContainer/VBox/P2PHBox/JoinBtn
 @onready var seed_address_input: LineEdit = $PanelContainer/MarginContainer/ScrollContainer/VBox/SeedAddressInput
+@onready var p2p_description_label: Label = $PanelContainer/MarginContainer/ScrollContainer/VBox/P2PDescriptionLabel
 
 @onready var restart_label: Label = $PanelContainer/MarginContainer/ScrollContainer/VBox/RestartLabel
 @onready var save_btn: Button = $PanelContainer/MarginContainer/ScrollContainer/VBox/BtnHBox/SaveBtn
@@ -57,6 +60,7 @@ var bridge: Node
 
 # === 配置状态 ===
 var current_llm_mode: String = "rule_only"
+var current_provider_type: String = "openai"
 var current_icon_id: String = "default"
 var current_p2p_mode: String = "single"
 var restart_required: bool = false
@@ -66,6 +70,7 @@ var is_forced_mode: bool = false  # 强制模式（首次配置）
 var current_download_model: String = ""  # 当前下载的模型名称
 var is_downloading: bool = false
 var is_loading: bool = false
+var selected_downloaded_model_index: int = -1  # 已下载模型选中索引
 
 # 图标 ID 映射
 var icon_ids: Array = ["default", "wizard", "fox", "dragon", "lion", "robot"]
@@ -75,18 +80,42 @@ func _ready():
 	# 初始化图标按钮数组
 	icon_buttons = [icon_default, icon_wizard, icon_fox, icon_dragon, icon_lion, icon_robot]
 
-	# 获取 Bridge 引用
-	bridge = get_node_or_null("../SimulationBridge")
+	# 获取 Bridge 引用（SettingsPanel 在 Main/UI 下，SimulationBridge 在 Main 下）
+	bridge = get_node_or_null("../../SimulationBridge")
 	if not bridge:
 		var setup = get_tree().root.get_node_or_null("SetupWizard")
 		if setup:
 			bridge = setup.get_node_or_null("SimulationBridge")
+
+	if bridge:
+		print("[SettingsPanel] Bridge 已连接")
+	else:
+		print("[SettingsPanel] 警告: Bridge 未找到，尝试延迟查找...")
+		# 延迟重试
+		await get_tree().create_timer(0.5).timeout
+		bridge = get_node_or_null("../../SimulationBridge")
+		if bridge:
+			print("[SettingsPanel] Bridge 延迟连接成功")
+		else:
+			print("[SettingsPanel] 警告: Bridge 仍然不可用")
+
+	# 初始化 Provider 类型 OptionButton
+	if provider_type_selector:
+		provider_type_selector.clear()
+		provider_type_selector.add_item("OpenAI 兼容")
+		provider_type_selector.add_item("Anthropic")
 
 	# 应用共享样式
 	_apply_styles()
 
 	# 加载图标纹理
 	_load_icon_textures()
+
+	# 动态生成模型下载按钮（从后端）
+	_populate_model_buttons()
+
+	# 加载已下载模型列表
+	_populate_downloaded_models()
 
 	# 连接按钮事件
 	_connect_signals()
@@ -105,9 +134,8 @@ func _apply_styles():
 	SharedUIScripts.apply_input_style(token_input)
 	SharedUIScripts.apply_input_style(model_input)
 
-	# 本地模型按钮
-	for btn in [qwen2b_btn, qwen4b_btn, gemma2b_btn, local_file_btn]:
-		SharedUIScripts.apply_button_style(btn)
+	# 本地模型按钮样式（动态生成的按钮）
+	SharedUIScripts.apply_button_style(local_file_btn)
 
 	# 下载进度 UI
 	SharedUIScripts.apply_button_style(cancel_download_btn, "danger")
@@ -154,20 +182,9 @@ func _connect_signals():
 	remote_btn.pressed.connect(_on_llm_mode_changed.bind("remote"))
 	rule_btn.pressed.connect(_on_llm_mode_changed.bind("rule_only"))
 
-	# 本地模型下载按钮
-	qwen2b_btn.pressed.connect(_on_model_download_requested.bind(
-		"https://www.modelscope.cn/models/unsloth/Qwen3.5-2B-GGUF/resolve/master/Qwen3.5-2B-Q4_K_M.gguf",
-		"Qwen3.5-2B"
-	))
-	qwen4b_btn.pressed.connect(_on_model_download_requested.bind(
-		"https://www.modelscope.cn/models/unsloth/Qwen3.5-4B-GGUF/resolve/master/Qwen3.5-4B-Q4_K_M.gguf",
-		"Qwen3.5-4B"
-	))
-	gemma2b_btn.pressed.connect(_on_model_download_requested.bind(
-		"https://www.modelscope.cn/models/AI-ModelScope/gemma-2-2b-it-GGUF/resolve/master/gemma-2-2b-it-q4_k_m.gguf",
-		"Gemma-2-2B"
-	))
-	local_file_btn.pressed.connect(_on_select_local_model)
+	# 已下载模型选择器
+	if downloaded_model_selector:
+		downloaded_model_selector.item_selected.connect(_on_downloaded_model_selected)
 
 	# 图标按钮
 	for i in range(icon_ids.size()):
@@ -200,12 +217,15 @@ func load_config():
 
 	# LLM 模式
 	current_llm_mode = config.get("llm_mode", "rule_only")
+	current_provider_type = config.get("llm_provider_type", "openai")
 	_update_llm_mode_ui()
 
 	# 远程配置
 	endpoint_input.text = config.get("llm_api_endpoint", "")
 	token_input.text = config.get("llm_api_token", "")
 	model_input.text = config.get("llm_model_name", "")
+	# 恢复 provider_type 选中值
+	_select_provider_type(current_provider_type)
 
 	# Agent 名字
 	agent_name_input.text = config.get("agent_name", "智行者")
@@ -221,6 +241,11 @@ func load_config():
 	current_p2p_mode = config.get("p2p_mode", "single")
 	seed_address_input.text = config.get("p2p_seed_address", "")
 	_update_p2p_mode_ui()
+
+	# 已下载模型选择（如果有）
+	var local_model_path = config.get("llm_local_model_path", "")
+	if not local_model_path.is_empty() and downloaded_model_selector:
+		_select_downloaded_model_by_path(local_model_path)
 
 	# 清除重启提示
 	restart_required = false
@@ -253,7 +278,39 @@ func _update_llm_mode_ui():
 	remote_config_container.visible = (current_llm_mode == "remote")
 	local_model_container.visible = (current_llm_mode == "local")
 
-func _on_model_download_requested(url: String, name: String):
+# ===== 动态模型按钮生成（问题1） =====
+
+func _populate_model_buttons():
+	"""从后端获取可用模型列表，动态生成下载按钮"""
+	if not bridge or not bridge.has_method("get_available_models"):
+		print("[SettingsPanel] Bridge.get_available_models() 不可用，跳过")
+		return
+
+	var models: Array = bridge.get_available_models()
+	print("[SettingsPanel] 获取到 %d 个可用模型" % models.size())
+
+	# 清除旧的动态按钮（保留 LocalFileBtn）
+	for child in models_grid.get_children():
+		if child != local_file_btn:
+			child.queue_free()
+
+	# 动态创建按钮
+	for model_dict in models:
+		var name = model_dict.get("name", "Unknown")
+		var size_mb = model_dict.get("size_mb", 0)
+		var primary_url = model_dict.get("primary_url", "")
+		var fallback_url = model_dict.get("fallback_url", "")
+		var description = model_dict.get("description", "")
+
+		var btn = Button.new()
+		btn.text = "%s (~%dMB)" % [name, size_mb]
+		btn.tooltip_text = description
+		btn.layout_mode = 2
+		SharedUIScripts.apply_button_style(btn)
+		btn.pressed.connect(_on_model_download_requested.bind(primary_url, fallback_url, name))
+		models_grid.add_child(btn)
+
+func _on_model_download_requested(primary_url: String, fallback_url: String, name: String):
 	print("[SettingsPanel] Model download requested: %s" % name)
 
 	# 设置当前下载模型名称
@@ -265,7 +322,7 @@ func _on_model_download_requested(url: String, name: String):
 
 	# 调用 Bridge.download_model()
 	if bridge and bridge.has_method("download_model"):
-		var success = bridge.download_model(name, url, dest_path)
+		var success = bridge.download_model(name, primary_url, dest_path)
 		if success:
 			# 显示进度条容器
 			download_progress_container.visible = true
@@ -277,9 +334,72 @@ func _on_model_download_requested(url: String, name: String):
 	else:
 		_show_message("Bridge.download_model() 方法不可用")
 
-func _on_select_local_model():
-	print("[SettingsPanel] Select local model")
-	_show_message("请手动将模型文件放入 models/ 目录")
+# ===== 已下载模型扫描（问题2） =====
+
+func _populate_downloaded_models():
+	"""从后端获取已下载模型列表，填充 OptionButton"""
+	if not bridge or not bridge.has_method("get_downloaded_models"):
+		print("[SettingsPanel] Bridge.get_downloaded_models() 不可用")
+		return
+
+	var models: Array = bridge.get_downloaded_models()
+	print("[SettingsPanel] 发现 %d 个已下载模型" % models.size())
+
+	if not downloaded_model_selector:
+		return
+
+	downloaded_model_selector.clear()
+	downloaded_model_selector.add_item("-- 选择已下载模型 --")
+
+	for model_dict in models:
+		var name = model_dict.get("name", "Unknown")
+		var path = model_dict.get("path", "")
+		var size_mb = model_dict.get("size_mb", 0.0)
+		downloaded_model_selector.add_item("%s (%.0f MB)" % [name, size_mb])
+		# 存储路径到 item metadata
+		var idx = downloaded_model_selector.get_item_count() - 1
+		downloaded_model_selector.set_item_metadata(idx, path)
+
+func _on_downloaded_model_selected(index: int):
+	selected_downloaded_model_index = index
+	if index > 0:  # 索引0是"-- 选择已下载模型 --"
+		var path = downloaded_model_selector.get_item_metadata(index)
+		print("[SettingsPanel] 已选择模型: %s" % path)
+	else:
+		print("[SettingsPanel] 已取消选择模型")
+
+func _select_downloaded_model_by_path(path: String):
+	"""根据路径选中 OptionButton 中的对应项"""
+	if not downloaded_model_selector:
+		return
+	for i in range(downloaded_model_selector.get_item_count()):
+		var item_path = downloaded_model_selector.get_item_metadata(i)
+		if item_path == path:
+			downloaded_model_selector.select(i)
+			selected_downloaded_model_index = i
+			break
+
+# ===== Provider 类型选择（问题3） =====
+
+func _select_provider_type(provider_type: String):
+	if not provider_type_selector:
+		return
+	var items = ["openai", "anthropic"]
+	for i in range(items.size()):
+		if items[i] == provider_type:
+			provider_type_selector.select(i)
+			break
+	current_provider_type = provider_type
+
+func _get_selected_provider_type() -> String:
+	if not provider_type_selector:
+		return "openai"
+	var idx = provider_type_selector.selected
+	if idx == 0:
+		return "openai"
+	elif idx == 1:
+		return "anthropic"
+	return "openai"
 
 func _on_icon_selected(icon_id: String):
 	current_icon_id = icon_id
@@ -305,6 +425,16 @@ func _update_p2p_mode_ui():
 
 	# 显示/隐藏种子地址输入框
 	seed_address_input.visible = (current_p2p_mode == "join")
+
+	# 更新 P2P 说明文字
+	if p2p_description_label:
+		match current_p2p_mode:
+			"single":
+				p2p_description_label.text = "单机模式：本地运行，不启用 P2P 网络。"
+			"create":
+				p2p_description_label.text = "作为种子节点启动，你的世界参数将自动同步给加入的玩家。支持 IPv4 和 IPv6 连接。"
+			"join":
+				p2p_description_label.text = "连接到种子节点后，世界参数将自动从种子节点同步，无需手动配置。只需输入种子节点地址即可。"
 
 func _on_save_pressed():
 	var agent_name = agent_name_input.text.strip_edges()
@@ -332,12 +462,17 @@ func _on_save_pressed():
 			return
 
 	# 收集配置
+	var local_model_path = ""
+	if selected_downloaded_model_index > 0 and downloaded_model_selector:
+		local_model_path = downloaded_model_selector.get_item_metadata(selected_downloaded_model_index)
+
 	var config = {
 		"llm_mode": current_llm_mode,
+		"llm_provider_type": _get_selected_provider_type(),
 		"llm_api_endpoint": endpoint_input.text.strip_edges() if current_llm_mode == "remote" else "",
 		"llm_api_token": token_input.text.strip_edges() if current_llm_mode == "remote" else "",
 		"llm_model_name": model_input.text.strip_edges() if current_llm_mode == "remote" else "",
-		"llm_local_model_path": "",
+		"llm_local_model_path": local_model_path,
 		"agent_name": agent_name,
 		"agent_custom_prompt": prompt_input.text.strip_edges(),
 		"agent_icon_id": current_icon_id,

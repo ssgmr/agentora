@@ -7,10 +7,27 @@ use agentora_network::Transport;
 use agentora_core::simulation::{SimConfig, SimMode, Delta, Simulation};
 use agentora_core::snapshot::NarrativeEvent;
 use agentora_core::WorldSeed;
-use agentora_ai::{LlmProvider, config::LlmConfig, OpenAiProvider, FallbackChain};
+use agentora_ai::{LlmProvider, config::LlmConfig, OpenAiProvider, AnthropicProvider, FallbackChain};
 
 use crate::bridge::{SimCommand, P2PEvent};
 use crate::user_config::UserConfig;
+
+/// 解析配置文件路径：优先当前工作目录相对路径，再 fallback 到 exe 所在目录
+fn resolve_config_path(relative_path: &str) -> String {
+    let cwd_path = std::path::Path::new(relative_path);
+    if cwd_path.exists() {
+        return relative_path.to_string();
+    }
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let exe_relative = exe_dir.join(relative_path);
+            if exe_relative.exists() {
+                return exe_relative.to_string_lossy().to_string();
+            }
+        }
+    }
+    relative_path.to_string()
+}
 
 /// 模拟入口函数（在独立线程中运行）
 pub fn run_simulation_with_api(
@@ -67,9 +84,9 @@ async fn run_simulation_async_with_api(
         tracing::info!("[Bridge] 使用环境变量配置: {}", env_path);
         env_path
     } else if config_path.is_empty() {
-        "../config/sim.toml".to_string()
+        resolve_config_path("config/sim.toml")
     } else {
-        config_path
+        resolve_config_path(&config_path)
     };
 
     // 加载模拟配置
@@ -77,7 +94,7 @@ async fn run_simulation_async_with_api(
     let sim_config = SimConfig::load(&actual_config_path);
 
     // 从配置文件加载世界种子
-    let mut seed = WorldSeed::load("../worldseeds/default.toml")
+    let mut seed = WorldSeed::load(&resolve_config_path("worldseeds/default.toml"))
         .unwrap_or_else(|e| {
             tracing::error!("加载世界种子失败: {}，使用默认配置", e);
             WorldSeed::default()
@@ -104,8 +121,8 @@ async fn run_simulation_async_with_api(
         // 根据 LLM mode 选择 Provider
         match config.llm.mode.as_str() {
             "local" => {
-                // 本地推理模式（需要 feature）
-                #[cfg(feature = "p2p")]
+                // 本地推理模式（需要 local-inference feature）
+                #[cfg(feature = "local-inference")]
                 {
                     use agentora_ai::LlamaProvider;
                     let model_path = config.llm.local_model_path.clone();
@@ -122,14 +139,13 @@ async fn run_simulation_async_with_api(
                         }
                     }
                 }
-                #[cfg(not(feature = "p2p"))]
+                #[cfg(not(feature = "local-inference"))]
                 {
-                    tracing::warn!("[Bridge] local 模式需要启用 feature，使用传入的 Provider");
-                    llm_provider
+                    tracing::warn!("[Bridge] local 模式需要启用 local-inference feature，使用规则引擎兜底");
+                    None
                 }
             }
             "remote" => {
-                // 远程 API 模式
                 let endpoint = config.llm.api_endpoint.clone();
                 let token = config.llm.api_token.clone();
                 let model = config.llm.model_name.clone();
@@ -138,10 +154,21 @@ async fn run_simulation_async_with_api(
                     tracing::warn!("[Bridge] remote 模式未配置 endpoint，使用传入的 Provider");
                     llm_provider
                 } else {
-                    tracing::info!("[Bridge] 创建远程 Provider: endpoint={}, model={}", endpoint, model);
-                    let provider = OpenAiProvider::new(endpoint, token, model)
-                        .with_timeout(llm_config.primary.timeout_seconds);
-                    Some(Box::new(FallbackChain::new(vec![Box::new(provider)])) as Box<dyn LlmProvider>)
+                    let provider_type = config.llm.provider_type.as_str();
+                    match provider_type {
+                        "anthropic" => {
+                            tracing::info!("[Bridge] 创建 Anthropic Provider: endpoint={}, model={}", endpoint, model);
+                            let provider = AnthropicProvider::new(endpoint, token, model)
+                                .with_timeout(llm_config.anthropic.timeout_seconds);
+                            Some(Box::new(FallbackChain::new(vec![Box::new(provider)])) as Box<dyn LlmProvider>)
+                        }
+                        _ => {
+                            tracing::info!("[Bridge] 创建 OpenAI Provider: endpoint={}, model={}", endpoint, model);
+                            let provider = OpenAiProvider::new(endpoint, token, model)
+                                .with_timeout(llm_config.primary.timeout_seconds);
+                            Some(Box::new(FallbackChain::new(vec![Box::new(provider)])) as Box<dyn LlmProvider>)
+                        }
+                    }
                 }
             }
             "rule_only" => {

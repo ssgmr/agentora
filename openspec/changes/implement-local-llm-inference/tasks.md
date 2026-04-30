@@ -12,18 +12,21 @@
 
 - [x] 1.2 实现 LlamaProvider 结构体和初始化
   - 文件: `crates/ai/src/llama.rs`
-  - 实现 `LlamaProvider::new(model_path, backend)`
-  - 集成 `LlamaBackend::init()` - TODO: 需要编译环境
-  - 实现 `LlamaModel::load_from_file()` 调用 - TODO: 需要编译环境
-  - 配置 `n_gpu_layers` 根据 GPU 后端
+  - 实现 `LlamaProvider::new(model_path, backend)` ✓
+  - 集成 `LlamaBackend::init()` ✓
+  - 实现 `LlamaModel::load_from_file()` 调用 ✓
+  - 配置 `n_gpu_layers` 根据 GPU 后端 ✓
 
 - [x] 1.3 实现 LlmProvider trait
   - 文件: `crates/ai/src/llama.rs`
-  - 实现 `generate()` 方法完整推理流程 - TODO: 需要编译环境
-  - 实现 Tokenization (str_to_token) - TODO
-  - 实现 Sampler chain (temp, top_k, top_p, dist) - TODO
-  - 实现 Generate loop 和 batch decode - TODO
-  - 实现 Detokenization (token_to_piece) - TODO
+  - 实现 `generate()` 方法完整推理流程 ✓
+    - 创建 LlamaContext 推理上下文 ✓
+    - Tokenize prompt (str_to_token) ✓
+    - LlamaBatch 构建 ✓
+    - context.decode() 解码 ✓
+    - LlamaSampler 采样链 (temp/top_k/top_p/dist) ✓
+    - 自回归生成循环 ✓
+    - Detokenize (token_to_piece) ✓
   - 实现 `name()` 返回 "llama_local" ✓
   - 实现 `is_available()` 检查模型加载状态 ✓
 

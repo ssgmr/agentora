@@ -16,7 +16,7 @@ anyhow.workspace = true
 godot.workspace = true
 
 agentora-core = { workspace = true, features = ["p2p"] }
-agentora-ai = { workspace = true }
+agentora-ai = { path = "../ai" }
 agentora-network = { workspace = true }
 
 toml = "0.8"
@@ -25,6 +25,9 @@ image = "0.25"  # 图标缩放处理
 
 [features]
 p2p = ["agentora-core/p2p"]
+local-inference = ["agentora-ai/local-inference"]
+cuda = ["agentora-ai/cuda"]
+vulkan = ["agentora-ai/vulkan"]
 
 [dev-dependencies]
 tempfile = "3.10"

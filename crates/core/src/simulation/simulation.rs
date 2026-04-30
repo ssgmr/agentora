@@ -6,7 +6,7 @@ use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::collections::{HashMap, HashSet};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, watch};
 use tokio::task::JoinHandle;
 
 use crate::{World, WorldSeed, WorldSnapshot, AgentId, DecisionPipeline, Position};
@@ -76,6 +76,9 @@ pub struct Simulation {
     /// P2P Narrative 广播通道（agent_loop 发送，spawn_p2p_dispatchers 消费）
     #[cfg(feature = "p2p")]
     p2p_narrative_tx: Option<tokio::sync::mpsc::Sender<(NarrativeEvent, u64, String)>>,
+    /// WorldSeed watch 通道（网络循环发送，start() 中 joiner 等待接收）
+    #[cfg(feature = "p2p")]
+    world_seed_rx: Option<watch::Receiver<Option<WorldSeed>>>,
 }
 
 impl Simulation {
@@ -165,6 +168,8 @@ impl Simulation {
             p2p_delta_tx: None,
             #[cfg(feature = "p2p")]
             p2p_narrative_tx: None,
+            #[cfg(feature = "p2p")]
+            world_seed_rx: None,
         }
     }
 
@@ -183,9 +188,8 @@ impl Simulation {
         narrative_tx: Sender<NarrativeEvent>,
         local_peer_id: String,
     ) -> Self {
-        // 先提取端口配置和种子（后面会被 move）
+        // 先提取端口配置
         let listen_port = config.p2p_port;
-        let seed_clone = seed.clone();
 
         // 先 clone 通道，因为后面会 move
         let delta_tx_for_network = delta_tx.clone();
@@ -221,6 +225,10 @@ impl Simulation {
             let (p2p_narrative_tx, p2p_narrative_rx) = tokio::sync::mpsc::channel::<(NarrativeEvent, u64, String)>(100);
             sim.p2p_narrative_tx = Some(p2p_narrative_tx);
 
+            // 创建 WorldSeed watch 通道（网络循环 -> joiner start()）
+            let (world_seed_tx, world_seed_rx) = watch::channel::<Option<WorldSeed>>(None);
+            sim.world_seed_rx = Some(world_seed_rx);
+
             // 创建 libp2p 传输层（使用配置中的端口）
             match Libp2pTransport::new(listen_port) {
                 Ok(mut transport) => {
@@ -242,6 +250,7 @@ impl Simulation {
                             delta_tx_for_handler,
                             narrative_tx_for_handler,
                             &peer_id,
+                            Some(world_seed_tx),
                         ).await;
                     });
 
@@ -250,7 +259,6 @@ impl Simulation {
                     sim.p2p_network_handle = Some(network_handle);
 
                     // Spawn P2P 消费 task（在 start() 中调用，因为需要 self 的引用）
-                    // 这里只存储接收器，在 start() 中 spawn
                     sim.spawn_p2p_dispatchers(p2p_delta_rx, p2p_narrative_rx);
 
                     tracing::info!("[Simulation] libp2p 传输层已创建，等待连接...");
@@ -377,13 +385,59 @@ impl Simulation {
                     tracing::info!("[Simulation] P2P 种子节点：创建本地 Agent {}", agent_id.as_str());
                     agent_ids = vec![agent_id];
                 } else {
-                    // 连接节点：等待 5 秒收集已有 Agent 位置
+                    // 连接节点：等待 WorldSeed 同步 + 收集已有 Agent 位置
                     #[cfg(feature = "p2p")]
                     {
-                        tracing::info!("[Simulation] P2P 连接节点：等待同步已有 Agent...");
+                        tracing::info!("[Simulation] P2P 连接节点：等待 WorldSeed 同步和远程 Agent...");
 
                         // 先启动 P2P 网络连接
                         self.init_p2p_network().await;
+
+                        // 订阅 WorldSeed 同步 topic
+                        if let Some(topic_mgr) = self.region_topic_manager.as_ref() {
+                            if let Some(transport) = self.transport.as_ref() {
+                                if let Err(e) = topic_mgr.subscribe_world_seed(transport).await {
+                                    tracing::warn!("[Simulation] 订阅 WorldSeed topic 失败: {:?}", e);
+                                }
+                            }
+                        }
+
+                        // 等待 WorldSeed 同步（10秒超时）
+                        let mut world_seed_received = false;
+                        if let Some(ref mut rx) = self.world_seed_rx {
+                            // 等待 watch 通道更新（初始为 None，收到 WorldSeed 后变为 Some）
+                            let wait_result = tokio::time::timeout(
+                                tokio::time::Duration::from_secs(10),
+                                async {
+                                    loop {
+                                        if rx.changed().await.is_err() {
+                                            return None;
+                                        }
+                                        if rx.borrow().is_some() {
+                                            return rx.borrow().clone();
+                                        }
+                                    }
+                                }
+                            ).await;
+
+                            match wait_result {
+                                Ok(Some(received_seed)) => {
+                                    tracing::info!("[Simulation] 已同步 WorldSeed: random_seed={}, map_size={:?}",
+                                        received_seed.random_seed, received_seed.map_size);
+                                    // 覆盖本地 seed 的地形参数（保留 local-only 的配置）
+                                    self.seed.map_size = received_seed.map_size;
+                                    self.seed.terrain_ratio = received_seed.terrain_ratio;
+                                    self.seed.resource_density = received_seed.resource_density;
+                                    self.seed.random_seed = received_seed.random_seed;
+                                    self.seed.region_size = received_seed.region_size;
+                                    self.seed.pressure_config = received_seed.pressure_config;
+                                    world_seed_received = true;
+                                }
+                                Ok(None) | Err(_) => {
+                                    tracing::warn!("[Simulation] 未在超时时间内收到 WorldSeed，使用本地配置");
+                                }
+                            }
+                        }
 
                         // 等待 5 秒接收远程 Agent 的 Spawned Delta
                         tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
@@ -776,6 +830,27 @@ impl Simulation {
             }
         }
 
+        // 种子节点：广播 WorldSeed 到网络
+        if self.config.seed_peer.is_none() {
+            let seed_json = serde_json::to_string(&self.seed).unwrap_or_default();
+            let world_seed_msg = NetworkMessage::WorldSeedSync {
+                world_seed_json: seed_json,
+                source_peer_id: self.local_peer_id.clone().unwrap_or_default(),
+            };
+            // 订阅 WorldSeed topic 并发布
+            use agentora_network::gossip::{RegionTopicManager, WORLD_SEED_TOPIC};
+            if let Some(topic_mgr) = self.region_topic_manager.as_mut() {
+                if let Err(e) = topic_mgr.subscribe_world_seed(transport).await {
+                    tracing::warn!("[P2P] 订阅 WorldSeed topic 失败: {:?}", e);
+                }
+            }
+            if let Err(e) = transport.publish(WORLD_SEED_TOPIC, &world_seed_msg.to_bytes()).await {
+                tracing::warn!("[P2P] WorldSeed 广播失败: {:?}", e);
+            } else {
+                tracing::info!("[P2P] 种子节点已广播 WorldSeed: random_seed={}", self.seed.random_seed);
+            }
+        }
+
         tracing::info!("[P2P] 网络初始化完成");
     }
 
@@ -788,6 +863,7 @@ impl Simulation {
         delta_tx: Sender<Delta>,
         narrative_tx: Sender<NarrativeEvent>,
         local_peer_id: &str,
+        world_seed_tx: Option<watch::Sender<Option<WorldSeed>>>,
     ) {
         use serde_json;
         use crate::simulation::DeltaEnvelope;
@@ -850,6 +926,25 @@ impl Simulation {
                                     narrative_msg.source_peer_id);
                             } else {
                                 tracing::warn!("[P2P-Network] narrative JSON 解析失败: {:?}", narrative_msg.narrative_json);
+                            }
+                        }
+                        NetworkMessage::WorldSeedSync { world_seed_json, source_peer_id } => {
+                            // 过滤本地回环
+                            if source_peer_id == local_peer_id {
+                                tracing::trace!("[P2P-Network] 过滤本地回环 WorldSeedSync");
+                                continue;
+                            }
+
+                            // 反序列化 WorldSeed
+                            if let Ok(seed) = serde_json::from_str::<WorldSeed>(&world_seed_json) {
+                                tracing::info!("[P2P-Network] 收到 WorldSeed 同步: random_seed={} from peer={}",
+                                    seed.random_seed, source_peer_id);
+                                // 通过 watch 通道发送给 start() 中的 joiner
+                                if let Some(ref tx) = world_seed_tx {
+                                    let _ = tx.send(Some(seed));
+                                }
+                            } else {
+                                tracing::warn!("[P2P-Network] WorldSeed JSON 解析失败");
                             }
                         }
                         NetworkMessage::CrdtOp(crdt_op) => {

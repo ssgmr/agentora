@@ -24,7 +24,7 @@ fn try_init_logging() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     use time::macros::format_description;
 
     // 加载日志配置
-    let log_cfg = LogConfig::load("../config/log.toml");
+    let log_cfg = LogConfig::load(&resolve_config_path("config/log.toml"));
 
     // 日志目录：从配置文件读取，相对于当前工作目录
     let log_dir = std::path::Path::new(&log_cfg.log_dir);
@@ -123,6 +123,23 @@ struct LogConfig {
     targets: std::collections::HashMap<String, String>,
 }
 
+/// 解析配置文件路径：优先当前工作目录相对路径，再 fallback 到 exe 所在目录
+fn resolve_config_path(relative_path: &str) -> String {
+    let cwd_path = std::path::Path::new(relative_path);
+    if cwd_path.exists() {
+        return relative_path.to_string();
+    }
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let exe_relative = exe_dir.join(relative_path);
+            if exe_relative.exists() {
+                return exe_relative.to_string_lossy().to_string();
+            }
+        }
+    }
+    relative_path.to_string()
+}
+
 impl Default for LogConfig {
     fn default() -> Self {
         Self {
@@ -130,7 +147,7 @@ impl Default for LogConfig {
             console_level: "info".to_string(),
             file_enabled: true,
             file_level: "debug".to_string(),
-            log_dir: "../logs".to_string(),
+            log_dir: "logs".to_string(),
             rotation: "daily".to_string(),
             targets: std::collections::HashMap::new(),
         }

@@ -37,6 +37,10 @@ pub struct LlmUserConfig {
     /// 模式：local / remote / rule_only
     pub mode: String,
 
+    /// Provider 类型：openai / anthropic（remote 模式时生效）
+    #[serde(default = "default_provider_type")]
+    pub provider_type: String,
+
     /// 远程 API endpoint（remote 模式）
     #[serde(default)]
     pub api_endpoint: String,
@@ -77,6 +81,10 @@ fn default_icon_id() -> String {
     "default".to_string()
 }
 
+fn default_provider_type() -> String {
+    "openai".to_string()
+}
+
 /// P2P 配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct P2PUserConfig {
@@ -98,6 +106,7 @@ impl Default for UserConfig {
         Self {
             llm: LlmUserConfig {
                 mode: "rule_only".to_string(),
+                provider_type: "openai".to_string(),
                 api_endpoint: String::new(),
                 api_token: String::new(),
                 model_name: String::new(),

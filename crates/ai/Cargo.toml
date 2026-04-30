@@ -18,7 +18,8 @@ chrono = "0.4"
 
 # 本地 GGUF 推理（可选 feature，直接依赖）
 # llama-cpp-2 features: cuda, vulkan, metal (Metal 仅 macOS)
-llama-cpp-2 = { version = "0.1.11", optional = true }
+llama-cpp-2 = { version = "0.1.145", optional = true }
+encoding_rs = { version = "0.8", optional = true }
 
 futures-util = "0.3"  # 用于流式下载
 
@@ -26,9 +27,9 @@ futures-util = "0.3"  # 用于流式下载
 default = []
 
 # 本地推理总开关（启用 llama-cpp-2）
-local-inference = ["llama-cpp-2"]
+local-inference = ["llama-cpp-2", "encoding_rs"]
 
-# GPU 后端 features（需要 llama-cpp-2 编译支持）
+# GPU 后端 features（运行时动态加载 DLL）
 # CUDA: Windows/Linux NVIDIA GPU
 cuda = ["local-inference", "llama-cpp-2?/cuda"]
 
@@ -47,3 +48,5 @@ crate-type = ["rlib"]  # 普通库，支持测试
 [dev-dependencies]
 tokio-test = "0.4"
 tokio = { workspace = true, features = ["test-util", "macros"] }
+tracing-subscriber.workspace = true
+anyhow.workspace = true

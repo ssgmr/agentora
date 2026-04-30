@@ -4,7 +4,7 @@
 
 #[cfg(feature = "local-inference")]
 mod tests {
-    use agentora_ai::{LlamaProvider, GpuBackend, estimate_load_time_ms, get_load_progress_estimate, LoadPhase};
+    use agentora_ai::{LlamaProvider, GpuBackend, LlmProvider, estimate_load_time_ms, get_load_progress_estimate, LoadPhase};
     use std::path::PathBuf;
 
     /// 测试 LlamaProvider 创建 - 模型文件不存在

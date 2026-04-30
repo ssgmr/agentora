@@ -129,6 +129,9 @@ impl crate::transport::MessageHandler for NullMessageHandler {
 /// 世界事件 Topic（全局广播）
 pub const WORLD_EVENTS_TOPIC: &str = "world_events";
 
+/// WorldSeed 同步 Topic（种子节点广播世界参数给加入节点）
+pub const WORLD_SEED_TOPIC: &str = "world_seed_sync";
+
 impl RegionTopicManager {
     /// 获取世界事件 topic 名称
     pub fn world_topic_name() -> &'static str {
@@ -142,6 +145,16 @@ impl RegionTopicManager {
     ) -> Result<(), TransportError> {
         transport.subscribe(WORLD_EVENTS_TOPIC, Box::new(NullMessageHandler)).await?;
         tracing::info!("订阅世界事件 topic: {}", WORLD_EVENTS_TOPIC);
+        Ok(())
+    }
+
+    /// 订阅 WorldSeed 同步 topic
+    pub async fn subscribe_world_seed(
+        &self,
+        transport: &Libp2pTransport,
+    ) -> Result<(), TransportError> {
+        transport.subscribe(WORLD_SEED_TOPIC, Box::new(NullMessageHandler)).await?;
+        tracing::info!("订阅 WorldSeed 同步 topic: {}", WORLD_SEED_TOPIC);
         Ok(())
     }
 }
